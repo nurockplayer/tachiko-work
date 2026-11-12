@@ -54,6 +54,7 @@ rounding, percent, and blank forms below. The language contains:
 - Number comparisons `=`, `<>`, `<`, `<=`, `>`, `>=` (below arithmetic in precedence);
 - `IF(condition, then_value, else_value)`, `AND(condition, ...)`, `OR(condition, ...)`, and `NOT(condition)`;
 - `ROUND(value, digits)`, `ROUNDUP(value, digits)`, and `ROUNDDOWN(value, digits)` with an integer literal precision in `0..=10`;
+- `IFERROR(value, fallback)` with two Number operands and a Number result;
 - `ABS(value)` returns the absolute Number (including positive zero for negative zero);
 - percent literals (`50%` means `0.5`); and
 - `ISBLANK(reference)` as a condition.
@@ -330,6 +331,33 @@ branches. AND/OR evaluate every condition left-to-right (no short-circuit).
 ISBLANK does not require the referenced formula's calculated value. The complete
 document calculation remains atomic when some independent formula fails.
 
+IFERROR evaluates `value` first. It catches `DivisionByZero`, runtime
+`TypeMismatch`, `NonFiniteResult`, `EmptyAggregate`, and runtime
+`FailedDependencies` raised inside that expression (for example, a selected IF
+branch reading an unavailable value). Only after such a failure does it evaluate
+`fallback`; a fallback failure becomes the formula's failure. A caught failure
+creates no owner-cell failure entry or diagnostic.
+
+Parse and bind errors, `InvalidExpression`, `InvalidReferences`, `InvalidColumn`,
+and `Cycle` remain outside this boundary. The pre-evaluation upstream checks
+(`failed_required_references`, column `first_failed`, and conditional-aggregate
+checks) remain unchanged. Both operands undergo structural and type validation,
+and both retain static dependencies for scheduling, cycles, invalidation and
+disclosure. Required-value prechecks treat `value` as unconditional and
+`fallback` as branch-only, like an IF branch; a blank in an unused fallback is
+not a formula failure. Independent required-field diagnostics still apply.
+
+This MVP 1.0 boundary does not catch upstream failed cells: a failed declared
+cell already invalidates the document and refuses its edit before an admitted
+reader can evaluate. Catching upstream failures for Excel parity waits for
+ADR-0047's per-cell publication in 1.1. Work's current whole-document publication
+and conditional-aggregate failure policies are unchanged.
+
+Canonical `.roproj/v3` stores `{"op":"if_error","args":{"value":…,"fallback":…}}`;
+direct `.ro/v2` supports the same named operands. Frozen `.roproj/v1/v2` refuse
+the new operation. XLSX imports and exports admit `IFERROR(a,b)` and A1 authoring
+passes it through to the shared parser.
+
 ROUND decides on the decimal the user sees, not on a scaled binary64 product.
 It takes the shortest decimal text that round-trips to the input Number,
 rounds that decimal half away from zero at the requested place, and parses the
@@ -347,7 +375,7 @@ conversion; canonical projection may write the equivalent Number, e.g. `0.5`.
 
 The new bound operations round-trip in canonical `.roproj/v3` and direct `.ro/v2`.
 Frozen `.roproj/v1/v2` and legacy direct `.ro/v1` refuse them. XLSX formulas use
-IF/AND/OR/NOT/ROUND/ABS/ROUNDUP/ROUNDDOWN/ISBLANK and the same comparison operators; percent literals
+IF/IFERROR/AND/OR/NOT/ROUND/ABS/ROUNDUP/ROUNDDOWN/ISBLANK and the same comparison operators; percent literals
 may be written as their equivalent Number. Existing arithmetic, binary min/max,
 and same-row references retain their meanings and bounds.
 

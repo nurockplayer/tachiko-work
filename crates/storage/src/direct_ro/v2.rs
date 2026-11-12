@@ -104,6 +104,7 @@ pub(crate) enum ExpressionV2 {
     Maximum(BinaryArgsV2),
     Compare(ComparisonArgsV2),
     If(IfArgsV2),
+    IfError(IfErrorArgsV2),
     And(Vec<ExpressionV2>),
     Or(Vec<ExpressionV2>),
     Not(Box<ExpressionV2>),
@@ -156,6 +157,13 @@ pub(crate) struct IfArgsV2 {
     pub(crate) condition: Box<ExpressionV2>,
     pub(crate) then_value: Box<ExpressionV2>,
     pub(crate) else_value: Box<ExpressionV2>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct IfErrorArgsV2 {
+    pub(crate) value: Box<ExpressionV2>,
+    pub(crate) fallback: Box<ExpressionV2>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -545,6 +553,10 @@ impl ExpressionV2 {
                 then_value: Box::new(Self::from_semantic(then_value)),
                 else_value: Box::new(Self::from_semantic(else_value)),
             }),
+            Expression::IfError { value, fallback } => Self::IfError(IfErrorArgsV2 {
+                value: Box::new(Self::from_semantic(value)),
+                fallback: Box::new(Self::from_semantic(fallback)),
+            }),
             Expression::And(expressions) => {
                 Self::And(expressions.iter().map(Self::from_semantic).collect())
             }
@@ -637,6 +649,10 @@ impl ExpressionV2 {
                     stack.push((&args.then_value, depth + 1));
                     stack.push((&args.condition, depth + 1));
                 }
+                Self::IfError(args) => {
+                    stack.push((&args.fallback, depth + 1));
+                    stack.push((&args.value, depth + 1));
+                }
                 Self::And(expressions) | Self::Or(expressions) => {
                     stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                 }
@@ -719,6 +735,10 @@ impl ExpressionV2 {
                 then_value: Box::new(args.then_value.into_semantic()?),
                 else_value: Box::new(args.else_value.into_semantic()?),
             },
+            Self::IfError(args) => Expression::IfError {
+                value: Box::new(args.value.into_semantic()?),
+                fallback: Box::new(args.fallback.into_semantic()?),
+            },
             Self::And(expressions) => Expression::And(
                 expressions
                     .into_iter()
@@ -783,7 +803,11 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             | Expression::Divide { left, right }
             | Expression::Minimum { left, right }
             | Expression::Maximum { left, right }
-            | Expression::Compare { left, right, .. } => {
+            | Expression::Compare { left, right, .. }
+            | Expression::IfError {
+                value: left,
+                fallback: right,
+            } => {
                 stack.push((right, depth + 1));
                 stack.push((left, depth + 1));
             }
@@ -1086,6 +1110,15 @@ fn write_expression(
             write_expression_member(output, indent + 2, "condition", &args.condition, true)?;
             write_expression_member(output, indent + 2, "then_value", &args.then_value, true)?;
             write_expression_member(output, indent + 2, "else_value", &args.else_value, false)?;
+            push_indent(output, indent + 1);
+            output.push('}');
+        }
+        ExpressionV2::IfError(args) => {
+            member_string(output, indent + 1, "op", "if_error", true)?;
+            member_prefix(output, indent + 1, "args")?;
+            output.push_str("{\n");
+            write_expression_member(output, indent + 2, "value", &args.value, true)?;
+            write_expression_member(output, indent + 2, "fallback", &args.fallback, false)?;
             push_indent(output, indent + 1);
             output.push('}');
         }

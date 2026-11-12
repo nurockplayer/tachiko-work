@@ -256,6 +256,19 @@ impl Evaluation<'_> {
                         pending.push(if condition { then_value } else { else_value });
                     }
                 }
+                Expression::IfError { value, fallback } => {
+                    pending.push(value);
+                    if matches!(
+                        self.number(value),
+                        Err(CalculationFailure::DivisionByZero
+                            | CalculationFailure::TypeMismatch
+                            | CalculationFailure::NonFiniteResult
+                            | CalculationFailure::EmptyAggregate
+                            | CalculationFailure::FailedDependencies { .. })
+                    ) {
+                        pending.push(fallback);
+                    }
+                }
                 // ISBLANK observes presence, not the referenced calculated value.
                 Expression::IsBlank(_) => {}
                 _ => pending.extend(node.children().into_iter().rev()),
@@ -339,6 +352,19 @@ impl Evaluation<'_> {
                         pending.push(if condition { then_value } else { else_value });
                     }
                 }
+                Expression::IfError { value, fallback } => {
+                    pending.push(value);
+                    if matches!(
+                        self.number(value),
+                        Err(CalculationFailure::DivisionByZero
+                            | CalculationFailure::TypeMismatch
+                            | CalculationFailure::NonFiniteResult
+                            | CalculationFailure::EmptyAggregate
+                            | CalculationFailure::FailedDependencies { .. })
+                    ) {
+                        pending.push(fallback);
+                    }
+                }
                 // ISBLANK observes presence, not the referenced calculated value.
                 Expression::IsBlank(_) => {}
                 _ => pending.extend(node.children().into_iter().rev()),
@@ -362,6 +388,16 @@ impl Evaluation<'_> {
                 let condition = self.condition(condition)?;
                 self.number(if condition { then_value } else { else_value })
             }
+            Expression::IfError { value, fallback } => match self.number(value) {
+                Err(
+                    CalculationFailure::DivisionByZero
+                    | CalculationFailure::TypeMismatch
+                    | CalculationFailure::NonFiniteResult
+                    | CalculationFailure::EmptyAggregate
+                    | CalculationFailure::FailedDependencies { .. },
+                ) => self.number(fallback),
+                result => result,
+            },
             Expression::ColumnTotal(column) => {
                 // Blank cells are skipped, and the pass cache added the values
                 // in entity order, so the total is bit-identical to a walk.

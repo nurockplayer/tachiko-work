@@ -215,3 +215,48 @@ fn absolute_and_directed_rounding_round_trip_and_refuse_frozen_projects() {
         }
     }
 }
+
+#[test]
+fn iferror_round_trips_named_operands_and_refuses_frozen_projects() {
+    let mut document = document_with_conditional();
+    let expression = Expression::IfError {
+        value: Box::new(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
+        }),
+        fallback: Box::new(Expression::Number(Number::new(9.0).unwrap())),
+    };
+    document
+        .entities
+        .get_mut("row")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("reserve"), Value::Formula(expression));
+    let project = encode_roproj_v3(&document).unwrap();
+    assert!(project.files().iter().any(|file| {
+        let text = String::from_utf8_lossy(file.bytes());
+        text.contains("\"op\":\"if_error\"")
+            && text.contains("\"args\":{\"value\":")
+            && text.contains("\"fallback\":")
+    }));
+    assert_eq!(decode_roproj_v3(&project).unwrap(), document);
+    let direct = to_canonical_string(&document).unwrap();
+    assert!(direct.contains("\"if_error\""));
+    assert_eq!(from_str(&direct).unwrap(), document);
+
+    // Remove the existing IF so the refusal is specifically about IFERROR.
+    document.entities.get_mut("row").unwrap().fields.insert(
+        FieldId::from("expense"),
+        Value::Number(Number::new(1.0).unwrap()),
+    );
+    for error in [
+        encode_roproj_v1(&document).unwrap_err(),
+        encode_roproj_v2(&document).unwrap_err(),
+    ] {
+        assert!(
+            error
+                .to_string()
+                .contains("not representable in frozen .roproj/v")
+        );
+    }
+}
