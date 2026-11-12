@@ -300,7 +300,7 @@ fn wire_commands_dispatch_and_return_column_publications() {
         assert_ne!(publication.resulting_revision, revision);
         assert_eq!(publication.schema_fields.len(), 1);
         assert_eq!(publication.schema_fields[0].field, FIELD);
-        assert!(publication.entities.is_empty());
+        assert_eq!(publication.entities, [] as [String; 0]);
     }
 }
 
