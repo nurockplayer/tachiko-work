@@ -59,13 +59,13 @@ use tachiko_storage::{
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnRef, ConditionalAggregate, Date, DiagnosticCode, Document, Entity,
-    EntityId, EntityKey, Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType,
-    FormulaBindError, IdGenerator, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
-    KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, Number, NumberFormat,
-    PreparedVerdict, PresentationStore, Schema, SchemaId, SchemaKey, SemanticIdKind,
-    SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError, create_document,
-    diagnostic_codes,
+    CalculationFailure, CellAlignment, CellStyle, ColumnRef, ConditionalAggregate, Date,
+    DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
+    FieldKey, FieldRef, FieldType, FormulaBindError, IdGenerator, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Number, NumberFormat, PreparedVerdict, PresentationStore, Schema, SchemaId, SchemaKey,
+    SemanticIdKind, SemanticSubject, StarterTemplate, ValidationReport, Value, WorkspaceError,
+    create_document, diagnostic_codes,
     formula_operations::{
         FormulaCalculationOutcome, FormulaInverseRestoreRequest, FormulaUpdateRequest,
     },
@@ -84,7 +84,7 @@ use tachiko_workspace_engine::{
         DocumentWitness, ResidentProjectionInvalidation, ResidentSnapshot,
         ResidentWorkspaceSession, TrustedPublicationTimeSource,
     },
-    validate,
+    validate, validate_presentation,
 };
 use thiserror::Error;
 
@@ -95,6 +95,8 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod presentation_commands_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod presentation_revision_tests;
 use interop_document::PendingCleanup;
@@ -281,6 +283,24 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         date_format: Option<tachiko_workspace_engine::DateFormat>,
+    },
+    SetColumnAlignment {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        alignment: Option<ColumnAlignment>,
+    },
+    SetColumnWrap {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        wrap: Option<bool>,
+    },
+    SetColumnWidth {
+        expected_revision: String,
+        collection: String,
+        field: String,
+        width: Option<u32>,
     },
     MoveColumn {
         expected_revision: String,
@@ -1184,6 +1204,42 @@ impl From<&str> for PasteCellInput {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColumnAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+impl From<ColumnAlignment> for CellAlignment {
+    fn from(value: ColumnAlignment) -> Self {
+        match value {
+            ColumnAlignment::Left => Self::Left,
+            ColumnAlignment::Center => Self::Center,
+            ColumnAlignment::Right => Self::Right,
+        }
+    }
+}
+
+impl From<CellAlignment> for ColumnAlignment {
+    fn from(value: CellAlignment) -> Self {
+        match value {
+            CellAlignment::Left => Self::Left,
+            CellAlignment::Center => Self::Center,
+            CellAlignment::Right => Self::Right,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ColumnStyleProjection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<ColumnAlignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ColumnProjection {
     #[serde(default = "default_required")]
@@ -1205,6 +1261,10 @@ pub struct ColumnProjection {
     pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_format: Option<tachiko_workspace_engine::DateFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<ColumnStyleProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1811,6 +1871,8 @@ pub enum DesignerError {
     },
     #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("column width must be between 1 and 65280")]
+    InvalidColumnWidth,
     #[error("date format requires a Date column")]
     InvalidDateFormat,
     #[error("invalid number format: {source}")]
@@ -1967,6 +2029,7 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
+            Self::InvalidColumnWidth => ("invalid_column_width", Vec::new()),
             Self::InvalidNumberFormat { .. } | Self::InvalidDateFormat => {
                 ("invalid_number_format", Vec::new())
             }
@@ -2274,6 +2337,8 @@ impl HistoryEntry {
     }
 }
 
+type ColumnPresentationFacts = (SchemaId, FieldId, Option<CellStyle>, Option<u32>);
+
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
@@ -2281,6 +2346,12 @@ enum HistoryAction {
     TableCommands {
         commands: Vec<SemanticCommand>,
         default_collection: String,
+    },
+    ColumnPresentation {
+        schema: SchemaId,
+        field: FieldId,
+        style: Option<CellStyle>,
+        width: Option<u32>,
     },
     FormulaUpdate {
         target: FieldTarget,
@@ -2305,6 +2376,9 @@ impl HistoryAction {
                     .map(SemanticCommand::approx_bytes)
                     .sum::<usize>()
                     + default_collection.len()
+            }
+            Self::ColumnPresentation { schema, field, .. } => {
+                schema.as_str().len() + field.as_str().len() + 128
             }
             Self::FormulaUpdate { target, source } => {
                 target.entity.len() + target.field.len() + source.len()
@@ -3211,8 +3285,6 @@ impl DesignerRuntime {
     }
 
     /// Install a style-only change, carrying revision-keyed caches forward.
-    // Presentation commands will call this when they are wired into the runtime.
-    #[cfg_attr(not(test), allow(dead_code))]
     fn publish_presentation(
         &mut self,
         expected_revision: &str,
@@ -3681,6 +3753,39 @@ impl DesignerRuntime {
                 &collection,
                 &field,
                 date_format,
+            )?)),
+            DesignerRequest::SetColumnAlignment {
+                expected_revision,
+                collection,
+                field,
+                alignment,
+            } => Ok(DesignerResponse::Published(self.set_column_alignment(
+                &expected_revision,
+                &collection,
+                &field,
+                alignment,
+            )?)),
+            DesignerRequest::SetColumnWrap {
+                expected_revision,
+                collection,
+                field,
+                wrap,
+            } => Ok(DesignerResponse::Published(self.set_column_wrap(
+                &expected_revision,
+                &collection,
+                &field,
+                wrap,
+            )?)),
+            DesignerRequest::SetColumnWidth {
+                expected_revision,
+                collection,
+                field,
+                width,
+            } => Ok(DesignerResponse::Published(self.set_column_width(
+                &expected_revision,
+                &collection,
+                &field,
+                width,
             )?)),
             DesignerRequest::MoveColumn {
                 expected_revision,
@@ -4459,7 +4564,7 @@ impl DesignerRuntime {
             native_table_profile: is_native_table_spec(spec).then_some(true),
             revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
-            columns: column_projections(spec),
+            columns: column_projections(spec, &self.presentation),
             rows,
             column_totals,
         };
@@ -4552,7 +4657,7 @@ impl DesignerRuntime {
             .iter()
             .map(|row| spec.entities[*row].clone())
             .collect::<Vec<_>>();
-        let columns = column_projections(spec);
+        let columns = column_projections(spec, &self.presentation);
         let columns_revision = columns_revision(&columns)?;
         // Count the reply envelope and the column definitions before any row
         // is built, so an oversized window is refused before it exists.
@@ -5573,6 +5678,194 @@ impl DesignerRuntime {
             vec![command(required)],
             vec![command(definition.required)],
         )
+    }
+
+    fn column_presentation(
+        &self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+    ) -> Result<ColumnPresentationFacts, DesignerError> {
+        self.check_revision(expected)?;
+        let schema = SchemaId::from(self.collection_spec(collection)?.summary.id.clone());
+        let field = FieldId::from(field.to_owned());
+        if !self.session.document().schemas[&schema]
+            .fields
+            .contains_key(&field)
+        {
+            return Err(table_error("column is unavailable"));
+        }
+        let table = self.presentation.tables.get(&schema);
+        let style = table
+            .and_then(|table| table.column_styles.get(&field))
+            .and_then(|id| self.presentation.styles.get(id))
+            .cloned();
+        let width = table
+            .and_then(|table| table.column_widths.get(&field))
+            .copied();
+        Ok((schema, field, style, width))
+    }
+
+    fn set_column_alignment(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        alignment: Option<ColumnAlignment>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let (schema, field, before, width) =
+            self.column_presentation(expected, collection, field)?;
+        let mut style = before.clone().unwrap_or_default();
+        let alignment = alignment.map(Into::into);
+        if style.alignment == alignment {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        style.alignment = alignment;
+        let after = (style != CellStyle::default()).then_some(style);
+        self.record_column_presentation(expected, schema, field, before, width, after, width)
+    }
+
+    fn set_column_wrap(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        wrap: Option<bool>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let (schema, field, before, width) =
+            self.column_presentation(expected, collection, field)?;
+        let mut style = before.clone().unwrap_or_default();
+        if style.wrap == wrap {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        style.wrap = wrap;
+        let after = (style != CellStyle::default()).then_some(style);
+        self.record_column_presentation(expected, schema, field, before, width, after, width)
+    }
+
+    fn set_column_width(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        field: &str,
+        width: Option<u32>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let (schema, field, style, before) =
+            self.column_presentation(expected, collection, field)?;
+        if width.is_some_and(|value| !(1..=65280).contains(&value)) {
+            return Err(DesignerError::InvalidColumnWidth);
+        }
+        if before == width {
+            return Err(PatchLifecycleError::NoChange.into());
+        }
+        self.record_column_presentation(
+            expected,
+            schema,
+            field,
+            style.clone(),
+            before,
+            style,
+            width,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_column_presentation(
+        &mut self,
+        expected: &str,
+        schema: SchemaId,
+        field: FieldId,
+        before_style: Option<CellStyle>,
+        before_width: Option<u32>,
+        after_style: Option<CellStyle>,
+        after_width: Option<u32>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        let publication = self.apply_column_presentation(
+            expected,
+            &schema,
+            &field,
+            after_style.clone(),
+            after_width,
+        )?;
+        self.record_history_entry(HistoryEntry::new(
+            HistoryAction::ColumnPresentation {
+                schema: schema.clone(),
+                field: field.clone(),
+                style: after_style,
+                width: after_width,
+            },
+            HistoryAction::ColumnPresentation {
+                schema,
+                field,
+                style: before_style,
+                width: before_width,
+            },
+        ));
+        Ok(publication)
+    }
+
+    fn apply_column_presentation(
+        &mut self,
+        expected: &str,
+        schema: &SchemaId,
+        field: &FieldId,
+        style: Option<CellStyle>,
+        width: Option<u32>,
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let mut candidate = self.presentation.clone();
+        let table = candidate.tables.entry(schema.clone()).or_default();
+        let old_style = table.column_styles.remove(field);
+        if let Some(style) = style {
+            let id = tachiko_storage::style_id(&style)?;
+            candidate.styles.insert(id.clone(), style);
+            table.column_styles.insert(field.clone(), id);
+        }
+        if let Some(width) = width {
+            table.column_widths.insert(field.clone(), width);
+        } else {
+            table.column_widths.remove(field);
+        }
+        if table.title.is_none()
+            && table.footer.is_empty()
+            && table.column_styles.is_empty()
+            && table.column_widths.is_empty()
+        {
+            candidate.tables.remove(schema);
+        }
+        if let Some(id) = old_style {
+            let used = candidate
+                .tables
+                .values()
+                .any(|table| table.column_styles.values().any(|value| value == &id))
+                || candidate.cells.values().any(|value| value == &id)
+                || candidate.rules.values().any(|rule| rule.style == id);
+            if !used {
+                candidate.styles.remove(&id);
+            }
+        }
+        // A removed column or table keeps its entries in the live store so Undo
+        // can bring them back; validate without them, as save does.
+        validate_presentation(
+            &prune_presentation(&candidate, self.session.document()),
+            self.session.document(),
+        )
+        .map_err(|error| table_error(&format!("invalid presentation: {error:?}")))?;
+        let resulting_revision = self.publish_presentation(expected, candidate)?;
+        Ok(PublicationProjection {
+            base_revision: expected.to_owned(),
+            resulting_revision,
+            schemas: Vec::new(),
+            schema_fields: vec![SchemaFieldTarget {
+                schema: schema.to_string(),
+                field: field.to_string(),
+            }],
+            entities: Vec::new(),
+            fields: Vec::new(),
+            affected_calculations: Vec::new(),
+            many: false,
+            changed: Vec::new(),
+        })
     }
 
     fn set_column_date_format(
@@ -7982,6 +8275,12 @@ impl DesignerRuntime {
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
+            HistoryAction::ColumnPresentation {
+                schema,
+                field,
+                style,
+                width,
+            } => self.apply_column_presentation(expected, schema, field, style.clone(), *width),
             HistoryAction::FormulaUpdate { target, source } => self
                 .publish_formula_update(expected, target, source, None)
                 .map(|(publication, _)| publication),
@@ -8406,7 +8705,13 @@ impl DesignerRuntime {
 
 /// The single column projection shared by the complete table query and the
 /// bounded window query.
-fn column_projections(spec: &CollectionSpec) -> Vec<ColumnProjection> {
+fn column_projections(
+    spec: &CollectionSpec,
+    presentation: &PresentationStore,
+) -> Vec<ColumnProjection> {
+    let table = presentation
+        .tables
+        .get(&SchemaId::from(spec.summary.id.clone()));
     spec.columns
         .iter()
         .map(|column| ColumnProjection {
@@ -8428,6 +8733,20 @@ fn column_projections(spec: &CollectionSpec) -> Vec<ColumnProjection> {
             constraint: constraint_projection(&column.constraint),
             number_format: column.number_format.clone(),
             date_format: column.date_format,
+            style: table
+                .and_then(|table| table.column_styles.get(&column.id))
+                .and_then(|id| presentation.styles.get(id))
+                .and_then(|style| {
+                    (style.alignment.is_some() || style.wrap.is_some()).then_some(
+                        ColumnStyleProjection {
+                            alignment: style.alignment.map(Into::into),
+                            wrap: style.wrap,
+                        },
+                    )
+                }),
+            width: table
+                .and_then(|table| table.column_widths.get(&column.id))
+                .copied(),
         })
         .collect()
 }

@@ -78,6 +78,9 @@ export interface DesignerClient {
   setColumnNumberFormat?(expectedRevision: string, collection: string, field: string, numberFormat: NumberFormat | null): Promise<PublicationProjection>;
   /** Replace or clear one Date column's durable display format. */
   setColumnDateFormat?(expectedRevision: string, collection: string, field: string, dateFormat: DateFormat | null): Promise<PublicationProjection>;
+  setColumnAlignment?(expectedRevision: string, collection: string, field: string, alignment: "left" | "center" | "right" | null): Promise<PublicationProjection>;
+  setColumnWrap?(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection>;
+  setColumnWidth?(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection>;
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn?(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   bootstrap(): Promise<BootstrapProjection>;

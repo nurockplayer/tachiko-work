@@ -267,6 +267,18 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "set_column_date_format", expected_revision: expectedRevision, collection, field, date_format: dateFormat});
   }
 
+  async setColumnAlignment(expectedRevision: string, collection: string, field: string, alignment: "left" | "center" | "right" | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_alignment", expected_revision: expectedRevision, collection, field, alignment});
+  }
+
+  async setColumnWrap(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_wrap", expected_revision: expectedRevision, collection, field, wrap});
+  }
+
+  async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_column_width", expected_revision: expectedRevision, collection, field, width});
+  }
+
   async moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection> {
     return this.trackerCommand({type: "move_column", expected_revision: expected, collection, field, to_index: toIndex});
   }

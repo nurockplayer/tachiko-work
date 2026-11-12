@@ -54,7 +54,7 @@ pub use tachiko_semantic_core::{
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
     NumberFormat, NumberFormatError, NumberFormatKind, PresentationStore, Schema, SchemaId,
     SchemaKey, SemanticSubject, StableDiagnosticObservation, Value, display_name_failures,
-    prune_presentation, trim_display_name,
+    prune_presentation, trim_display_name, validate_presentation,
 };
 pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use thiserror::Error;

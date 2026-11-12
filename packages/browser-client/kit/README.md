@@ -69,6 +69,16 @@ format is stored.
 
 Date columns may similarly use `await client.setColumnDateFormat(revision, "tasks", "due", "ymd_cjk")`; pass `null` to clear. The formats are `iso`, `mdy`, `dmy`, `ymd_slash`, `ymd_cjk`, `month_day_year`, and `day_month_year`. Column projections include `date_format` when stored. Dates remain dates for comparisons and sorting.
 
+Column alignment, wrapping and width are presentation edits on any column:
+
+```ts
+await client.setColumnAlignment(revision, collection, field, "center");
+await client.setColumnWrap(revision, collection, field, false);
+await client.setColumnWidth(revision, collection, field, 2560);
+```
+
+Use the resulting revision for each subsequent call. Width is measured in 1/256 character units (1–65280). Pass `null` to clear any value; for wrap, `false` explicitly disables wrapping and differs from `null`. Each call is one Undo step. Windows expose these values on their columns.
+
 A bounded table window can carry the text the grid shows in Number and Date cells, so a
 client renders Work's string instead of formatting again:
 

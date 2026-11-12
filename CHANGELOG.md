@@ -6,6 +6,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- A column's alignment, wrapping and width are set through the kit
+  (`setColumnAlignment`, `setColumnWrap`, `setColumnWidth`), each undoable on
+  its own, and table windows report them per column.
+
 - Working-size XLSX and CSV imports admit up to 10,000 data rows and
   100,000 populated cells, with typed capacity refusals. Supported date
   formats on blank Date cells survive import and export.

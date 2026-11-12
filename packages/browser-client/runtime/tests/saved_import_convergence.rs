@@ -456,6 +456,8 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
                 constraint: None,
                 number_format: None,
                 date_format: None,
+                style: None,
+                width: None,
             })
             .collect(),
         column_totals: std::collections::BTreeMap::new(),
