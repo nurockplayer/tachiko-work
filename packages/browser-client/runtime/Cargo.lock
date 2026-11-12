@@ -404,6 +404,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tachiko-formula-engine",
+ "tachiko-semantic-core",
  "tachiko-storage",
  "tachiko-workspace-engine",
  "thiserror",

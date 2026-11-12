@@ -547,3 +547,311 @@ fn working_size_import_promotes_presentation() {
         crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
     assert_promoted(&runtime, &imported.metadata);
 }
+
+fn stage5_fixture() -> (SourceWorkbook, ImportSelection) {
+    let numeric = crate::interop_number_format::from_excel("#,##0.00").unwrap();
+    let rows = (0..3)
+        .map(|index| {
+            vec![
+                SourceCell {
+                    value: SourceValue::Text {
+                        value: format!("uniform {index}"),
+                    },
+                    style: CellStyle {
+                        bold: true,
+                        fill: Some("FFFFFF00".into()),
+                        border: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                SourceCell {
+                    value: SourceValue::Text {
+                        value: format!("mixed {index}"),
+                    },
+                    style: CellStyle {
+                        bold: index == 0,
+                        fill: (index == 1).then(|| "FF00B050".into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                SourceCell {
+                    value: SourceValue::Number { value: 1.0 },
+                    style: CellStyle {
+                        number_format: Some(if index == 1 { "0%" } else { "#,##0.00" }.into()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ]
+        })
+        .collect();
+    (
+        SourceWorkbook {
+            sheets: vec![SourceSheet {
+                name: "Styles".into(),
+                has_header: true,
+                columns: vec![
+                    SourceColumn {
+                        name: "Uniform".into(),
+                        width: Some(12.0),
+                        number_format: None,
+                    },
+                    SourceColumn {
+                        name: "Mixed".into(),
+                        width: None,
+                        number_format: None,
+                    },
+                    SourceColumn {
+                        name: "Number".into(),
+                        width: None,
+                        number_format: Some(numeric),
+                    },
+                ],
+                rows,
+                layout: SourceLayout::default(),
+            }],
+            ledger: vec![],
+        },
+        ImportSelection {
+            column_types: vec![vec![
+                ImportFieldType::Text,
+                ImportFieldType::Text,
+                ImportFieldType::Number,
+            ]],
+            extra_columns: vec![vec![]],
+        },
+    )
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn stage5_promotion_export_reopen_and_working_size() {
+    use tachiko_workspace_engine::{BorderSide, FieldId};
+    let (source, selection) = stage5_fixture();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "presentation_bound_dropped")
+    );
+    let sheet = &imported.metadata.sheets[0];
+    let schema = SchemaId::from(sheet.schema_id.clone());
+    let fields: Vec<FieldId> = sheet
+        .columns
+        .iter()
+        .map(|column| column.field_id.clone().into())
+        .collect();
+    let table = &runtime.presentation.tables[&schema];
+    let column = &runtime.presentation.styles[&table.column_styles[&fields[0]]];
+    assert_eq!(column.bold, Some(true));
+    assert_eq!(column.fill.as_deref(), Some("#FFFF00"));
+    assert_eq!(
+        column.borders,
+        Some(vec![
+            BorderSide::Top,
+            BorderSide::Right,
+            BorderSide::Bottom,
+            BorderSide::Left
+        ])
+    );
+    assert!(!table.column_styles.contains_key(&fields[1]));
+    for row in &sheet.rows {
+        assert!(!row.styles[0].bold && row.styles[0].fill.is_none() && !row.styles[0].border);
+    }
+    let style_at = |row: usize, column: usize| {
+        &runtime.presentation.styles[&runtime.presentation.cells[&(
+            EntityId::from(sheet.rows[row].entity_id.clone()),
+            fields[column].clone(),
+        )]]
+    };
+    assert_eq!(style_at(0, 1).bold, Some(true));
+    assert_eq!(style_at(1, 1).fill.as_deref(), Some("#00B050"));
+    assert_eq!(
+        style_at(1, 2).number_format,
+        crate::interop_number_format::from_excel("0%")
+    );
+    assert_eq!(sheet.rows[1].styles[2].number_format, None);
+    let snapshot = runtime.session.export_snapshot();
+    assert_eq!(
+        snapshot.document().schemas[&schema].fields[&fields[2]].number_format,
+        crate::interop_number_format::from_excel("#,##0.00")
+    );
+    let workbook = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    for (row, pattern) in reread.sheets[0]
+        .rows
+        .iter()
+        .zip(["#,##0.00", "0%", "#,##0.00"])
+    {
+        assert!(row[0].style.bold && row[0].style.border);
+        assert!(row[0].style.fill.as_deref().unwrap().ends_with("FFFF00"));
+        assert_eq!(row[2].style.number_format.as_deref(), Some(pattern));
+    }
+    assert!(reread.sheets[0].rows[0][1].style.bold);
+    assert!(
+        reread.sheets[0].rows[1][1]
+            .style
+            .fill
+            .as_deref()
+            .unwrap()
+            .to_ascii_uppercase()
+            .ends_with("00B050")
+    );
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let mut reopened = None;
+    crate::open_project(&mut reopened, &saved.bytes, OCCURRENCE).unwrap();
+    assert_eq!(reopened.unwrap().presentation, runtime.presentation);
+    let (working, working_imported) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(working.presentation, runtime.presentation);
+    assert_eq!(working_imported.metadata, imported.metadata);
+}
+
+#[test]
+fn stage5_false_bold_overrides_column() {
+    let field = field("text", FieldType::Text, None);
+    let column = StoredStyle {
+        bold: Some(true),
+        ..Default::default()
+    };
+    let cell = StoredStyle {
+        bold: Some(false),
+        ..Default::default()
+    };
+    let column_id = tachiko_storage::style_id(&column).unwrap();
+    let cell_id = tachiko_storage::style_id(&cell).unwrap();
+    let mut store = PresentationStore::default();
+    store
+        .styles
+        .extend([(column_id.clone(), column), (cell_id.clone(), cell)]);
+    store.tables.insert(
+        "table".into(),
+        TablePresentation {
+            column_styles: BTreeMap::from([(field.id.clone(), column_id)]),
+            ..Default::default()
+        },
+    );
+    store
+        .cells
+        .insert(("row".into(), field.id.clone()), cell_id);
+    let style = crate::interop_date_format::cell_style(
+        &store,
+        &"table".into(),
+        &field,
+        &"row".into(),
+        &SourceValue::Text { value: "x".into() },
+        CellStyle::default(),
+    );
+    assert!(!style.bold);
+    let (source, selection) = stage5_fixture();
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let mut store = runtime.presentation.clone();
+    let exception = StoredStyle {
+        bold: Some(false),
+        ..Default::default()
+    };
+    let id = tachiko_storage::style_id(&exception).unwrap();
+    store.styles.insert(id.clone(), exception);
+    store.cells.insert(
+        (
+            sheet.rows[0].entity_id.clone().into(),
+            sheet.columns[0].field_id.clone().into(),
+        ),
+        id,
+    );
+    runtime.set_presentation(store).unwrap();
+    let workbook = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    assert!(!reread.sheets[0].rows[0][0].style.bold);
+    assert!(reread.sheets[0].rows[1][0].style.bold);
+}
+
+#[test]
+fn stage5_unmapped_presentation_stays_in_metadata_and_export() {
+    let (mut source, selection) = stage5_fixture();
+    source.sheets[0].columns[2].number_format = None;
+    source.sheets[0].rows[0][1].style.fill = Some("theme1".into());
+    source.sheets[0].rows[0][2].style.number_format = Some("0.00E+00".into());
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(
+        imported.metadata.sheets[0].rows[0].styles[1]
+            .fill
+            .as_deref(),
+        Some("theme1")
+    );
+    assert_eq!(
+        imported.metadata.sheets[0].rows[0].styles[2]
+            .number_format
+            .as_deref(),
+        Some("0.00E+00")
+    );
+    // Invalid RGB fills already prevent XLSX projection; preservation must not
+    // silently turn them into a different valid color.
+    assert!(
+        runtime
+            .export_workbook(runtime.current_revision(), &imported.metadata)
+            .is_err()
+    );
+    let mut metadata = imported.metadata.clone();
+    metadata.sheets[0].rows[0].styles[1].fill = None;
+    let workbook = runtime
+        .export_workbook(runtime.current_revision(), &metadata)
+        .unwrap();
+    assert_eq!(
+        workbook.sheets[0].rows[0][2].style.number_format.as_deref(),
+        Some("0.00E+00")
+    );
+}
+
+#[test]
+fn stage5_palette_bound_drops_cell_and_validates() {
+    let mut document = Document::empty("doc", "Doc");
+    let definition = field("text", FieldType::Text, None);
+    document.schemas.insert(
+        "table".into(),
+        Schema {
+            id: "table".into(),
+            key: "table".into(),
+            display_name: None,
+            field_order: None,
+            fields: BTreeMap::from([(definition.id.clone(), definition)]),
+        },
+    );
+    let mut pending = BTreeMap::new();
+    for index in 0..4097 {
+        let id = format!("row{index:04}");
+        document.entities.insert(
+            id.clone().into(),
+            Entity {
+                id: id.clone().into(),
+                key: id.clone().into(),
+                schema: "table".into(),
+                fields: BTreeMap::new(),
+            },
+        );
+        pending.insert(
+            (id.into(), "text".into()),
+            StoredStyle {
+                fill: Some(format!("#{index:06X}")),
+                ..Default::default()
+            },
+        );
+    }
+    let mut store = PresentationStore::default();
+    assert!(crate::interop_document::bound_import_presentation(
+        &mut store, pending, 4097
+    ));
+    assert_eq!(store.styles.len(), 4096);
+    assert_eq!(store.cells.len(), 4096);
+    tachiko_semantic_core::validate_presentation(&store, &document).unwrap();
+}
