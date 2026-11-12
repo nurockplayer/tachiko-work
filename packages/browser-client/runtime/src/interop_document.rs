@@ -980,6 +980,7 @@ fn import_workbook_candidate(
         selection,
         occurrence_id,
         DesignerRuntime::from_document,
+        false,
     )?;
     match runtime.profile {
         SessionProfile::TextCapacity if !super::interop_adapter::text_capacity_shape(workbook) => {
@@ -1045,6 +1046,7 @@ fn import_workbook_working_size_candidate(
         selection,
         occurrence_id,
         DesignerRuntime::from_document_working_size,
+        true,
     )?;
     normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
     validate_import_metadata_for_profile(
@@ -1115,8 +1117,9 @@ fn import_workbook_document(
     selection: &ImportSelection,
     occurrence_id: &str,
     admit: fn(Document, &str) -> Result<DesignerRuntime, DesignerError>,
+    working: bool,
 ) -> Result<(DesignerRuntime, InteropMetadata, Vec<FidelityFinding>), DesignerError> {
-    validate_selection(workbook, selection)?;
+    validate_selection(workbook, selection, working)?;
     // One for the document, then each sheet's schema, fields and rows.
     let total_ids = 1 + workbook
         .sheets
@@ -1141,7 +1144,8 @@ fn import_workbook_document(
             sheet_index,
             sheet,
             selection,
-            super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
+            !working
+                && super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
             &mut ids,
             &mut document,
             &mut metadata,
@@ -1335,6 +1339,7 @@ fn promote_import_presentation(
             let mut alignments = Vec::new();
             let mut wraps = Vec::new();
             let mut dates = Vec::new();
+            let mut blank_date_formats = Vec::new();
             let field = &document.schemas[&schema_id].fields[&field_id];
             let is_number = field.field_type == FieldType::Number;
             let field_number_format = field.number_format.clone();
@@ -1393,6 +1398,13 @@ fn promote_import_presentation(
                 // there later gets, so it takes part like a Date value.
                 let stored = document.entities[&entity].fields.get(&field_id);
                 let is_date_value = is_date && matches!(stored, Some(Value::Date(_)));
+                blank_date_formats.push(
+                    is_date
+                        && stored.is_none()
+                        && pattern
+                            .and_then(crate::interop_date_format::from_excel)
+                            .is_some(),
+                );
                 let takes_part = is_date
                     && match stored {
                         Some(Value::Date(_)) => true,
@@ -1410,9 +1422,9 @@ fn promote_import_presentation(
                     if format.is_none() && unsupported.is_none() {
                         unsupported = pattern.map(str::to_owned);
                     }
-                    // Export reads the store only for Date values, so a
-                    // blank cell keeps its own pattern in metadata.
-                    if is_date_value {
+                    // Supported blank-cell patterns are represented by the
+                    // same presentation store as patterns on Date values.
+                    if is_date_value || format.is_some() {
                         style.number_format = None;
                     }
                     Some(format.unwrap_or(DateFormat::Iso))
@@ -1494,7 +1506,11 @@ fn promote_import_presentation(
                         alignments[row_index]
                     },
                     wrap: (wraps[row_index] && !common_wrap).then_some(true),
-                    date_format: if uniform_date.is_none() {
+                    date_format: if blank_date_formats[row_index] {
+                        dates[row_index].filter(|format| {
+                            Some(*format) != uniform_date.filter(|value| *value != DateFormat::Iso)
+                        })
+                    } else if uniform_date.is_none() {
                         dates[row_index].filter(|format| *format != DateFormat::Iso)
                     } else {
                         None
@@ -1585,11 +1601,14 @@ fn stable_reference_binding() -> FidelityFinding {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One ordered admission pass over geometry, types, formulas and size.
 fn validate_selection(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
+    working: bool,
 ) -> Result<(), DesignerError> {
-    let capacity = super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity;
+    let capacity =
+        !working && super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity;
     let capacity_selection = workbook.sheets.first().is_some_and(|sheet| {
         selection.column_types.len() == 1
             && selection.column_types[0].len() == sheet.columns.len()
@@ -1609,7 +1628,8 @@ fn validate_selection(
             "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
-    super::interop_adapter::validate_import_geometry(workbook).map_err(interop_admission_error)?;
+    super::interop_adapter::validate_import_geometry_profile(workbook, working)
+        .map_err(interop_admission_error)?;
     if workbook.ledger.iter().any(|finding| finding.blocking) {
         return Err(tracker_error("blocking fidelity findings prevent import"));
     }
@@ -1635,7 +1655,9 @@ fn validate_selection(
         }
         super::interop_adapter::check_import_limit(
             super::CapacityLimit::TableFields,
-            if capacity {
+            if working {
+                super::capacity::WORKING_LIMITS.table_fields
+            } else if capacity {
                 MAX_TEXT_CAPACITY_COLUMNS
             } else {
                 MAX_COLUMNS
@@ -1665,17 +1687,29 @@ fn validate_selection(
     }
     super::interop_adapter::check_import_limit(
         super::CapacityLimit::Formulas,
-        super::capacity::DEFAULT_LIMITS.formulas,
+        if working {
+            super::capacity::WORKING_LIMITS.formulas
+        } else {
+            super::capacity::DEFAULT_LIMITS.formulas
+        },
         formulas,
         None,
         false,
     )
     .map_err(interop_admission_error)?;
-    if serde_json::to_vec(workbook)
+    let source_bytes = serde_json::to_vec(workbook)
         .map_err(|_| tracker_error("source workbook is not encodable"))?
-        .len()
-        > super::interop_adapter::MAX_EXPANDED_BYTES
-    {
+        .len();
+    if working {
+        super::interop_adapter::check_import_limit(
+            super::CapacityLimit::SerializedSourceBytes,
+            super::interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES,
+            source_bytes,
+            None,
+            false,
+        )
+        .map_err(interop_admission_error)?;
+    } else if source_bytes > super::interop_adapter::MAX_EXPANDED_BYTES {
         return Err(tracker_error(
             "source workbook exceeds the bounded expanded profile",
         ));
@@ -3229,6 +3263,9 @@ fn validate_historical_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
+            SessionProfile::WorkingSize if metadata.version == 1 => {
+                super::interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES
+            }
             SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )
@@ -3280,7 +3317,8 @@ fn reconcile_import_rows(
         || sheet.rows.len()
             > match profile {
                 SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
+                SessionProfile::Ordinary => MAX_DATA_ROWS,
+                SessionProfile::WorkingSize => super::capacity::WORKING_LIMITS.table_rows,
             }
     {
         return Err(refuse(
@@ -3458,7 +3496,8 @@ fn validate_exact_import_metadata(
             || sheet.rows.len()
                 > match profile {
                     SessionProfile::TextCapacity => super::interop_adapter::MAX_TEXT_CAPACITY_ROWS,
-                    SessionProfile::Ordinary | SessionProfile::WorkingSize => MAX_DATA_ROWS,
+                    SessionProfile::Ordinary => MAX_DATA_ROWS,
+                    SessionProfile::WorkingSize => super::capacity::WORKING_LIMITS.table_rows,
                 }
         {
             return Err(tracker_error(
@@ -3541,6 +3580,9 @@ fn validate_metadata_envelope(
         metadata,
         match profile {
             SessionProfile::TextCapacity => 3 * 1024 * 1024,
+            SessionProfile::WorkingSize if metadata.version == 1 => {
+                super::interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES
+            }
             SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
         },
     )?;
@@ -3662,7 +3704,13 @@ impl DesignerRuntime {
             }
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
-        let profile = self.imported_output_profile();
+        let profile = if self.profile == SessionProfile::WorkingSize
+            && matches!(output, ImportedOutput::Projection)
+        {
+            OutputProfile::WorkingSize
+        } else {
+            self.imported_output_profile()
+        };
         let mut workbook = self
             .rebuild_workbook_from_metadata(
                 expected_revision,

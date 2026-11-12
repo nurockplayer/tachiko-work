@@ -10,6 +10,10 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 pub const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_EXPANDED_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_WORKING_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_WORKING_EXPANDED_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_WORKING_XML_NODES: usize = 1_500_000;
+pub(crate) const MAX_WORKING_SERIALIZED_SOURCE_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_ZIP_ENTRIES: usize = 256;
 pub const MAX_SHEETS: usize = crate::capacity::DEFAULT_LIMITS.collections;
 pub const MAX_COLUMNS: usize = crate::capacity::DEFAULT_LIMITS.table_fields;
@@ -43,6 +47,7 @@ pub(crate) const MAX_TEXT_CAPACITY_HEADER_BYTES: usize = 39;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputProfile {
     Shared,
+    WorkingSize,
     NativeTracker,
     NativeTables,
     TextCapacity,
@@ -52,6 +57,7 @@ impl OutputProfile {
     const fn max_sheets(self) -> usize {
         match self {
             Self::Shared => MAX_SHEETS,
+            Self::WorkingSize => crate::capacity::WORKING_LIMITS.collections,
             Self::NativeTracker => MAX_NATIVE_TRACKER_SHEETS,
             Self::NativeTables => MAX_NATIVE_TABLES_SHEETS,
             Self::TextCapacity => 1,
@@ -61,6 +67,7 @@ impl OutputProfile {
     const fn max_columns(self) -> usize {
         match self {
             Self::Shared => MAX_COLUMNS,
+            Self::WorkingSize => crate::capacity::WORKING_LIMITS.table_fields,
             Self::NativeTracker => MAX_NATIVE_TRACKER_COLUMNS,
             Self::NativeTables => MAX_NATIVE_TABLES_COLUMNS,
             Self::TextCapacity => MAX_TEXT_CAPACITY_COLUMNS,
@@ -77,6 +84,7 @@ impl OutputProfile {
     const fn max_data_rows(self) -> usize {
         match self {
             Self::Shared => MAX_DATA_ROWS,
+            Self::WorkingSize => crate::capacity::WORKING_LIMITS.table_rows,
             Self::NativeTracker => MAX_NATIVE_TRACKER_DATA_ROWS,
             Self::NativeTables => MAX_NATIVE_TABLES_DATA_ROWS,
             Self::TextCapacity => MAX_TEXT_CAPACITY_ROWS,
@@ -1560,26 +1568,39 @@ pub(crate) fn check_import_limit(
     })
 }
 
-pub(crate) fn validate_import_geometry(workbook: &SourceWorkbook) -> Result<()> {
+pub(crate) fn validate_import_geometry_profile(
+    workbook: &SourceWorkbook,
+    working: bool,
+) -> Result<()> {
     check_import_limit(
         crate::CapacityLimit::Collections,
-        MAX_SHEETS,
+        if working {
+            crate::capacity::WORKING_LIMITS.collections
+        } else {
+            MAX_SHEETS
+        },
         workbook.sheets.len(),
         None,
         false,
     )?;
-    let capacity = output_profile(workbook) == OutputProfile::TextCapacity;
+    let capacity = !working && output_profile(workbook) == OutputProfile::TextCapacity;
     for sheet in &workbook.sheets {
         check_import_limit(
             crate::CapacityLimit::TableFields,
-            MAX_COLUMNS,
+            if working {
+                crate::capacity::WORKING_LIMITS.table_fields
+            } else {
+                MAX_COLUMNS
+            },
             sheet.columns.len(),
             Some(&sheet.name),
             false,
         )?;
         check_import_limit(
             crate::CapacityLimit::TableRows,
-            if capacity {
+            if working {
+                crate::capacity::WORKING_LIMITS.table_rows
+            } else if capacity {
                 MAX_TEXT_CAPACITY_ROWS
             } else {
                 MAX_DATA_ROWS
@@ -1592,8 +1613,38 @@ pub(crate) fn validate_import_geometry(workbook: &SourceWorkbook) -> Result<()> 
     if !capacity {
         check_import_limit(
             crate::CapacityLimit::TotalEntities,
-            MAX_TOTAL_DATA_ROWS,
+            if working {
+                crate::capacity::WORKING_LIMITS.total_entities
+            } else {
+                MAX_TOTAL_DATA_ROWS
+            },
             workbook.sheets.iter().map(|sheet| sheet.rows.len()).sum(),
+            None,
+            false,
+        )?;
+    }
+    if working {
+        let cells = workbook
+            .sheets
+            .iter()
+            .flat_map(|sheet| &sheet.rows)
+            .flatten()
+            .filter(|cell| !matches!(cell.value, SourceValue::Empty) || cell.formula.is_some())
+            .count();
+        check_import_limit(
+            crate::CapacityLimit::PopulatedCells,
+            crate::capacity::WORKING_LIMITS.populated_cells,
+            cells,
+            None,
+            false,
+        )?;
+        let bytes = serde_json::to_vec(workbook)
+            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?
+            .len();
+        check_import_limit(
+            crate::CapacityLimit::SerializedSourceBytes,
+            MAX_WORKING_SERIALIZED_SOURCE_BYTES,
+            bytes,
             None,
             false,
         )?;
@@ -1617,6 +1668,22 @@ fn finding(
     }
 }
 fn source_bound(bytes: &[u8]) -> Result<()> {
+    source_bound_profile(bytes, false)
+}
+
+fn source_bound_profile(bytes: &[u8], working: bool) -> Result<()> {
+    if working {
+        if bytes.is_empty() {
+            return fail("Source must not be empty");
+        }
+        return check_import_limit(
+            crate::CapacityLimit::SourceBytes,
+            MAX_WORKING_SOURCE_BYTES,
+            bytes.len(),
+            None,
+            false,
+        );
+    }
     if bytes.is_empty() || bytes.len() > MAX_SOURCE_BYTES {
         fail("Source must contain 1..=2097152 bytes")
     } else {
@@ -1627,12 +1694,20 @@ fn source_bound(bytes: &[u8]) -> Result<()> {
 /// Parse CSV without accepting inferred types.
 /// # Errors
 /// Rejects invalid UTF-8, quoting, headers or profile bounds.
-#[allow(clippy::too_many_lines)] // One bounded delimiter state machine.
 pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
+    import_csv_profile(bytes, options, false)
+}
+
+#[allow(clippy::too_many_lines)] // One bounded delimiter state machine.
+pub(crate) fn import_csv_profile(
+    bytes: &[u8],
+    options: &ImportOptions,
+    working: bool,
+) -> Result<SourceWorkbook> {
     if !options.header_rows.is_empty() || options.keep_summary_rows {
         return fail("header_rows and keep_summary_rows apply to XLSX only");
     }
-    source_bound(bytes)?;
+    source_bound_profile(bytes, working)?;
     if ![',', ';', '\t'].contains(&options.delimiter) {
         return fail("Unsupported CSV delimiter");
     }
@@ -1683,14 +1758,22 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
         }
         check_import_limit(
             crate::CapacityLimit::TableFields,
-            MAX_COLUMNS,
+            if working {
+                crate::capacity::WORKING_LIMITS.table_fields
+            } else {
+                MAX_COLUMNS
+            },
             row.len(),
             Some("Imported table"),
             true,
         )?;
         check_import_limit(
             crate::CapacityLimit::TableRows,
-            MAX_TEXT_CAPACITY_ROWS,
+            if working {
+                crate::capacity::WORKING_LIMITS.table_rows
+            } else {
+                MAX_TEXT_CAPACITY_ROWS
+            },
             rows.len().saturating_sub(usize::from(options.header)),
             Some("Imported table"),
             true,
@@ -1706,7 +1789,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
     crate::capacity::check_limit(
         crate::CapacityLimit::TableRows,
-        MAX_TEXT_CAPACITY_ROWS,
+        if working {
+            crate::capacity::WORKING_LIMITS.table_rows
+        } else {
+            MAX_TEXT_CAPACITY_ROWS
+        },
         rows.len().saturating_sub(usize::from(options.header)),
         Some("Imported table"),
     )?;
@@ -1715,7 +1802,11 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
     }
     check_import_limit(
         crate::CapacityLimit::TableFields,
-        MAX_COLUMNS,
+        if working {
+            crate::capacity::WORKING_LIMITS.table_fields
+        } else {
+            MAX_COLUMNS
+        },
         width,
         Some("Imported table"),
         false,
@@ -1780,14 +1871,14 @@ pub fn import_csv(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkboo
             ),
         ],
     };
-    if output_profile(&workbook) == OutputProfile::TextCapacity {
+    if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
-    validate_import_geometry(&workbook)?;
-    Ok(finish_source_admission(workbook))
+    validate_import_geometry_profile(&workbook, working)?;
+    Ok(finish_source_admission(workbook, working))
 }
 
 // Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
@@ -1954,8 +2045,12 @@ fn capacity_plain_declaration(decl: &quick_xml::events::BytesDecl<'_>) -> bool {
     position > 0
 }
 
-#[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
 fn parse_xml(bytes: &[u8]) -> Result<Xml> {
+    parse_xml_profile(bytes, false)
+}
+
+#[allow(clippy::too_many_lines)] // One XML event state machine and namespace scope.
+fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
     let input = std::str::from_utf8(bytes)
         .map_err(|_| InteropError::Invalid("XML must be UTF-8".into()))?;
     if input.chars().any(|c| {
@@ -1987,7 +2082,18 @@ fn parse_xml(bytes: &[u8]) -> Result<Xml> {
         match event {
             Event::Start(e) | Event::Empty(e) => {
                 nodes += 1;
-                if nodes > 100_000 || stack.len() >= 64 {
+                if working {
+                    check_import_limit(
+                        crate::CapacityLimit::XmlNodes,
+                        MAX_WORKING_XML_NODES,
+                        nodes,
+                        None,
+                        true,
+                    )?;
+                } else if nodes > 100_000 {
+                    return fail("XML structure exceeds bounded profile");
+                }
+                if stack.len() >= 64 {
                     return fail("XML structure exceeds bounded profile");
                 }
                 let mut bindings = stack
@@ -2170,8 +2276,8 @@ fn attach_xml(
     Ok(())
 }
 
-fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
-    source_bound(bytes)?;
+fn archive(bytes: &[u8], working: bool) -> Result<BTreeMap<String, Vec<u8>>> {
+    source_bound_profile(bytes, working)?;
     validate_zip_directory(bytes)?;
     let mut zip =
         ZipArchive::new(Cursor::new(bytes)).map_err(|e| InteropError::Invalid(e.to_string()))?;
@@ -2200,7 +2306,15 @@ fn archive(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
         total = total
             .checked_add(size)
             .ok_or_else(|| InteropError::Invalid("ZIP size overflow".into()))?;
-        if total > MAX_EXPANDED_BYTES {
+        if working {
+            check_import_limit(
+                crate::CapacityLimit::ExpandedBytes,
+                MAX_WORKING_EXPANDED_BYTES,
+                total,
+                None,
+                false,
+            )?;
+        } else if total > MAX_EXPANDED_BYTES {
             return fail("Expanded ZIP exceeds 8 MiB");
         }
         let mut contents = Vec::new();
@@ -2282,8 +2396,14 @@ fn part<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Result<&'a [u8]
         .map(Vec::as_slice)
         .ok_or_else(|| InteropError::Invalid(format!("Missing XLSX part {name}")))
 }
-fn xml_part(parts: &BTreeMap<String, Vec<u8>>, name: &str, root: &str, ns: &str) -> Result<Xml> {
-    let xml = parse_xml(part(parts, name)?)?;
+fn xml_part(
+    parts: &BTreeMap<String, Vec<u8>>,
+    name: &str,
+    root: &str,
+    ns: &str,
+    working: bool,
+) -> Result<Xml> {
+    let xml = parse_xml_profile(part(parts, name)?, working)?;
     if xml.name != root || xml.ns != ns {
         return fail(format!("Invalid namespace/root for {name}"));
     }
@@ -2381,6 +2501,7 @@ fn root_inventory(
     parts: &BTreeMap<String, Vec<u8>>,
     worksheets: &BTreeSet<String>,
     ledger: &mut Vec<FidelityFinding>,
+    working: bool,
 ) -> Result<()> {
     let worksheet_relationships = worksheets
         .iter()
@@ -2390,7 +2511,7 @@ fn root_inventory(
         let lower = path.to_ascii_lowercase();
         let mut inventoried = false;
         if lower == "xl/featurepropertybag/featurepropertybag.xml" {
-            let xml = parse_xml(bytes)?;
+            let xml = parse_xml_profile(bytes, working)?;
             if checkbox_property_bags(&xml) {
                 inventoried = true;
                 ledger.push(finding(FidelityCategory::LossyOnExport,"checkbox_presentation",path,"Checkbox control presentation is source-only; Boolean cell values are preserved",false));
@@ -2422,7 +2543,7 @@ fn root_inventory(
                 | "xl/sharedStrings.xml"
         ) || worksheets.contains(path);
         if worksheet_relationships.contains(path) {
-            ledger.push(worksheet_relationship_finding(path, bytes)?);
+            ledger.push(worksheet_relationship_finding(path, bytes, working)?);
             inventoried = true;
         }
         let presentation = lower.starts_with("docprops/")
@@ -2451,7 +2572,7 @@ fn root_inventory(
             ));
         }
         if lower.ends_with(".xml") || lower.ends_with(".rels") {
-            let xml = parse_xml(bytes)?;
+            let xml = parse_xml_profile(bytes, working)?;
             let mut relationships = Vec::new();
             xml.all("Relationship", &mut relationships);
             for node in relationships {
@@ -2475,8 +2596,12 @@ fn worksheet_relationship_path(path: &str) -> String {
         |(parent, name)| format!("{parent}/_rels/{name}.rels"),
     )
 }
-fn worksheet_relationship_finding(path: &str, bytes: &[u8]) -> Result<FidelityFinding> {
-    let xml = parse_xml(bytes)?;
+fn worksheet_relationship_finding(
+    path: &str,
+    bytes: &[u8],
+    working: bool,
+) -> Result<FidelityFinding> {
+    let xml = parse_xml_profile(bytes, working)?;
     if xml.name != "Relationships"
         || xml.ns != REL
         || xml
@@ -2820,11 +2945,12 @@ fn capacity_plain_bindings(path: &str, xml: &Xml, parts: &BTreeMap<String, Vec<u
 fn parse_styles(
     parts: &BTreeMap<String, Vec<u8>>,
     ledger: &mut Vec<FidelityFinding>,
+    working: bool,
 ) -> Result<Vec<CellStyle>> {
     if !parts.contains_key("xl/styles.xml") {
         return Ok(vec![CellStyle::default()]);
     }
-    let xml = xml_part(parts, "xl/styles.xml", "styleSheet", MAIN)?;
+    let xml = xml_part(parts, "xl/styles.xml", "styleSheet", MAIN, working)?;
     let formats = xml
         .child("numFmts")
         .map(|n| {
@@ -3259,13 +3385,27 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships, resource limits and
 /// header or summary-row options that do not fit the workbook.
-#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
 pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
-    let parts = archive(bytes)?;
+    import_xlsx_profile(bytes, options, false)
+}
+
+#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
+pub(crate) fn import_xlsx_profile(
+    bytes: &[u8],
+    options: &ImportOptions,
+    working: bool,
+) -> Result<SourceWorkbook> {
+    let parts = archive(bytes, working)?;
     let mut ledger = Vec::new();
-    let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN)?;
+    let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN, working)?;
     inventory_workbook_children(&workbook, &mut ledger)?;
-    let relationships = xml_part(&parts, "xl/_rels/workbook.xml.rels", "Relationships", REL)?;
+    let relationships = xml_part(
+        &parts,
+        "xl/_rels/workbook.xml.rels",
+        "Relationships",
+        REL,
+        working,
+    )?;
     let mut rels = BTreeMap::new();
     for relationship in relationships.kids("Relationship") {
         let id = relationship
@@ -3283,9 +3423,9 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         Some("1" | "true") => true,
         Some(_) => return fail("Invalid workbook date1904 boolean"),
     };
-    let styles = parse_styles(&parts, &mut ledger)?;
+    let styles = parse_styles(&parts, &mut ledger, working)?;
     let shared = if parts.contains_key("xl/sharedStrings.xml") {
-        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN)?;
+        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
         if strings
             .children
             .iter()
@@ -3307,7 +3447,11 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
     }
     check_import_limit(
         crate::CapacityLimit::Collections,
-        MAX_SHEETS,
+        if working {
+            crate::capacity::WORKING_LIMITS.collections
+        } else {
+            MAX_SHEETS
+        },
         sheet_nodes.len(),
         None,
         false,
@@ -3353,7 +3497,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 .attr("Target")
                 .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
-        let xml = xml_part(&parts, &path, "worksheet", MAIN)?;
+        let xml = xml_part(&parts, &path, "worksheet", MAIN, working)?;
         if !worksheet_paths.insert(path.clone()) {
             return fail("Duplicate worksheet part mapping");
         }
@@ -3417,13 +3561,15 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
             if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
             }
-            check_import_limit(
-                crate::CapacityLimit::TableRows,
-                MAX_TEXT_CAPACITY_ROWS,
-                row_index - 1,
-                Some(&name),
-                true,
-            )?;
+            if !working {
+                check_import_limit(
+                    crate::CapacityLimit::TableRows,
+                    MAX_TEXT_CAPACITY_ROWS,
+                    row_index - 1,
+                    Some(&name),
+                    true,
+                )?;
+            }
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
@@ -3435,7 +3581,11 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 }
                 check_import_limit(
                     crate::CapacityLimit::TableFields,
-                    MAX_COLUMNS,
+                    if working {
+                        crate::capacity::WORKING_LIMITS.table_fields
+                    } else {
+                        MAX_COLUMNS
+                    },
                     col + 1,
                     Some(&name),
                     true,
@@ -3479,7 +3629,11 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                     formula_count += 1;
                     check_import_limit(
                         crate::CapacityLimit::Formulas,
-                        MAX_FORMULAS,
+                        if working {
+                            crate::capacity::WORKING_LIMITS.formulas
+                        } else {
+                            MAX_FORMULAS
+                        },
                         formula_count,
                         None,
                         true,
@@ -3699,7 +3853,11 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 }
                 check_import_limit(
                     crate::CapacityLimit::TableFields,
-                    MAX_COLUMNS,
+                    if working {
+                        crate::capacity::WORKING_LIMITS.table_fields
+                    } else {
+                        MAX_COLUMNS
+                    },
                     max,
                     Some(&name),
                     true,
@@ -3712,7 +3870,7 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
                 }
             }
         }
-        if rows.len() > MAX_DATA_ROWS && !capacity_plain {
+        if !working && rows.len() > MAX_DATA_ROWS && !capacity_plain {
             check_import_limit(
                 crate::CapacityLimit::TableRows,
                 MAX_DATA_ROWS,
@@ -3730,20 +3888,20 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
         });
     }
     refuse_foreign_aggregates(&mut sheets, &mut ledger);
-    root_inventory(&parts, &worksheet_paths, &mut ledger)?;
-    let plain = capacity_plain_parts(&parts)?;
+    root_inventory(&parts, &worksheet_paths, &mut ledger, working)?;
+    let plain = !working && capacity_plain_parts(&parts)?;
     // Parser-derived classification replaces the existing record with a shorter
     // code. Nonplain generic source ledgers and their wire width stay unchanged.
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let workbook = SourceWorkbook { sheets, ledger };
-    if output_profile(&workbook) == OutputProfile::TextCapacity {
+    if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate isolated Number-feasibility hypotheses without changing
         // the typed values the user sees and explicitly selects.
         validate_capacity_source_inspection(&workbook)?;
         return Ok(workbook);
     }
-    validate_import_geometry(&workbook)?;
-    Ok(finish_source_admission(workbook))
+    validate_import_geometry_profile(&workbook, working)?;
+    Ok(finish_source_admission(workbook, working))
 }
 
 /// Leading title rows are skipped only when a complete header follows them.
@@ -4590,9 +4748,14 @@ pub(super) fn keep_cached_value(
 
 /// Every parsed source uses the same representation predicate as output. Existing
 /// blockers retain their original inventory and are never replaced by a generic error.
-fn finish_source_admission(mut workbook: SourceWorkbook) -> SourceWorkbook {
+fn finish_source_admission(mut workbook: SourceWorkbook, working: bool) -> SourceWorkbook {
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
-        if let Err(error) = validate_output(&workbook) {
+        let result = if working {
+            validate_output_for_profile(&workbook, OutputProfile::WorkingSize)
+        } else {
+            validate_output(&workbook)
+        };
+        if let Err(error) = result {
             workbook.ledger.push(finding(
                 FidelityCategory::UnsupportedSafeDisabled,
                 "output_profile_rejected",
@@ -4837,6 +5000,7 @@ fn validate_output_collection_bounds(
     }
     let max_total_rows = match profile {
         OutputProfile::Shared => Some(MAX_TOTAL_DATA_ROWS),
+        OutputProfile::WorkingSize => Some(crate::capacity::WORKING_LIMITS.total_entities),
         OutputProfile::NativeTables => Some(MAX_NATIVE_TABLES_TOTAL_ROWS),
         OutputProfile::NativeTracker | OutputProfile::TextCapacity => None,
     };
@@ -4984,10 +5148,15 @@ pub(crate) fn validate_output_for_profile(
             }
         }
     }
-    if formulas > MAX_FORMULAS {
+    let max_formulas = if profile == OutputProfile::WorkingSize {
+        crate::capacity::WORKING_LIMITS.formulas
+    } else {
+        MAX_FORMULAS
+    };
+    if formulas > max_formulas {
         return Err(crate::CapacityExceeded {
             limit: crate::CapacityLimit::Formulas,
-            maximum: MAX_FORMULAS,
+            maximum: max_formulas,
             attempted: formulas,
             collection: None,
         }

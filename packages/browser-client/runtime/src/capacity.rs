@@ -121,6 +121,10 @@ pub enum CapacityLimit {
     DependencyEdges,
     ProjectionBytes,
     SavedBytes,
+    SourceBytes,
+    ExpandedBytes,
+    XmlNodes,
+    SerializedSourceBytes,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
@@ -135,7 +139,13 @@ pub struct CapacityExceeded {
 
 impl CapacityExceeded {
     pub(crate) fn import_message(&self, at_least: bool) -> String {
-        if self.limit == CapacityLimit::ProjectionBytes {
+        if matches!(
+            self.limit,
+            CapacityLimit::ProjectionBytes
+                | CapacityLimit::SourceBytes
+                | CapacityLimit::ExpandedBytes
+                | CapacityLimit::SerializedSourceBytes
+        ) {
             return format!(
                 "Workbook is too large to open: it needs {} bytes and the limit is {}. The workbook was not imported.",
                 self.attempted, self.maximum
@@ -150,6 +160,7 @@ impl CapacityExceeded {
             CapacityLimit::TableFields => "columns",
             CapacityLimit::TableRows | CapacityLimit::TotalEntities => "data rows",
             CapacityLimit::Formulas => "formulas",
+            CapacityLimit::XmlNodes => "XML nodes",
             _ => "items",
         };
         let bound = if at_least { "at least " } else { "" };

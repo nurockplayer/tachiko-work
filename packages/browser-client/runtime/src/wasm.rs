@@ -7,8 +7,8 @@ use serde::Deserialize;
 use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
-    OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile, import_csv,
-    import_xlsx_with, validate_text_capacity_inspection,
+    OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
+    import_csv_profile, import_xlsx_profile, validate_text_capacity_inspection,
 };
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
@@ -37,6 +37,8 @@ enum SpreadsheetOperation {
     Inspect {
         format: SpreadsheetFormat,
         csv_options: ImportOptions,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     Import {
         format: SpreadsheetFormat,
@@ -356,15 +358,16 @@ fn import_source(
     source: &[u8],
     format: SpreadsheetFormat,
     options: &ImportOptions,
+    working: bool,
 ) -> Result<SourceWorkbook, DesignerError> {
-    if source.is_empty() || source.len() > MAX_SOURCE_BYTES {
+    if source.is_empty() || (!working && source.len() > MAX_SOURCE_BYTES) {
         return Err(DesignerError::InvalidProjectTransfer {
             message: format!("Spreadsheet source must contain 1..={MAX_SOURCE_BYTES} bytes"),
         });
     }
     match format {
-        SpreadsheetFormat::Csv => import_csv(source, options),
-        SpreadsheetFormat::Xlsx => import_xlsx_with(source, options),
+        SpreadsheetFormat::Csv => import_csv_profile(source, options, working),
+        SpreadsheetFormat::Xlsx => import_xlsx_profile(source, options, working),
     }
     .map_err(interop_error)
 }
@@ -394,9 +397,13 @@ fn spreadsheet_operation(
         SpreadsheetOperation::Inspect {
             format,
             csv_options,
+            profile,
         } => {
-            let workbook = import_source(project, format, &csv_options)?;
-            let profile = if validate_text_capacity_inspection(&workbook).is_ok() {
+            let working = profile.is_some();
+            let workbook = import_source(project, format, &csv_options, working)?;
+            let profile = if working {
+                SessionProfile::WorkingSize
+            } else if validate_text_capacity_inspection(&workbook).is_ok() {
                 SessionProfile::TextCapacity
             } else {
                 SessionProfile::Ordinary
@@ -414,7 +421,7 @@ fn spreadsheet_operation(
             install,
             profile,
         } => {
-            let workbook = import_source(project, format, &csv_options)?;
+            let workbook = import_source(project, format, &csv_options, profile.is_some())?;
             import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
         SpreadsheetOperation::InspectProject { metadata, profile } => {
