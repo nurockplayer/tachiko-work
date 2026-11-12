@@ -6,6 +6,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Formula authoring and XLSX interoperability support `ABS`, `ROUNDUP` and
+  `ROUNDDOWN`, including decimal-directed rounding and canonical persistence.
+
 - XLSX imports promote supported date formats, alignment, wrapping and column
   widths into editable presentation while preserving other source styles.
 

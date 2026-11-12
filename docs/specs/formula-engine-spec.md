@@ -53,7 +53,8 @@ rounding, percent, and blank forms below. The language contains:
 - two-argument `min(left, right)` and `max(left, right)`;
 - Number comparisons `=`, `<>`, `<`, `<=`, `>`, `>=` (below arithmetic in precedence);
 - `IF(condition, then_value, else_value)`, `AND(condition, ...)`, `OR(condition, ...)`, and `NOT(condition)`;
-- `ROUND(value, digits)` with an integer literal precision in `0..=10`;
+- `ROUND(value, digits)`, `ROUNDUP(value, digits)`, and `ROUNDDOWN(value, digits)` with an integer literal precision in `0..=10`;
+- `ABS(value)` returns the absolute Number (including positive zero for negative zero);
 - percent literals (`50%` means `0.5`); and
 - `ISBLANK(reference)` as a condition.
 
@@ -319,7 +320,7 @@ AND/OR/NOT; IF's branches and every arithmetic operand must be Numbers.
 ISBLANK requires a reference (absolute or same-row) and observes stored presence
 for any declared field type. Empty Text, numeric zero, and formula cells are
 present, so they are not blank. There is no truthiness or string conversion.
-Invalid placements and invalid ROUND precision refuse as
+Invalid placements and invalid rounding precision refuse as
 `formula_type_mismatch` before publication, even in an untaken branch.
 
 IF evaluates its condition and only its selected branch. Local evaluation and
@@ -337,12 +338,16 @@ more places than requested is returned as is, so large values never drift.
 For example, ROUND(2.675, 2) = 2.68, ROUND(1.005, 2) = 1.01 (binary64 scaling
 would give 1.00), ROUND(0.5, 0) = 1, ROUND(-0.5, 0) = -1, and
 ROUND(1e15, 10) = 1e15.
+ROUNDUP and ROUNDDOWN use the same shortest round-trip decimal: ROUNDUP rounds
+away from zero and ROUNDDOWN truncates toward zero. For example,
+ROUNDUP(1.1, 1) = 1.1, ROUNDDOWN(2.3, 1) = 2.3,
+ROUNDUP(-1.21, 1) = -1.3, and ROUNDDOWN(-1.29, 1) = -1.2.
 Percent spelling shifts the literal's decimal exponent by -2 before binary64
 conversion; canonical projection may write the equivalent Number, e.g. `0.5`.
 
 The new bound operations round-trip in canonical `.roproj/v3` and direct `.ro/v2`.
 Frozen `.roproj/v1/v2` and legacy direct `.ro/v1` refuse them. XLSX formulas use
-IF/AND/OR/NOT/ROUND/ISBLANK and the same comparison operators; percent literals
+IF/AND/OR/NOT/ROUND/ABS/ROUNDUP/ROUNDDOWN/ISBLANK and the same comparison operators; percent literals
 may be written as their equivalent Number. Existing arithmetic, binary min/max,
 and same-row references retain their meanings and bounds.
 

@@ -3339,7 +3339,10 @@ fn drop_expression_iteratively(expression: Expression) {
             }
             Expression::And(arguments) | Expression::Or(arguments) => stack.extend(arguments),
             Expression::Not(value)
+            | Expression::Abs(value)
             | Expression::Round { value, .. }
+            | Expression::RoundUp { value, .. }
+            | Expression::RoundDown { value, .. }
             | Expression::IsBlank(value) => stack.push(*value),
             Expression::ColumnConditional { criteria, .. } => {
                 stack.extend(

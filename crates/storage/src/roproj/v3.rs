@@ -409,6 +409,9 @@ pub(crate) enum ExpressionV3 {
     Or(Vec<ExpressionV3>),
     Not(Box<ExpressionV3>),
     Round(RoundArgumentsV3),
+    Abs(Box<ExpressionV3>),
+    RoundUp(RoundArgumentsV3),
+    RoundDown(RoundArgumentsV3),
     IsBlank(Box<ExpressionV3>),
 }
 
@@ -1150,8 +1153,10 @@ impl ExpressionV3 {
                 Self::And(expressions) | Self::Or(expressions) => {
                     stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                 }
-                Self::Not(expression) => stack.push((expression, depth + 1)),
-                Self::Round(arguments) => {
+                Self::Not(expression) | Self::Abs(expression) => {
+                    stack.push((expression, depth + 1))
+                }
+                Self::Round(arguments) | Self::RoundUp(arguments) | Self::RoundDown(arguments) => {
                     if arguments.digits > 10 {
                         return invalid_representation(format!(
                             "ROUND digits must be between 0 and 10, found {}",
@@ -1237,7 +1242,16 @@ impl ExpressionV3 {
                     .collect::<Result<_, _>>()?,
             ),
             Self::Not(expression) => Expression::Not(Box::new(expression.into_semantic()?)),
+            Self::Abs(expression) => Expression::Abs(Box::new(expression.into_semantic()?)),
             Self::Round(arguments) => Expression::Round {
+                value: Box::new(arguments.value.into_semantic()?),
+                digits: arguments.digits,
+            },
+            Self::RoundUp(arguments) => Expression::RoundUp {
+                value: Box::new(arguments.value.into_semantic()?),
+                digits: arguments.digits,
+            },
+            Self::RoundDown(arguments) => Expression::RoundDown {
                 value: Box::new(arguments.value.into_semantic()?),
                 digits: arguments.digits,
             },
@@ -1552,7 +1566,16 @@ impl ExpressionV3 {
                 Self::Or(expressions.iter().map(Self::from_semantic).collect())
             }
             Expression::Not(expression) => Self::Not(Box::new(Self::from_semantic(expression))),
+            Expression::Abs(expression) => Self::Abs(Box::new(Self::from_semantic(expression))),
             Expression::Round { value, digits } => Self::Round(RoundArgumentsV3 {
+                value: Box::new(Self::from_semantic(value)),
+                digits: *digits,
+            }),
+            Expression::RoundUp { value, digits } => Self::RoundUp(RoundArgumentsV3 {
+                value: Box::new(Self::from_semantic(value)),
+                digits: *digits,
+            }),
+            Expression::RoundDown { value, digits } => Self::RoundDown(RoundArgumentsV3 {
                 value: Box::new(Self::from_semantic(value)),
                 digits: *digits,
             }),
@@ -2076,6 +2099,11 @@ pub(crate) fn write_expression(
             compact_member_prefix(output, "args")?;
             write_expression(output, expression)?;
         }
+        ExpressionV3::Abs(expression) => {
+            compact_member_string(output, "op", "abs", true)?;
+            compact_member_prefix(output, "args")?;
+            write_expression(output, expression)?;
+        }
         ExpressionV3::IsBlank(expression) => {
             compact_member_string(output, "op", "is_blank", true)?;
             compact_member_prefix(output, "args")?;
@@ -2083,6 +2111,26 @@ pub(crate) fn write_expression(
         }
         ExpressionV3::Round(args) => {
             compact_member_string(output, "op", "round", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "value")?;
+            write_expression(output, &args.value)?;
+            output.push(',');
+            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
+            output.push('}');
+        }
+        ExpressionV3::RoundUp(args) => {
+            compact_member_string(output, "op", "round_up", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "value")?;
+            write_expression(output, &args.value)?;
+            output.push(',');
+            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
+            output.push('}');
+        }
+        ExpressionV3::RoundDown(args) => {
+            compact_member_string(output, "op", "round_down", true)?;
             compact_member_prefix(output, "args")?;
             output.push('{');
             compact_member_prefix(output, "value")?;
@@ -2271,8 +2319,12 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::And(expressions) | Expression::Or(expressions) => {
                         stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
                     }
-                    Expression::Not(expression) => stack.push((expression, depth + 1)),
-                    Expression::Round { value, digits } => {
+                    Expression::Not(expression) | Expression::Abs(expression) => {
+                        stack.push((expression, depth + 1))
+                    }
+                    Expression::Round { value, digits }
+                    | Expression::RoundUp { value, digits }
+                    | Expression::RoundDown { value, digits } => {
                         if *digits > 10 {
                             return invalid_representation(format!(
                                 "ROUND digits must be between 0 and 10, found {digits}"

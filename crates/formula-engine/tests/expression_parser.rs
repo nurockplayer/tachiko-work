@@ -254,7 +254,7 @@ fn diagnostics_report_stable_byte_positions_and_messages() {
         (
             "sqrt(1)",
             0,
-            "unknown function 'sqrt'; expected min, max, IF, AND, OR, NOT, ROUND, ISBLANK, or a conditional aggregate",
+            "unknown function 'sqrt'; expected min, max, IF, AND, OR, NOT, ROUND, ABS, ROUNDUP, ROUNDDOWN, ISBLANK, or a conditional aggregate",
         ),
         ("1e+", 3, "expected exponent digits"),
         (
