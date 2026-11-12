@@ -5001,7 +5001,7 @@ fn output_style(
     column_format: Option<&tachiko_workspace_engine::NumberFormat>,
 ) -> CellStyle {
     let mut style = cell.style.clone();
-    if let Some(format) = column_format {
+    if let Some(format) = column_format.filter(|_| style.number_format.is_none()) {
         style.number_format = Some(crate::interop_number_format::to_excel(format));
     }
     if matches!(cell.value, SourceValue::Date { .. }) && style.number_format.is_none() {

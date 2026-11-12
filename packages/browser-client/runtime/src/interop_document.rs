@@ -1003,6 +1003,7 @@ fn import_workbook_document(
             sheet_index,
             sheet,
             selection,
+            super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
             &mut ids,
             &mut document,
             &mut metadata,
@@ -1163,7 +1164,7 @@ fn finish_import(
 }
 
 // Promote only after profile selection: TextCapacity retains its complete metadata.
-#[allow(clippy::too_many_lines)] // One pass coordinates the three independent style attributes.
+#[allow(clippy::too_many_lines)] // One pass coordinates the imported style attributes.
 fn promote_import_presentation(
     runtime: DesignerRuntime,
     workbook: &SourceWorkbook,
@@ -1172,7 +1173,8 @@ fn promote_import_presentation(
     occurrence_id: &str,
 ) -> Result<DesignerRuntime, DesignerError> {
     use tachiko_workspace_engine::{
-        CellAlignment, CellStyle as StoredStyle, DateFormat, PresentationStore, TablePresentation,
+        BorderSide, CellAlignment, CellStyle as StoredStyle, DateFormat, PresentationStore,
+        TablePresentation,
     };
     let profile = runtime.profile;
     let mut document = runtime.session.export_snapshot().into_document();
@@ -1195,6 +1197,13 @@ fn promote_import_presentation(
             let mut alignments = Vec::new();
             let mut wraps = Vec::new();
             let mut dates = Vec::new();
+            let field = &document.schemas[&schema_id].fields[&field_id];
+            let is_number = field.field_type == FieldType::Number;
+            let field_number_format = field.number_format.clone();
+            let mut bolds = Vec::new();
+            let mut fills = Vec::new();
+            let mut borders = Vec::new();
+            let mut numbers = Vec::new();
             let mut unsupported = None;
             for (row_index, row) in sheet.rows.iter_mut().enumerate() {
                 let style = &mut row.styles[column_index];
@@ -1210,6 +1219,32 @@ fn promote_import_presentation(
                 alignments.push(alignment);
                 wraps.push(style.wrap);
                 style.wrap = false;
+                bolds.push(style.bold);
+                style.bold = false;
+                let fill = style.fill.as_deref().and_then(normalize_import_fill);
+                if fill.is_some() {
+                    style.fill = None;
+                }
+                fills.push(fill);
+                borders.push(style.border);
+                style.border = false;
+                let number = if is_number {
+                    style
+                        .number_format
+                        .as_deref()
+                        .and_then(|pattern| {
+                            crate::interop_number_format::from_excel(pattern).or_else(|| {
+                                crate::interop_number_format::from_excel_currency(pattern)
+                            })
+                        })
+                        .filter(|format| Some(format) != field_number_format.as_ref())
+                } else {
+                    None
+                };
+                if number.is_some() {
+                    style.number_format = None;
+                }
+                numbers.push(number);
                 let entity = EntityId::from(row.entity_id.clone());
                 let pattern = source
                     .rows
@@ -1277,7 +1312,25 @@ fn promote_import_presentation(
                     .date_format = Some(format);
                 formats_changed = true;
             }
+            let common_bold = !bolds.is_empty() && bolds.iter().all(|value| *value);
+            let common_border = !borders.is_empty() && borders.iter().all(|value| *value);
+            let common_fill = fills
+                .first()
+                .cloned()
+                .flatten()
+                .filter(|first| fills.iter().all(|value| value.as_ref() == Some(first)));
+            let box_sides = || {
+                vec![
+                    BorderSide::Top,
+                    BorderSide::Right,
+                    BorderSide::Bottom,
+                    BorderSide::Left,
+                ]
+            };
             let column_style = StoredStyle {
+                bold: common_bold.then_some(true),
+                fill: common_fill.clone(),
+                borders: common_border.then(box_sides),
                 alignment: common_alignment,
                 wrap: common_wrap.then_some(true),
                 ..Default::default()
@@ -1289,6 +1342,14 @@ fn promote_import_presentation(
             }
             for (row_index, row) in sheet.rows.iter().enumerate() {
                 let style = StoredStyle {
+                    bold: (bolds[row_index] && !common_bold).then_some(true),
+                    fill: if common_fill.is_some() {
+                        None
+                    } else {
+                        fills[row_index].clone()
+                    },
+                    borders: (borders[row_index] && !common_border).then(box_sides),
+                    number_format: numbers[row_index].clone(),
                     alignment: if common_alignment.is_some() {
                         None
                     } else {
@@ -1315,12 +1376,7 @@ fn promote_import_presentation(
         }
     }
     let limit = crate::capacity::limits_for_profile(profile).populated_cells;
-    let dropped = pending.len() > limit;
-    for (key, style) in pending.into_iter().take(limit) {
-        let id = tachiko_storage::style_id(&style).expect("bounded style encodes");
-        store.styles.insert(id.clone(), style);
-        store.cells.insert(key, id);
-    }
+    let dropped = bound_import_presentation(&mut store, pending, limit);
     if dropped {
         ledger.push(FidelityFinding {
             category: FidelityCategory::LossyOnExport,
@@ -1331,9 +1387,7 @@ fn promote_import_presentation(
             blocking: false,
         });
     }
-    // Only alignment, wrap and seven date formats are generated: at most 64
-    // combinations, below the 4,096-style palette bound. All bindings use
-    // IDs from the admitted document and widths are clamped above.
+    // Palette and cell bounds are enforced before the store is admitted.
     // A field date format changes the document, so only then is the import
     // admitted again; otherwise the admitted runtime takes the store as is.
     let mut runtime = match (formats_changed, profile) {
@@ -1352,6 +1406,35 @@ fn promote_import_presentation(
     };
     runtime.set_presentation(store)?;
     Ok(runtime)
+}
+
+fn normalize_import_fill(fill: &str) -> Option<String> {
+    if !matches!(fill.len(), 6 | 8) || !fill.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let rgb = if fill.len() == 8 { &fill[2..] } else { fill };
+    Some(format!("#{}", rgb.to_ascii_uppercase()))
+}
+
+pub(crate) fn bound_import_presentation(
+    store: &mut tachiko_workspace_engine::PresentationStore,
+    pending: BTreeMap<(EntityId, FieldId), tachiko_workspace_engine::CellStyle>,
+    limit: usize,
+) -> bool {
+    let mut dropped = false;
+    for (key, style) in pending {
+        let id = tachiko_storage::style_id(&style).expect("bounded style encodes");
+        // A later record may still reuse an admitted palette style.
+        if store.cells.len() >= limit
+            || (store.styles.len() >= 4096 && !store.styles.contains_key(&id))
+        {
+            dropped = true;
+            continue;
+        }
+        store.styles.insert(id.clone(), style);
+        store.cells.insert(key, id);
+    }
+    dropped
 }
 
 fn stable_reference_binding() -> FidelityFinding {
@@ -1467,6 +1550,7 @@ fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
     selection: &ImportSelection,
+    text_capacity: bool,
     ids: &mut ImportIds<'_>,
     document: &mut Document,
     metadata: &mut InteropMetadata,
@@ -1575,6 +1659,18 @@ fn build_import_sheet(
             }
             let mut style = cell.style.clone();
             if source.columns[column].number_format.is_some()
+                && (text_capacity
+                    || style.number_format.is_none()
+                    || style
+                        .number_format
+                        .as_deref()
+                        .and_then(|pattern| {
+                            crate::interop_number_format::from_excel(pattern).or_else(|| {
+                                crate::interop_number_format::from_excel_currency(pattern)
+                            })
+                        })
+                        .as_ref()
+                        == source.columns[column].number_format.as_ref())
                 && (cell.formula.is_some()
                     || matches!(cell.value, SourceValue::Number { .. } | SourceValue::Empty))
             {

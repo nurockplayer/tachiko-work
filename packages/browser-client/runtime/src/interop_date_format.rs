@@ -56,7 +56,27 @@ pub(crate) fn cell_style(
         .cells
         .get(&(entity.clone(), field.id.clone()))
         .and_then(|id| store.styles.get(id));
+    // A cell's own source pattern (one the store can't represent) beats the
+    // field default; store cell formats below beat both.
+    if let (Some(format), SourceValue::Number { .. }, None) =
+        (&field.number_format, value, &result.number_format)
+    {
+        result.number_format = Some(crate::interop_number_format::to_excel(format));
+    }
     for style in [column, cell].into_iter().flatten() {
+        if let Some(bold) = style.bold {
+            result.bold = bold;
+        }
+        if let Some(fill) = &style.fill {
+            result.fill = Some(fill[1..].to_owned());
+        }
+        // XLSX export represents any nonempty side list as a full box.
+        if let Some(borders) = &style.borders {
+            result.border = !borders.is_empty();
+        }
+        if let (Some(format), SourceValue::Number { .. }) = (&style.number_format, value) {
+            result.number_format = Some(crate::interop_number_format::to_excel(format));
+        }
         if let Some(alignment) = style.alignment {
             result.alignment = Some(
                 match alignment {
