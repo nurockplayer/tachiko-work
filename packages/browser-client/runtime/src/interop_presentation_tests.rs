@@ -816,10 +816,10 @@ fn working_metadata_v2_rejects_foreign_mappings_and_profiles() {
         ));
     }
     let mut json = serde_json::to_value(&imported.metadata).unwrap();
-    json["sheets"][0]["rows"] = serde_json::json!([]);
+    json["sheets"][0]["rows"] = serde_json::Value::Array(Vec::new());
     assert!(serde_json::from_value::<crate::InteropMetadata>(json).is_err());
     let mut json = serde_json::to_value(&imported.metadata).unwrap();
-    json["sheets"][0]["columns"][0]["width"] = serde_json::json!(null);
+    json["sheets"][0]["columns"][0]["width"] = serde_json::Value::Null;
     assert!(serde_json::from_value::<crate::InteropMetadata>(json).is_err());
 }
 
