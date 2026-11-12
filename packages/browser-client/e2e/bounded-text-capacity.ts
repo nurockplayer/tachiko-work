@@ -214,11 +214,12 @@ try {
             same(table.columns.map((c) => c.field_type), ["text", "text", "text"], "Text schema");
             same(table.columns.map((c) => (c as typeof c & { required: boolean }).required), [false, false, false], "imported optional declarations");
             const sheet = metadata.sheets[0]!;
+            if (metadata.version !== 1) throw new Error("Text capacity requires version 1 metadata");
             same(sheet.columns.map((column) => column.name), ["account_id", "profile_url", "unix_timestamp"], "header labels");
             same(table.collection.id, sheet.schema_id, "collection identity");
             same(table.collection.key, collection, "query collection key");
             same(table.columns.map((c) => c.id), sheet.columns.map((c) => c.field_id), "field identities");
-            same(table.rows.map((r) => r.id), sheet.rows.map((r) => r.entity_id), "row identities/order");
+            same(table.rows.map((r) => r.id), metadata.sheets[0]!.rows.map((r) => r.entity_id), "row identities/order");
             table.rows.forEach((row, r) => {
               same((row as typeof row & { blank_fields?: string[] }).blank_fields, undefined, "complete fixture row has no blank fields");
               same(row.fields.length, 3, "field count");

@@ -685,11 +685,117 @@ pub struct ImportSelection {
     pub extra_columns: Vec<Vec<ImportColumnSpec>>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InteropMetadata {
     pub version: u32,
     pub sheets: Vec<InteropSheetMetadata>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MetadataV1 {
+    version: u32,
+    sheets: Vec<InteropSheetMetadata>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MetadataV2 {
+    version: u32,
+    sheets: Vec<SheetV2>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SheetV2 {
+    schema_id: String,
+    name: String,
+    has_header: bool,
+    columns: Vec<ColumnV2>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnV2 {
+    field_id: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MetadataWire {
+    V1(MetadataV1),
+    V2(MetadataV2),
+}
+
+impl Serialize for InteropMetadata {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.version == 2 {
+            MetadataV2 {
+                version: 2,
+                sheets: self
+                    .sheets
+                    .iter()
+                    .map(|sheet| SheetV2 {
+                        schema_id: sheet.schema_id.clone(),
+                        name: sheet.name.clone(),
+                        has_header: sheet.has_header,
+                        columns: sheet
+                            .columns
+                            .iter()
+                            .map(|column| ColumnV2 {
+                                field_id: column.field_id.clone(),
+                                name: column.name.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            }
+            .serialize(serializer)
+        } else {
+            MetadataV1 {
+                version: self.version,
+                sheets: self.sheets.clone(),
+            }
+            .serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for InteropMetadata {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match MetadataWire::deserialize(deserializer)? {
+            MetadataWire::V1(wire) if wire.version != 2 => Ok(Self {
+                version: wire.version,
+                sheets: wire.sheets,
+            }),
+            MetadataWire::V2(wire) if wire.version == 2 => Ok(Self {
+                version: 2,
+                sheets: wire
+                    .sheets
+                    .into_iter()
+                    .map(|sheet| InteropSheetMetadata {
+                        schema_id: sheet.schema_id,
+                        name: sheet.name,
+                        has_header: sheet.has_header,
+                        columns: sheet
+                            .columns
+                            .into_iter()
+                            .map(|column| InteropColumnMetadata {
+                                field_id: column.field_id,
+                                name: column.name,
+                                width: None,
+                            })
+                            .collect(),
+                        rows: Vec::new(),
+                    })
+                    .collect(),
+            }),
+            _ => Err(serde::de::Error::custom(
+                "metadata version and shape do not match",
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -948,6 +1054,38 @@ fn import_workbook_working_size_candidate(
     )?;
     runtime =
         promote_import_presentation(runtime, workbook, &mut metadata, &mut ledger, occurrence_id)?;
+    for sheet in &mut metadata.sheets {
+        for (index, column) in sheet.columns.iter_mut().enumerate() {
+            let mut dropped = BTreeSet::new();
+            for row in &sheet.rows {
+                let style = &row.styles[index];
+                if let Some(pattern) = &style.number_format {
+                    dropped.insert(format!("number format {pattern:?}"));
+                }
+                if let Some(alignment) = &style.alignment {
+                    dropped.insert(format!("alignment {alignment:?}"));
+                }
+                if let Some(fill) = &style.fill {
+                    dropped.insert(format!("fill {fill:?}"));
+                }
+            }
+            if !dropped.is_empty() {
+                ledger.push(FidelityFinding {
+                    category: FidelityCategory::LossyOnExport,
+                    code: "presentation_not_kept".into(),
+                    location: format!("{}:column {}", sheet.name, index + 1),
+                    message: format!(
+                        "Presentation not kept: {}.",
+                        dropped.into_iter().collect::<Vec<_>>().join(", ")
+                    ),
+                    blocking: false,
+                });
+            }
+            column.width = None;
+        }
+        sheet.rows.clear();
+    }
+    metadata.version = 2;
     // The same representation proof as an ordinary import, without promotion.
     drop(runtime.export_workbook(runtime.current_revision(), &metadata)?);
     ledger.push(stable_reference_binding());
@@ -2949,11 +3087,12 @@ fn current_import_metadata(
                     .fields
                     .keys()
                     .any(|field| !fields.contains(field.as_str()))
-                || document
-                    .entities
-                    .values()
-                    .filter(|entity| entity.schema == schema.id)
-                    .any(|entity| !entities.contains(entity.id.as_str())))
+                || (metadata.version != 2
+                    && document
+                        .entities
+                        .values()
+                        .filter(|entity| entity.schema == schema.id)
+                        .any(|entity| !entities.contains(entity.id.as_str()))))
         {
             return Err(refuse(
                 &location,
@@ -2988,15 +3127,16 @@ fn current_import_metadata(
         }
         sort_by_field_order(schema, &mut sheet.columns);
         if sheet.columns != source_columns
-            || sheet
-                .rows
-                .iter()
-                .any(|row| !document.entities.contains_key(row.entity_id.as_str()))
-            || document
-                .entities
-                .values()
-                .filter(|entity| entity.schema == schema.id)
-                .any(|entity| !entities.contains(entity.id.as_str()))
+            || (metadata.version != 2
+                && (sheet
+                    .rows
+                    .iter()
+                    .any(|row| !document.entities.contains_key(row.entity_id.as_str()))
+                    || document
+                        .entities
+                        .values()
+                        .filter(|entity| entity.schema == schema.id)
+                        .any(|entity| !entities.contains(entity.id.as_str()))))
         {
             ledger.push(FidelityFinding { category: FidelityCategory::Converted,
                 code: "imported_current_structure".into(), location: location.clone(),
@@ -3074,7 +3214,7 @@ fn validate_historical_envelope(
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
     let refuse = imported_export_error;
-    if metadata.version != 1
+    if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
         || metadata.sheets.len() != document.schemas.len()
@@ -3274,7 +3414,7 @@ pub fn validate_import_metadata(
     validate_import_metadata_for_profile(document, metadata, runtime.profile)
 }
 
-fn validate_import_metadata_for_profile(
+pub(super) fn validate_import_metadata_for_profile(
     document: &Document,
     metadata: &InteropMetadata,
     profile: SessionProfile,
@@ -3387,7 +3527,7 @@ fn validate_metadata_envelope(
     metadata: &InteropMetadata,
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
-    if metadata.version != 1
+    if !(metadata.version == 1 || metadata.version == 2 && profile == SessionProfile::WorkingSize)
         || metadata.sheets.is_empty()
         || metadata.sheets.len() > MAX_SHEETS
         || metadata.sheets.len() != document.schemas.len()
@@ -3431,7 +3571,8 @@ fn validate_capacity_metadata(
         .values()
         .next()
         .ok_or_else(|| tracker_error("capacity schema is missing"))?;
-    if metadata.sheets.len() != 1
+    if metadata.version != 1
+        || metadata.sheets.len() != 1
         || !sheet
             .rows
             .iter()
