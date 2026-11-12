@@ -127,7 +127,8 @@ fn lookup_full_calculation_benchmark() {
     }
     let t2000 = run_case(2_000);
     let t8000 = run_case(8_000);
-    // Four times as many rows should be near 4x; 40x tolerates noise while
-    // rejecting the roughly 64x observed for repeated per-formula scans.
-    assert!(t8000 < t2000 * 40, "2,000: {t2000:?}, 8,000: {t8000:?}");
+    // Four times as many rows is about 4x with one index per pass (5x with the
+    // index's log factor) and 16x if each lookup scanned the key column, so
+    // 10x leaves room for runner noise and still rejects quadratic growth.
+    assert!(t8000 < t2000 * 10, "2,000: {t2000:?}, 8,000: {t8000:?}");
 }
