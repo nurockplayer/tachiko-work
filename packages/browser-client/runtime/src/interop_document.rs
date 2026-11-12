@@ -4747,6 +4747,9 @@ fn export_in(
             "ROUNDDOWN({},{digits})",
             export_in(value, owner, addresses, columns, present)?
         )),
+        Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => Err(
+            tracker_error("date formulas are not supported in spreadsheet export"),
+        ),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
             export_in(reference, owner, addresses, columns, present)?

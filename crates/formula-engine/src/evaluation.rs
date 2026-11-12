@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
-    CriterionCell, CriterionKey, CriterionTest, CriterionTestKey, Document, Entity, EntityId,
-    Expression, FieldRef, FieldType, Number, Value,
+    CriterionCell, CriterionKey, CriterionTest, CriterionTestKey, Date, DatePartKind, Document,
+    Entity, EntityId, Expression, FieldRef, FieldType, Number, Value,
 };
 
 use crate::{CalculationFailure, FailureMap, column_cells};
@@ -373,6 +373,7 @@ impl Evaluation<'_> {
         references
     }
 
+    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
@@ -437,6 +438,30 @@ impl Evaluation<'_> {
                 aggregate,
                 criteria,
             } => self.conditional(aggregate, criteria),
+            Expression::DatePart { part, operand } => {
+                let date = self.date(operand)?;
+                number_result(f64::from(match part {
+                    DatePartKind::Year => date.year(),
+                    DatePartKind::Month => u16::from(date.month()),
+                    DatePartKind::Day => u16::from(date.day()),
+                }))
+            }
+            Expression::Weekday {
+                operand,
+                return_type,
+            } => {
+                let sunday = (days_from_civil(self.date(operand)?) + 4).rem_euclid(7);
+                let result = match return_type {
+                    1 => sunday + 1,
+                    2 => (sunday + 6) % 7 + 1,
+                    3 => (sunday + 6) % 7,
+                    _ => return Err(CalculationFailure::TypeMismatch),
+                };
+                number_result(f64::from(result))
+            }
+            Expression::Days { end, start } => number_result(f64::from(
+                days_from_civil(self.date(end)?) - days_from_civil(self.date(start)?),
+            )),
             Expression::Round { value, digits } => round(self.number(value)?, *digits),
             Expression::Abs(value) => number_result(self.number(value)?.get().abs()),
             Expression::RoundUp { value, digits } => {
@@ -699,6 +724,28 @@ impl Evaluation<'_> {
         operation(left.get(), right.get())
     }
 
+    fn date(&self, operand: &Expression) -> Result<Date, CalculationFailure> {
+        let reference = match operand {
+            Expression::Reference(reference) => reference.clone(),
+            Expression::SameRowReference(field) => {
+                FieldRef::new(self.owner.entity.clone(), field.clone())
+            }
+            _ => return Err(CalculationFailure::TypeMismatch),
+        };
+        match self
+            .document
+            .entities
+            .get(&reference.entity)
+            .and_then(|entity| entity.fields.get(&reference.field))
+        {
+            Some(Value::Date(date)) => Ok(*date),
+            None => Err(CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([reference]),
+            }),
+            Some(_) => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
     fn reference(&self, reference: &FieldRef) -> Result<Number, CalculationFailure> {
         if let Some(value) = self.values.get(reference) {
             return Ok(*value);
@@ -771,6 +818,21 @@ impl Evaluation<'_> {
             _ => Err(CalculationFailure::TypeMismatch),
         }
     }
+}
+
+// Howard Hinnant's civil-date algorithm, with an arbitrary 1970-01-01 epoch.
+fn days_from_civil(date: Date) -> i32 {
+    let mut year = i32::from(date.year());
+    let month = i32::from(date.month());
+    if month <= 2 {
+        year -= 1;
+    }
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let shifted_month = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + i32::from(date.day()) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 /// The first cell of `column`, in entity order, that already carries a failure.

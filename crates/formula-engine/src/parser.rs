@@ -1,7 +1,7 @@
 use tachiko_semantic_core::{
-    ColumnAddress, ColumnAggregateFunction, ComparisonOperator, CriterionTest, FieldAddress,
-    FieldKey, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number,
-    is_valid_identifier,
+    ColumnAddress, ColumnAggregateFunction, ComparisonOperator, CriterionTest, DatePartKind,
+    FieldAddress, FieldKey, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES,
+    Number, is_valid_identifier,
 };
 use thiserror::Error;
 
@@ -95,6 +95,18 @@ pub enum UnboundExpression {
     RoundDown {
         value: Box<Self>,
         digits: Box<Self>,
+    },
+    DatePart {
+        part: DatePartKind,
+        operand: Box<Self>,
+    },
+    Weekday {
+        operand: Box<Self>,
+        return_type: Option<Box<Self>>,
+    },
+    Days {
+        end: Box<Self>,
+        start: Box<Self>,
     },
     IsBlank(Box<Self>),
 }
@@ -251,6 +263,27 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             format_unbound_expression(value),
             format_unbound_expression(digits)
         ),
+        UnboundExpression::DatePart { part, operand } => format!(
+            "{}({})",
+            part.as_str().to_ascii_uppercase(),
+            format_unbound_expression(operand)
+        ),
+        UnboundExpression::Weekday {
+            operand,
+            return_type,
+        } => match return_type {
+            Some(kind) => format!(
+                "WEEKDAY({}, {})",
+                format_unbound_expression(operand),
+                format_unbound_expression(kind)
+            ),
+            None => format!("WEEKDAY({})", format_unbound_expression(operand)),
+        },
+        UnboundExpression::Days { end, start } => format!(
+            "DAYS({}, {})",
+            format_unbound_expression(end),
+            format_unbound_expression(start)
+        ),
         UnboundExpression::IsBlank(value) => {
             format!("ISBLANK({})", format_unbound_expression(value))
         }
@@ -392,7 +425,17 @@ fn push_children<'expression>(
                     .map(|argument| (argument, child_depth)),
             );
         }
+        UnboundExpression::Weekday {
+            operand,
+            return_type,
+        } => {
+            if let Some(kind) = return_type {
+                stack.push((kind, child_depth));
+            }
+            stack.push((operand, child_depth));
+        }
         UnboundExpression::Not(value)
+        | UnboundExpression::DatePart { operand: value, .. }
         | UnboundExpression::Abs(value)
         | UnboundExpression::IsBlank(value) => {
             stack.push((value, child_depth));
@@ -404,6 +447,10 @@ fn push_children<'expression>(
         | UnboundExpression::Minimum { left, right }
         | UnboundExpression::Maximum { left, right }
         | UnboundExpression::Compare { left, right, .. }
+        | UnboundExpression::Days {
+            end: left,
+            start: right,
+        }
         | UnboundExpression::IfError {
             value: left,
             fallback: right,
@@ -762,6 +809,11 @@ impl<'input> Parser<'input> {
                 | "ROUNDUP"
                 | "ROUNDDOWN"
                 | "ISBLANK"
+                | "YEAR"
+                | "MONTH"
+                | "DAY"
+                | "WEEKDAY"
+                | "DAYS"
         ) {
             return self.parse_extended_function(start, &upper);
         }
@@ -834,8 +886,9 @@ impl<'input> Parser<'input> {
         })?;
         let valid_arity = match name {
             "IF" => arguments.len() == 3,
-            "IFERROR" | "ROUND" | "ROUNDUP" | "ROUNDDOWN" => arguments.len() == 2,
-            "NOT" | "ABS" | "ISBLANK" => arguments.len() == 1,
+            "IFERROR" | "ROUND" | "ROUNDUP" | "ROUNDDOWN" | "DAYS" => arguments.len() == 2,
+            "WEEKDAY" => (1..=2).contains(&arguments.len()),
+            "NOT" | "ABS" | "ISBLANK" | "YEAR" | "MONTH" | "DAY" => arguments.len() == 1,
             _ => !arguments.is_empty(),
         };
         if !valid_arity {
@@ -859,6 +912,27 @@ impl<'input> Parser<'input> {
                 let fallback = Box::new(arguments.pop().expect("checked arity"));
                 let value = Box::new(arguments.pop().expect("checked arity"));
                 UnboundExpression::IfError { value, fallback }
+            }
+            "YEAR" | "MONTH" | "DAY" => UnboundExpression::DatePart {
+                part: match name {
+                    "YEAR" => DatePartKind::Year,
+                    "MONTH" => DatePartKind::Month,
+                    _ => DatePartKind::Day,
+                },
+                operand: Box::new(arguments.remove(0)),
+            },
+            "WEEKDAY" => {
+                let operand = Box::new(arguments.remove(0));
+                let return_type = arguments.pop().map(Box::new);
+                UnboundExpression::Weekday {
+                    operand,
+                    return_type,
+                }
+            }
+            "DAYS" => {
+                let start = Box::new(arguments.pop().expect("checked arity"));
+                let end = Box::new(arguments.pop().expect("checked arity"));
+                UnboundExpression::Days { end, start }
             }
             "AND" => UnboundExpression::And(arguments),
             "OR" => UnboundExpression::Or(arguments),

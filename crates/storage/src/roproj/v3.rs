@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
-    Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldConstraint,
+    DatePartKind, Document, DocumentId, Entity, EntityId, EntityKey, Expression, FieldConstraint,
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH,
@@ -413,6 +413,9 @@ pub(crate) enum ExpressionV3 {
     Abs(Box<ExpressionV3>),
     RoundUp(RoundArgumentsV3),
     RoundDown(RoundArgumentsV3),
+    DatePart(DatePartArgumentsV3),
+    Weekday(WeekdayArgumentsV3),
+    Days(DaysArgumentsV3),
     IsBlank(Box<ExpressionV3>),
 }
 
@@ -476,6 +479,41 @@ pub(crate) struct IfArgumentsV3 {
     condition: Box<ExpressionV3>,
     then_value: Box<ExpressionV3>,
     else_value: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DatePartArgumentsV3 {
+    part: DatePartKind,
+    operand: Box<ExpressionV3>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WeekdayArgumentsV3 {
+    operand: Box<ExpressionV3>,
+    #[serde(deserialize_with = "deserialize_weekday_type")]
+    return_type: u8,
+}
+
+fn deserialize_weekday_type<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u8, D::Error> {
+    let number = deserialize_round_digits(deserializer)?;
+    if (1..=3).contains(&number) {
+        Ok(number)
+    } else {
+        Err(serde::de::Error::custom(
+            "WEEKDAY return_type must be 1, 2 or 3",
+        ))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DaysArgumentsV3 {
+    end: Box<ExpressionV3>,
+    start: Box<ExpressionV3>,
 }
 
 #[derive(Deserialize)]
@@ -1107,7 +1145,18 @@ impl NumberV3 {
     }
 }
 
+fn require_date_operand(operand: &ExpressionV3) -> Result<(), FormatError> {
+    if !matches!(
+        operand,
+        ExpressionV3::Reference(_) | ExpressionV3::SameRowReference(_)
+    ) {
+        return invalid_representation("date function requires a field reference".to_owned());
+    }
+    Ok(())
+}
+
 impl ExpressionV3 {
+    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     pub(crate) fn validate_ids_and_limits(&self) -> Result<(), FormatError> {
         let mut nodes = 0_usize;
         let mut stack = vec![(self, 1_usize)];
@@ -1176,6 +1225,23 @@ impl ExpressionV3 {
                         ));
                     }
                     stack.push((&arguments.value, depth + 1));
+                }
+                Self::DatePart(args) => {
+                    require_date_operand(&args.operand)?;
+                    stack.push((&args.operand, depth + 1));
+                }
+                Self::Weekday(args) => {
+                    require_date_operand(&args.operand)?;
+                    if !(1..=3).contains(&args.return_type) {
+                        return invalid_representation("invalid WEEKDAY return_type".to_owned());
+                    }
+                    stack.push((&args.operand, depth + 1));
+                }
+                Self::Days(args) => {
+                    require_date_operand(&args.end)?;
+                    require_date_operand(&args.start)?;
+                    stack.push((&args.start, depth + 1));
+                    stack.push((&args.end, depth + 1));
                 }
                 Self::IsBlank(expression) => {
                     if !matches!(
@@ -1270,6 +1336,18 @@ impl ExpressionV3 {
             Self::RoundDown(arguments) => Expression::RoundDown {
                 value: Box::new(arguments.value.into_semantic()?),
                 digits: arguments.digits,
+            },
+            Self::DatePart(args) => Expression::DatePart {
+                part: args.part,
+                operand: Box::new(args.operand.into_semantic()?),
+            },
+            Self::Weekday(args) => Expression::Weekday {
+                operand: Box::new(args.operand.into_semantic()?),
+                return_type: args.return_type,
+            },
+            Self::Days(args) => Expression::Days {
+                end: Box::new(args.end.into_semantic()?),
+                start: Box::new(args.start.into_semantic()?),
             },
             Self::IsBlank(expression) => Expression::IsBlank(Box::new(expression.into_semantic()?)),
         })
@@ -1599,6 +1677,21 @@ impl ExpressionV3 {
             Expression::RoundDown { value, digits } => Self::RoundDown(RoundArgumentsV3 {
                 value: Box::new(Self::from_semantic(value)),
                 digits: *digits,
+            }),
+            Expression::DatePart { part, operand } => Self::DatePart(DatePartArgumentsV3 {
+                part: *part,
+                operand: Box::new(Self::from_semantic(operand)),
+            }),
+            Expression::Weekday {
+                operand,
+                return_type,
+            } => Self::Weekday(WeekdayArgumentsV3 {
+                operand: Box::new(Self::from_semantic(operand)),
+                return_type: *return_type,
+            }),
+            Expression::Days { end, start } => Self::Days(DaysArgumentsV3 {
+                end: Box::new(Self::from_semantic(end)),
+                start: Box::new(Self::from_semantic(start)),
             }),
             Expression::IsBlank(expression) => {
                 Self::IsBlank(Box::new(Self::from_semantic(expression)))
@@ -2136,6 +2229,41 @@ pub(crate) fn write_expression(
             compact_member_prefix(output, "args")?;
             write_expression(output, expression)?;
         }
+        ExpressionV3::DatePart(args) => {
+            compact_member_string(output, "op", "date_part", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "part", args.part.as_str(), true)?;
+            compact_member_prefix(output, "operand")?;
+            write_expression(output, &args.operand)?;
+            output.push('}');
+        }
+        ExpressionV3::Weekday(args) => {
+            compact_member_string(output, "op", "weekday", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "operand")?;
+            write_expression(output, &args.operand)?;
+            output.push(',');
+            compact_member_number(
+                output,
+                "return_type",
+                NumberV3(f64::from(args.return_type)),
+                false,
+            )?;
+            output.push('}');
+        }
+        ExpressionV3::Days(args) => {
+            compact_member_string(output, "op", "days", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_prefix(output, "end")?;
+            write_expression(output, &args.end)?;
+            output.push(',');
+            compact_member_prefix(output, "start")?;
+            write_expression(output, &args.start)?;
+            output.push('}');
+        }
         ExpressionV3::IsBlank(expression) => {
             compact_member_string(output, "op", "is_blank", true)?;
             compact_member_prefix(output, "args")?;
@@ -2308,6 +2436,7 @@ fn shard_index(entity_id: &str) -> usize {
     usize::from(Sha256::digest(entity_id.as_bytes())[0] >> 4)
 }
 
+#[allow(clippy::too_many_lines)] // Closed expression dispatch.
 fn validate_semantic_expression_limits(document: &Document) -> Result<(), FormatError> {
     for entity in document.entities.values() {
         for value in entity.fields.values() {
@@ -2367,6 +2496,38 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                             ));
                         }
                         stack.push((value, depth + 1));
+                    }
+                    Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
+                        if !matches!(
+                            operand.as_ref(),
+                            Expression::Reference(_) | Expression::SameRowReference(_)
+                        ) {
+                            return invalid_representation(
+                                "date function requires a field reference".to_owned(),
+                            );
+                        }
+                        if matches!(node, Expression::Weekday { return_type, .. } if !(1..=3).contains(return_type))
+                        {
+                            return invalid_representation(
+                                "invalid WEEKDAY return_type".to_owned(),
+                            );
+                        }
+                        stack.push((operand, depth + 1));
+                    }
+                    Expression::Days { end, start } => {
+                        if !matches!(
+                            end.as_ref(),
+                            Expression::Reference(_) | Expression::SameRowReference(_)
+                        ) || !matches!(
+                            start.as_ref(),
+                            Expression::Reference(_) | Expression::SameRowReference(_)
+                        ) {
+                            return invalid_representation(
+                                "date function requires a field reference".to_owned(),
+                            );
+                        }
+                        stack.push((start, depth + 1));
+                        stack.push((end, depth + 1));
                     }
                     Expression::IsBlank(expression) => {
                         if !matches!(

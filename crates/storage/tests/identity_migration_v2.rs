@@ -182,6 +182,9 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
         Expression::ColumnConditional { .. } => {
             panic!("conditional aggregates are not representable in the frozen formats")
         }
+        Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
+            panic!("date functions are not representable in the frozen formats")
+        }
     }
 }
 
