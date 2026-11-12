@@ -664,6 +664,9 @@ fn expression_node_approx_bytes(node: &Expression) -> usize {
         | Expression::Round { .. }
         | Expression::RoundUp { .. }
         | Expression::RoundDown { .. }
+        | Expression::DatePart { .. }
+        | Expression::Weekday { .. }
+        | Expression::Days { .. }
         | Expression::IsBlank(_) => 0,
     }
 }

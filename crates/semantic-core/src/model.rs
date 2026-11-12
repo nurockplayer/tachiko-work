@@ -819,7 +819,38 @@ pub enum Expression {
         value: Box<Self>,
         digits: u8,
     },
+    DatePart {
+        part: DatePartKind,
+        operand: Box<Self>,
+    },
+    Weekday {
+        operand: Box<Self>,
+        return_type: u8,
+    },
+    Days {
+        end: Box<Self>,
+        start: Box<Self>,
+    },
     IsBlank(Box<Self>),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatePartKind {
+    Year,
+    Month,
+    Day,
+}
+
+impl DatePartKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Year => "year",
+            Self::Month => "month",
+            Self::Day => "day",
+        }
+    }
 }
 
 /// A condition is an intermediate formula type, never a stored scalar value.
@@ -881,12 +912,15 @@ impl Expression {
                 else_value,
             } => vec![condition, then_value, else_value],
             Self::IfError { value, fallback } => vec![value, fallback],
+            Self::Days { end, start } => vec![end, start],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter().collect(),
             Self::Not(value)
             | Self::Abs(value)
             | Self::Round { value, .. }
             | Self::RoundUp { value, .. }
             | Self::RoundDown { value, .. }
+            | Self::DatePart { operand: value, .. }
+            | Self::Weekday { operand: value, .. }
             | Self::IsBlank(value) => vec![value],
         }
     }
@@ -916,12 +950,15 @@ impl Expression {
                 else_value,
             } => vec![condition, then_value, else_value],
             Self::IfError { value, fallback } => vec![value, fallback],
+            Self::Days { end, start } => vec![end, start],
             Self::And(arguments) | Self::Or(arguments) => arguments.iter_mut().collect(),
             Self::Not(value)
             | Self::Abs(value)
             | Self::Round { value, .. }
             | Self::RoundUp { value, .. }
             | Self::RoundDown { value, .. }
+            | Self::DatePart { operand: value, .. }
+            | Self::Weekday { operand: value, .. }
             | Self::IsBlank(value) => vec![value],
         }
     }
@@ -979,6 +1016,28 @@ impl Expression {
             | Self::RoundDown { value, digits } => {
                 (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
             }
+            Self::DatePart { operand, .. } => matches!(
+                operand.as_ref(),
+                Self::Reference(_) | Self::SameRowReference(_)
+            )
+            .then_some(Number),
+            Self::Weekday {
+                operand,
+                return_type,
+            } => ((1..=3).contains(return_type)
+                && matches!(
+                    operand.as_ref(),
+                    Self::Reference(_) | Self::SameRowReference(_)
+                ))
+            .then_some(Number),
+            Self::Days { end, start } => {
+                (matches!(end.as_ref(), Self::Reference(_) | Self::SameRowReference(_))
+                    && matches!(
+                        start.as_ref(),
+                        Self::Reference(_) | Self::SameRowReference(_)
+                    ))
+                .then_some(Number)
+            }
             Self::IsBlank(value) => matches!(
                 value.as_ref(),
                 Self::Reference(_) | Self::SameRowReference(_)
@@ -1022,6 +1081,13 @@ impl Expression {
                 Self::Reference(reference) => uses.push((reference.clone(), numeric)),
                 Self::SameRowReference(field) => {
                     uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
+                }
+                Self::DatePart { operand, .. } | Self::Weekday { operand, .. } => {
+                    pending.push((operand, false));
+                }
+                Self::Days { end, start } => {
+                    pending.push((end, false));
+                    pending.push((start, false));
                 }
                 Self::IsBlank(value) => pending.push((value, false)),
                 // A criterion that is itself a cell reference is compared to

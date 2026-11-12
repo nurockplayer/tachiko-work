@@ -278,6 +278,11 @@ the `op` and `args` form:
 | `not`, `is_blank`, `abs` | One Expression |
 | `round` | `value`, `digits` (integer precision in `0..=10`) |
 | `round_up`, `round_down` | `value`, `digits` (integer precision in `0..=10`) |
+| `date_part` | `part` (`year`, `month`, or `day`), `operand` |
+| `weekday` | `operand`, `return_type` (integer `1`, `2`, or `3`) |
+| `days` | `end`, `start` |
+
+Date function operands are `reference` or `same_row_reference` expressions targeting Date fields; other shapes and unknown members are refused. Frozen `.roproj/v1/v2` and direct `.ro/v2` cannot represent these operations.
 
 A `column` is an object with `schema` and `field`. `column_aggregate`'s `function` is
 `average`, `count`, `minimum` or `maximum`. `compare`'s and a criterion's `operator` is

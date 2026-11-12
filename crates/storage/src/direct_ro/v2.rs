@@ -577,6 +577,9 @@ impl ExpressionV2 {
                 value: Box::new(Self::from_semantic(value)),
                 digits: *digits,
             }),
+            Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
+                unreachable!("date functions are refused by direct .ro/v2 validation")
+            }
             Expression::IsBlank(expression) => {
                 Self::IsBlank(Box::new(Self::from_semantic(expression)))
             }
@@ -844,6 +847,9 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                     return invalid("ISBLANK requires a field reference".to_owned());
                 }
                 stack.push((expression, depth + 1));
+            }
+            Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
+                return invalid("date functions are not representable in direct .ro/v2".to_owned());
             }
             Expression::ColumnConditional { .. } => {
                 return invalid(
