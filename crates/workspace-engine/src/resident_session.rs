@@ -1050,6 +1050,12 @@ impl<Time: TrustedPublicationTimeSource> ResidentPublicationAuthority<'_, Time> 
     /// Advance the revision for a change outside the semantic document, such as
     /// stored presentation. The document, retained state and measurements stay as
     /// they are and no projection invalidation is recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same scope, authorization, staleness and revision-exhaustion
+    /// refusals as [`SemanticPublicationAuthority::publish_if_current`], with
+    /// nothing changed.
     pub fn publish_presentation_if_current<Authorization>(
         &mut self,
         expected_document_scope: &DocumentScopeId,
