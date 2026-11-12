@@ -2961,3 +2961,49 @@ fn march_1900_date_imports_as_live_formula() {
         Some("YEAR(IF(ISBLANK(A2),NA(),A2))")
     );
 }
+
+#[test]
+fn bare_na_import_keeps_cached_value() {
+    use std::io::{Cursor, Read, Write};
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+    let (mut source, selection) = extremum_fixture("=1+1");
+    source.sheets[0].rows[0][0].value = SourceValue::Number { value: 42.0 };
+    let bytes = export_xlsx(&source).unwrap();
+    let mut input = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let xml = String::from_utf8(content).unwrap();
+            assert!(xml.contains("<f>1+1</f>"), "{xml}");
+            content = xml.replace("<f>1+1</f>", "<f>NA()</f>").into_bytes();
+        }
+        output
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&content).unwrap();
+    }
+    let source = import_xlsx(&output.finish().unwrap().into_inner()).unwrap();
+    assert!(
+        source
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "unsupported_formula_kept_value"),
+        "{:?}",
+        source.ledger
+    );
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][0].value,
+        SourceValue::Number { value: 42.0 }
+    );
+    assert_eq!(exported.sheets[0].rows[0][0].formula, None);
+}

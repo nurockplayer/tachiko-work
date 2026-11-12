@@ -2672,11 +2672,10 @@ fn translate_a1_inner(
                                     references.extend(nested);
                                     rendered.push(translated);
                                 }
-                                output.push_str(&format!(
-                                    "{}({})",
-                                    name.to_ascii_lowercase(),
-                                    rendered.join(",")
-                                ));
+                                output.push_str(&name.to_ascii_lowercase());
+                                output.push('(');
+                                output.push_str(&rendered.join(","));
+                                output.push(')');
                                 cursor = call + consumed;
                                 return Ok(());
                             }

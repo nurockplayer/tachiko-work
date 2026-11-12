@@ -4408,8 +4408,8 @@ fn date_admission(
             let above = usize::try_from(source.layout.rows_above_header).ok()?;
             let row = row.checked_sub(above + 1 + usize::from(source.has_header))?;
             let value = &source.rows.get(row)?.get(column)?.value;
-            if !matches!(value, SourceValue::Date { value } if value.as_str() >= "1900-03-01")
-                && !(guard.is_some() && matches!(value, SourceValue::Empty))
+            if !(matches!(value, SourceValue::Date { value } if value.as_str() >= "1900-03-01")
+                || guard.is_some() && matches!(value, SourceValue::Empty))
             {
                 return None;
             }
@@ -4849,7 +4849,8 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
     // Inventory function names only, without parsing or evaluating expression semantics.
     let mut token = String::new();
     let mut quoted = false;
-    for c in source.chars() {
+    let mut chars = source.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
         if c == '\'' {
             quoted = !quoted;
             token.clear();
@@ -4863,6 +4864,39 @@ pub(crate) fn unsupported_formula_function(source: &str, column_aggregates: bool
         } else if c == '(' {
             if !token.is_empty() {
                 let name = token.to_ascii_uppercase();
+                let date_call =
+                    matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS")
+                        .then(|| call_argument(&source[index..]))
+                        .flatten()
+                        .and_then(|(argument, consumed)| {
+                            split_arguments(argument).map(|parts| (parts, consumed))
+                        })
+                        .filter(|(parts, _)| {
+                            let date_count = if name == "DAYS" { 2 } else { 1 };
+                            parts
+                                .iter()
+                                .take(date_count)
+                                .any(|(_, part)| guarded_date_cell(part).is_some())
+                        });
+                if let Some((parts, consumed)) = date_call {
+                    let date_count = if name == "DAYS" { 2 } else { 1 };
+                    for (part_index, (_, part)) in parts.iter().enumerate() {
+                        if part_index < date_count && guarded_date_cell(part).is_some() {
+                            continue;
+                        }
+                        if unsupported_formula_function(part, column_aggregates) {
+                            return true;
+                        }
+                    }
+                    while chars
+                        .peek()
+                        .is_some_and(|(next, _)| *next < index + consumed)
+                    {
+                        chars.next();
+                    }
+                    token.clear();
+                    continue;
+                }
                 let allowed = matches!(
                     name.as_str(),
                     "MIN"
@@ -5452,6 +5486,30 @@ pub(crate) fn export_xlsx_for_profile(
         source_bound(&bytes)?;
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod date_guard_inventory_tests {
+    use super::unsupported_formula_function;
+
+    #[test]
+    fn only_date_operands_accept_the_exact_blank_guard() {
+        for formula in [
+            "IFERROR(YEAR(IF(ISBLANK(A2),NA(),A2)),0)",
+            "DAYS( if ( isblank ( A2 ), na ( ), a2 ),IF(ISBLANK(B2),NA(),B2))",
+        ] {
+            assert!(!unsupported_formula_function(formula, true), "{formula}");
+        }
+        for formula in [
+            "NA()",
+            "IF(ISBLANK(A2),NA(),A2)",
+            "YEAR(IF(ISBLANK(A2),NA(),B2))",
+            "WEEKDAY(A2,IF(ISBLANK(B2),NA(),B2))",
+            "YEAR(IF(ISBLANK(A2),NA(),A2))+NA()",
+        ] {
+            assert!(unsupported_formula_function(formula, true), "{formula}");
+        }
+    }
 }
 
 #[cfg(test)]
