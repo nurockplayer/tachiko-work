@@ -4784,25 +4784,29 @@ pub fn export_csv(sheet: &SourceSheet) -> Result<Vec<u8>> {
 /// Emit the selected sheet values using one explicit bounded output profile.
 /// # Errors
 /// Rejects an oversized or invalid scalar output profile.
+fn check_working_csv_geometry(sheet: &SourceSheet, profile: OutputProfile) -> Result<()> {
+    check_import_limit(
+        crate::CapacityLimit::TableFields,
+        profile.max_columns(),
+        sheet.columns.len(),
+        Some(&sheet.name),
+        false,
+    )?;
+    check_import_limit(
+        crate::CapacityLimit::TableRows,
+        profile.max_data_rows(),
+        sheet.rows.len(),
+        Some(&sheet.name),
+        false,
+    )
+}
+
 pub(crate) fn export_csv_for_profile(
     sheet: &SourceSheet,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
     if profile == OutputProfile::WorkingSize {
-        check_import_limit(
-            crate::CapacityLimit::TableFields,
-            profile.max_columns(),
-            sheet.columns.len(),
-            Some(&sheet.name),
-            false,
-        )?;
-        check_import_limit(
-            crate::CapacityLimit::TableRows,
-            profile.max_data_rows(),
-            sheet.rows.len(),
-            Some(&sheet.name),
-            false,
-        )?;
+        check_working_csv_geometry(sheet, profile)?;
     }
     if profile == OutputProfile::NativeTables {
         validate_native_tables_csv(sheet).map_err(|finding| {

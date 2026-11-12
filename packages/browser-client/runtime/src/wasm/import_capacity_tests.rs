@@ -575,63 +575,7 @@ fn assert_working_success(source: &[u8], format: &str) {
     let bytes = exported.bytes.unwrap();
     assert_eq!(PROJECT.with(|slot| slot.borrow().clone()), bytes);
     tachiko_designer_project_close();
-    let options = ImportOptions::default();
-    let original = if format == "xlsx" {
-        crate::interop_adapter::import_xlsx_profile(source, &options, true).unwrap()
-    } else {
-        crate::interop_adapter::import_csv_profile(source, &options, true).unwrap()
-    };
-    let roundtrip = if format == "xlsx" {
-        crate::interop_adapter::import_xlsx_profile(&bytes, &options, true).unwrap()
-    } else {
-        crate::interop_adapter::import_csv_profile(&bytes, &options, true).unwrap()
-    };
-    assert_eq!(roundtrip.sheets[0].columns, original.sheets[0].columns);
-    assert_eq!(
-        roundtrip.sheets[0].rows.len(),
-        original.sheets[0].rows.len()
-    );
-    for (before, after) in original.sheets[0]
-        .rows
-        .iter()
-        .zip(&roundtrip.sheets[0].rows)
-    {
-        assert_eq!(before.len(), after.len());
-        for (before, after) in before.iter().zip(after) {
-            assert_eq!(before.value, after.value);
-            assert_eq!(before.style, after.style);
-            assert_eq!(before.formula.is_some(), after.formula.is_some());
-        }
-    }
-    if format == "xlsx" {
-        let mut again = DesignerHost::new();
-        let imported = again.spreadsheet(&request, &bytes);
-        let reply: Value = serde_json::from_slice(&imported.reply).unwrap();
-        assert_eq!(reply["status"], "ok", "{reply}");
-        let payload = &reply["response"]["payload"];
-        let window = &payload["opened"]["window"];
-        let control = serde_json::to_vec(&object(vec![
-            ("type", "export".into()),
-            ("format", format.into()),
-            ("expected_revision", window["revision"].clone()),
-            ("collection", window["collection"]["id"].clone()),
-            ("metadata", payload["metadata"].clone()),
-        ]))
-        .unwrap();
-        let exported = again.spreadsheet(&control, &[]);
-        let reply: Value = serde_json::from_slice(&exported.reply).unwrap();
-        assert_eq!(reply["status"], "ok", "{reply}");
-        let fixed =
-            crate::interop_adapter::import_xlsx_profile(&exported.bytes.unwrap(), &options, true)
-                .unwrap();
-        assert_eq!(roundtrip.sheets[0].rows.len(), fixed.sheets[0].rows.len());
-        for (first, second) in roundtrip.sheets[0].rows.iter().zip(&fixed.sheets[0].rows) {
-            assert_eq!(first.len(), second.len());
-            for (first, second) in first.iter().zip(second) {
-                assert_eq!(first.formula, second.formula);
-            }
-        }
-    }
+    assert_export_round_trip(source, &bytes, &request, format);
     let mut last_id = String::new();
     let mut start = 0_usize;
     while start < 10_000 {
@@ -664,6 +608,66 @@ fn assert_working_success(source: &[u8], format: &str) {
                 }
             }
             start += 1;
+        }
+    }
+}
+
+fn assert_export_round_trip(source: &[u8], bytes: &[u8], request: &[u8], format: &str) {
+    let options = ImportOptions::default();
+    let original = if format == "xlsx" {
+        crate::interop_adapter::import_xlsx_profile(source, &options, true).unwrap()
+    } else {
+        crate::interop_adapter::import_csv_profile(source, &options, true).unwrap()
+    };
+    let roundtrip = if format == "xlsx" {
+        crate::interop_adapter::import_xlsx_profile(bytes, &options, true).unwrap()
+    } else {
+        crate::interop_adapter::import_csv_profile(bytes, &options, true).unwrap()
+    };
+    assert_eq!(roundtrip.sheets[0].columns, original.sheets[0].columns);
+    assert_eq!(
+        roundtrip.sheets[0].rows.len(),
+        original.sheets[0].rows.len()
+    );
+    for (before, after) in original.sheets[0]
+        .rows
+        .iter()
+        .zip(&roundtrip.sheets[0].rows)
+    {
+        assert_eq!(before.len(), after.len());
+        for (before, after) in before.iter().zip(after) {
+            assert_eq!(before.value, after.value);
+            assert_eq!(before.style, after.style);
+            assert_eq!(before.formula.is_some(), after.formula.is_some());
+        }
+    }
+    if format == "xlsx" {
+        let mut again = DesignerHost::new();
+        let imported = again.spreadsheet(request, bytes);
+        let reply: Value = serde_json::from_slice(&imported.reply).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let payload = &reply["response"]["payload"];
+        let window = &payload["opened"]["window"];
+        let control = serde_json::to_vec(&object(vec![
+            ("type", "export".into()),
+            ("format", format.into()),
+            ("expected_revision", window["revision"].clone()),
+            ("collection", window["collection"]["id"].clone()),
+            ("metadata", payload["metadata"].clone()),
+        ]))
+        .unwrap();
+        let exported = again.spreadsheet(&control, &[]);
+        let reply: Value = serde_json::from_slice(&exported.reply).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let fixed =
+            crate::interop_adapter::import_xlsx_profile(&exported.bytes.unwrap(), &options, true)
+                .unwrap();
+        assert_eq!(roundtrip.sheets[0].rows.len(), fixed.sheets[0].rows.len());
+        for (first, second) in roundtrip.sheets[0].rows.iter().zip(&fixed.sheets[0].rows) {
+            assert_eq!(first.len(), second.len());
+            for (first, second) in first.iter().zip(second) {
+                assert_eq!(first.formula, second.formula);
+            }
         }
     }
 }
@@ -837,7 +841,7 @@ fn working_size_output_bytes_refusal_matches_host_and_wasm() {
     assert_eq!(opened["status"], "ok", "{opened}");
     RUNTIME.with(|slot| {
         *slot.borrow_mut() =
-            Some(crate::DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap())
+            Some(crate::DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap());
     });
     let before = host.observe_occurrence();
     let request = serde_json::to_vec(&object(vec![
@@ -1014,12 +1018,11 @@ fn working_size_native_tracker_and_tables_export_at_capacity() {
     for count in [129, crate::capacity::WORKING_LIMITS.table_rows] {
         assert_tracker_exports(count);
     }
-    let error = match crate::DesignerRuntime::from_document_working_size(
+    let Err(error) = crate::DesignerRuntime::from_document_working_size(
         tracker_document_with_rows(crate::capacity::WORKING_LIMITS.table_rows + 1),
         OCCURRENCE,
-    ) {
-        Ok(_) => panic!("over-capacity document was admitted"),
-        Err(error) => error,
+    ) else {
+        panic!("over-capacity document was admitted");
     };
     assert!(matches!(
         error,
@@ -1092,7 +1095,7 @@ fn working_size_budget_exports_more_than_128_rows() {
             let reply = host.spreadsheet(&request, &[]);
             let value: Value = serde_json::from_slice(&reply.reply).unwrap();
             assert_eq!(value["status"], "ok", "{format}: {value}");
-            assert!(!reply.bytes.unwrap().is_empty());
+            assert_ne!(reply.bytes.unwrap(), Vec::<u8>::new());
             assert_eq!(host.observe_occurrence(), before);
         }
         if added == crate::capacity::WORKING_LIMITS.total_entities - 3 {
