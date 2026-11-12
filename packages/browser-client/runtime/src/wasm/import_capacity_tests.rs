@@ -487,23 +487,49 @@ fn working_xlsx(rows: usize, columns: usize, populated: usize, formulas: bool) -
     output.finish().unwrap().into_inner()
 }
 
+fn object(entries: Vec<(&str, Value)>) -> Value {
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    )
+}
+
+fn csv_options() -> Value {
+    object(vec![("delimiter", ",".into()), ("header", true.into())])
+}
+
 fn working_request(format: &str, columns: usize) -> Vec<u8> {
     let kind = if format == "csv" { "text" } else { "number" };
-    serde_json::to_vec(&serde_json::json!({
-        "type": "import", "format": format,
-        "csv_options": {"delimiter": ",", "header": true},
-        "selection": {"column_types": [vec![kind; columns]], "extra_columns": [[]]},
-        "occurrence_id": OCCURRENCE, "install": true, "profile": "working_size"
-    }))
+    let column_types = Value::Array(vec![Value::from(vec![kind; columns])]);
+    let extra_columns = Value::Array(vec![Value::Array(Vec::new())]);
+    serde_json::to_vec(&object(vec![
+        ("type", "import".into()),
+        ("format", format.into()),
+        ("csv_options", csv_options()),
+        (
+            "selection",
+            object(vec![
+                ("column_types", column_types),
+                ("extra_columns", extra_columns),
+            ]),
+        ),
+        ("occurrence_id", OCCURRENCE.into()),
+        ("install", true.into()),
+        ("profile", "working_size".into()),
+    ]))
     .unwrap()
 }
 
 fn assert_working_success(source: &[u8], format: &str) {
     let mut host = DesignerHost::new();
-    let inspect = serde_json::to_vec(&serde_json::json!({
-        "type": "inspect", "format": format,
-        "csv_options": {"delimiter": ",", "header": true}, "profile": "working_size"
-    }))
+    let inspect = serde_json::to_vec(&object(vec![
+        ("type", "inspect".into()),
+        ("format", format.into()),
+        ("csv_options", csv_options()),
+        ("profile", "working_size".into()),
+    ]))
     .unwrap();
     let inspected = host.spreadsheet(&inspect, source);
     let inspected: Value = serde_json::from_slice(&inspected.reply).unwrap();
@@ -518,16 +544,26 @@ fn assert_working_success(source: &[u8], format: &str) {
     assert_eq!(window["total_rows"], 10_000);
     let revision = window["revision"].as_str().unwrap();
     let collection = window["collection"]["id"].as_str().unwrap();
-    let control = serde_json::to_vec(&serde_json::json!({
-        "type": "export", "format": "xlsx", "expected_revision": revision,
-        "collection": collection, "metadata": payload["metadata"]
-    }))
+    let control = serde_json::to_vec(&object(vec![
+        ("type", "export".into()),
+        ("format", "xlsx".into()),
+        ("expected_revision", revision.into()),
+        ("collection", collection.into()),
+        ("metadata", payload["metadata"].clone()),
+    ]))
     .unwrap();
     assert!(control.len() < 4 * 1024 * 1024);
     let mut last_id = String::new();
-    let mut start = 0;
+    let mut start = 0_usize;
     while start < 10_000 {
-        let query = serde_json::to_vec(&serde_json::json!({"type":"query_table_window", "expected_revision":revision, "collection":collection, "start":start, "count":256})).unwrap();
+        let query = serde_json::to_vec(&object(vec![
+            ("type", "query_table_window".into()),
+            ("expected_revision", revision.into()),
+            ("collection", collection.into()),
+            ("start", start.into()),
+            ("count", 256_u32.into()),
+        ]))
+        .unwrap();
         let reply: Value = serde_json::from_slice(&host.request(&query)).unwrap();
         assert_eq!(reply["status"], "ok", "{reply}");
         let rows = reply["response"]["payload"]["rows"].as_array().unwrap();
