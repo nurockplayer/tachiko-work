@@ -889,9 +889,9 @@ fn tracker_and_budget_working_size_starters_open_with_working_profile() {
             assert_eq!(runtime.default_collection, "budget_items");
             let budget = runtime.query_table("budget_items").unwrap();
             assert!(budget.rows.iter().any(|row| {
-                row.fields.iter().any(|field| {
-                    field.formula.is_some() && field.calculated.is_some()
-                })
+                row.fields
+                    .iter()
+                    .any(|field| field.formula.is_some() && field.calculated.is_some())
             }));
         }
     }
@@ -914,16 +914,12 @@ fn working_size_tracker_admits_a_129th_row_while_ordinary_tracker_refuses_it() {
             .unwrap();
     }
     assert_eq!(
-        working
-            .query_table(&working_collection)
-            .unwrap()
-            .rows
-            .len(),
+        working.query_table(&working_collection).unwrap().rows.len(),
         DEFAULT_LIMITS.table_rows + 1
     );
 
-    let (mut ordinary, _) = super::starter_candidate(occurrence, None, super::Starter::Tracker)
-        .unwrap();
+    let (mut ordinary, _) =
+        super::starter_candidate(occurrence, None, super::Starter::Tracker).unwrap();
     let ordinary_collection = ordinary.default_collection.clone();
     assert_eq!(ordinary_collection, "tracker");
     for _ in 0..DEFAULT_LIMITS.table_rows {
@@ -936,7 +932,9 @@ fn working_size_tracker_admits_a_129th_row_while_ordinary_tracker_refuses_it() {
     let error = ordinary
         .insert_row(&expected, &ordinary_collection, &[])
         .unwrap_err();
-    assert!(matches!(error, DesignerError::CapacityExceeded(ref capacity)
+    assert!(
+        matches!(error, DesignerError::CapacityExceeded(ref capacity)
         if capacity.limit == CapacityLimit::TableRows
-            && capacity.maximum == DEFAULT_LIMITS.table_rows));
+            && capacity.maximum == DEFAULT_LIMITS.table_rows)
+    );
 }

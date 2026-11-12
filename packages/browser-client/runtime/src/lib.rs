@@ -3531,13 +3531,19 @@ impl DesignerRuntime {
     #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     fn dispatch(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
-            DesignerRequest::NewTracker { occurrence_id, profile } => {
+            DesignerRequest::NewTracker {
+                occurrence_id,
+                profile,
+            } => {
                 let (candidate, response) =
                     starter_candidate(&occurrence_id, profile, Starter::Tracker)?;
                 *self = candidate;
                 Ok(response)
             }
-            DesignerRequest::NewBudget { occurrence_id, profile } => {
+            DesignerRequest::NewBudget {
+                occurrence_id,
+                profile,
+            } => {
                 let (candidate, response) =
                     starter_candidate(&occurrence_id, profile, Starter::Budget)?;
                 *self = candidate;
