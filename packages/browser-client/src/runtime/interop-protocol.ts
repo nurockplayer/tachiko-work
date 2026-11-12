@@ -15,7 +15,9 @@ export type SourceStyle = { number_format: string | null; bold: boolean; fill: s
 export type SourceCell = { value: SourceValue; formula: string | null; style: SourceStyle };
 export type SourceWorkbook = { sheets: Array<{name: string; has_header: boolean; columns: Array<{name: string; width: number | null}>; rows: SourceCell[][]; layout?: SourceLayout}>; ledger: FidelityFinding[] };
 export type ImportSelection = { column_types: ImportFieldType[][]; extra_columns: Array<Array<{name: string; field_type: ImportFieldType}>> };
-export type InteropMetadata = { version: number; sheets: Array<{schema_id: string; name: string; has_header: boolean; columns: Array<{field_id: string; name: string; width: number | null}>; rows: Array<{entity_id: string; styles: SourceStyle[]}>}> };
+export type InteropMetadata =
+  | { version: 1; sheets: Array<{schema_id: string; name: string; has_header: boolean; columns: Array<{field_id: string; name: string; width: number | null}>; rows: Array<{entity_id: string; styles: SourceStyle[]}>}> }
+  | { version: 2; sheets: Array<{schema_id: string; name: string; has_header: boolean; columns: Array<{field_id: string; name: string}>}> };
 /** Private outbound-only binding for the stock 128-row Driver Tracker. */
 export type NativeTrackerExportPresentation = { version: number; rows: Array<{entity_id: string; styles: SourceStyle[]}> };
 /** Private outbound-only binding for the native Budget collections and views. */
