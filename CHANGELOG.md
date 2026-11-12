@@ -16,6 +16,10 @@ All notable changes to Tachiko Work are documented in this file.
 - Working-size XLSX and CSV imports admit up to 10,000 data rows and
   100,000 populated cells, with typed capacity refusals. Supported date
   formats on blank Date cells survive import and export.
+- A1 entry and XLSX import accept exact `VLOOKUP`, `XLOOKUP`, and
+  `INDEX`/`MATCH` over whole table columns with Number results. XLSX export
+  writes literal `INDEX`/`MATCH`, with `IFNA` for a missing-key fallback;
+  incompatible source formulas keep Excel's cached value with a finding.
 
 - Formula engine supports `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, and `DAYS` on
   Date field references, with Gregorian day differences and `.roproj/v3`

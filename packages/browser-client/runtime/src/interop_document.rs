@@ -641,8 +641,8 @@ use super::interop_adapter::{
     MAX_NATIVE_BUDGET_COLUMNS, MAX_NATIVE_BUDGET_DATA_ROWS, MAX_NATIVE_BUDGET_SHEETS, MAX_SHEETS,
     MAX_TEXT_CAPACITY_COLUMNS, OutputProfile, SourceCell, SourceColumn, SourceLayout, SourceSheet,
     SourceValue, SourceWorkbook, SummaryAggregate, SummaryRow, call_argument, conditional_shape,
-    criterion_literal, guarded_date_cell, split_arguments, whole_column_argument,
-    writable_criterion,
+    contains_lookup_call, criterion_literal, guarded_date_cell, lookup_call, lookup_key,
+    split_arguments, whole_column_argument, writable_criterion,
 };
 use super::{IdGenerator, OpenedProjection, SemanticIdKind};
 use crate::translate_a1::{A1RefusalCode, A1TokenSpan};
@@ -1113,6 +1113,7 @@ fn import_workbook_working_size_candidate(
 
 /// Build the imported document and bind every source formula, admitting both
 /// the temporary Number-slot document and the final one through `admit`.
+#[allow(clippy::too_many_lines)] // Build slots, translate and bind without exposing an intermediate document.
 fn import_workbook_document(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
@@ -1164,14 +1165,39 @@ fn import_workbook_document(
     let mut pending = BTreeMap::new();
     for (sheet_index, row, column, source) in formulas {
         let target = metadata_target(&metadata, sheet_index, row, column)?;
-        let (source, references) = translate_a1(
+        let translated = translate_a1(
             &source,
             &metadata,
             &workbook.sheets,
             sheet_index,
             &target,
             &document,
-        )?;
+        );
+        let (source, references) = match translated {
+            Ok(translated) => translated,
+            Err(_) if contains_lookup_call(&source) => {
+                let sheet = &workbook.sheets[sheet_index];
+                let location = format!(
+                    "{}!{}{}",
+                    sheet.name,
+                    super::interop_adapter::column_name(column),
+                    sheet.layout.rows_above_header as usize
+                        + usize::from(sheet.has_header)
+                        + row
+                        + 1
+                );
+                keep_import_cache(
+                    &mut document,
+                    &target,
+                    &sheet.rows[row][column],
+                    &location,
+                    &mut ledger,
+                    LOOKUP_IMPORT_REASON,
+                )?;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
     let export_maps = export_a1_maps(&document, &metadata);
@@ -2046,9 +2072,7 @@ fn export_a1_maps(
                             .schemas
                             .get(sheet.schema_id.as_str())
                             .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                            .is_some_and(|field| {
-                                field.field_type == FieldType::Date && !field.required
-                            }),
+                            .is_some_and(|field| !field.required),
                     ),
                 );
             }
@@ -2109,6 +2133,7 @@ fn import_formula_order(
 
 // Bind and guard without publishing an unguarded intermediate calculation.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)] // Bind once and preserve cached lookup values at the typed boundary.
 fn bind_import_formula(
     document: &mut Document,
     index: &AddressIndex,
@@ -2122,20 +2147,47 @@ fn bind_import_formula(
     ),
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
-    let unbound = parse_expression(source).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
-            field: target.clone(),
-            input: source.into(),
-            source: error,
+    let unbound = match parse_expression(source) {
+        Ok(unbound) => unbound,
+        Err(_) if contains_lookup_call(source) => {
+            return keep_import_cache(
+                document,
+                target,
+                cell,
+                location,
+                ledger,
+                LOOKUP_IMPORT_REASON,
+            );
         }
-    })?;
-    let expression =
-        bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
-            tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+        Err(error) => {
+            return Err(tachiko_workspace_engine::WorkspaceError::InvalidFormula {
+                field: target.clone(),
+                input: source.into(),
+                source: error,
+            }
+            .into());
+        }
+    };
+    let expression = match bind_expression_with_index(document, index, target, &unbound) {
+        Ok(expression) => expression,
+        Err(_) if contains_lookup_call(source) => {
+            return keep_import_cache(
+                document,
+                target,
+                cell,
+                location,
+                ledger,
+                LOOKUP_IMPORT_REASON,
+            );
+        }
+        Err(error) => {
+            return Err(tachiko_workspace_engine::WorkspaceError::FormulaBinding {
                 field: target.clone(),
                 source: Box::new(error),
             }
-        })?;
+            .into());
+        }
+    };
     // Guarding can outgrow any engine bound (nodes, depth or canonical text);
     // each keeps Excel's cached value rather than failing the whole import.
     // The export round trip in `finish_import` writes the same formula as A1
@@ -2159,7 +2211,14 @@ fn bind_import_formula(
         Err(_) => None,
     };
     let Some(source) = projected else {
-        return keep_import_cache(document, target, cell, location, ledger);
+        return keep_import_cache(
+            document,
+            target,
+            cell,
+            location,
+            ledger,
+            "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows",
+        );
     };
     // `FormulaUpdate` parsed and bound the projected text again before
     // publishing it; do the same here, then write the bound expression into
@@ -2188,7 +2247,10 @@ fn bind_import_formula(
     Ok(())
 }
 
-/// An imported formula Tachiko cannot hold after guarding keeps Excel's cached
+const LOOKUP_IMPORT_REASON: &str =
+    "lookup key, columns or fallback cannot be bound with the supported exact-match meaning";
+
+/// An imported formula outside the translated profile keeps Excel's cached
 /// Number in its temporary formula slot.
 fn keep_import_cache(
     document: &mut Document,
@@ -2196,6 +2258,7 @@ fn keep_import_cache(
     cell: &SourceCell,
     location: &str,
     ledger: &mut Vec<FidelityFinding>,
+    reason: &'static str,
 ) -> Result<(), DesignerError> {
     let mut value = cell.value.clone();
     let mut formula = cell
@@ -2207,7 +2270,7 @@ fn keep_import_cache(
         &mut formula,
         location,
         ledger,
-        Some("guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows"),
+        Some(reason),
     );
     if let Some(finding) = ledger.last().filter(|finding| finding.blocking) {
         return Err(DesignerError::ImportedSpreadsheetExport {
@@ -2215,7 +2278,7 @@ fn keep_import_cache(
         });
     }
     let SourceValue::Number { value } = value else {
-        return Err(tracker_error("MIN/MAX requires a numeric cached value"));
+        return Err(tracker_error("formula requires a numeric cached value"));
     };
     let number = Number::new(value).map_err(|_| DesignerError::InvalidNumberInput {
         input: value.to_string(),
@@ -2223,7 +2286,7 @@ fn keep_import_cache(
     let entity = document
         .entities
         .get_mut(&target.entity)
-        .ok_or_else(|| tracker_error("MIN/MAX requires a numeric cached value"))?;
+        .ok_or_else(|| tracker_error("formula requires a numeric cached value"))?;
     entity
         .fields
         .insert(target.field.clone(), Value::Number(number));
@@ -2676,6 +2739,23 @@ fn translate_a1_inner(
                 let token = &source[token_start..cursor];
                 if sheet_name.is_none() && !token.contains('!') {
                     let name = token.to_ascii_uppercase();
+                    if matches!(name.as_str(), "VLOOKUP" | "XLOOKUP" | "INDEX" | "IFNA") {
+                        let call = skip_spaces(source, cursor);
+                        if source[call..].starts_with('(') {
+                            let (argument, consumed) = call_argument(&source[call..])
+                                .ok_or_else(|| tracker_error("unterminated source formula call"))?;
+                            output.push_str(&translate_lookup_call(
+                                &name,
+                                argument,
+                                current_sheet,
+                                geometry,
+                                document,
+                                &mut references,
+                            )?);
+                            cursor = call + consumed;
+                            return Ok(());
+                        }
+                    }
                     if matches!(name.as_str(), "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "DAYS") {
                         let call = skip_spaces(source, cursor);
                         if source[call..].starts_with('(') {
@@ -2848,6 +2928,39 @@ fn translate_a1_inner(
         }
     }
     Ok((output, references))
+}
+
+fn translate_lookup_call(
+    name: &str,
+    argument: &str,
+    current_sheet: usize,
+    geometry: &mut impl A1Geometry,
+    document: &Document,
+    references: &mut BTreeSet<FieldRef>,
+) -> Result<String, DesignerError> {
+    let call = lookup_call(name, argument).ok_or_else(|| geometry.unknown_function())?;
+    geometry.begin_conditional();
+    let keys = geometry.column(&call.keys, current_sheet, false, document, references)?;
+    let results = geometry.column(&call.results, current_sheet, true, document, references)?;
+    if let Some(end) = &call.range_end {
+        geometry.column(end, current_sheet, false, document, &mut BTreeSet::new())?;
+    }
+    let (key, nested) = translate_a1_inner(
+        lookup_key(call.key).0,
+        geometry,
+        current_sheet,
+        document,
+        false,
+    )?;
+    references.extend(nested);
+    let mut arguments = vec![key, keys, results];
+    if let Some(fallback) = call.if_missing {
+        let (fallback, nested) =
+            translate_a1_inner(fallback, geometry, current_sheet, document, false)?;
+        references.extend(nested);
+        arguments.push(fallback);
+    }
+    Ok(format!("LOOKUP({})", arguments.join(",")))
 }
 
 /// Translate one `SUMIF`-family call to canonical Tachiko text, keeping the
@@ -4887,7 +5000,7 @@ pub(crate) struct ExportCell {
     column: String,
     row: usize,
     criterion_type: Option<FieldType>,
-    optional_date: bool,
+    optional: bool,
 }
 
 impl ExportCell {
@@ -4896,14 +5009,14 @@ impl ExportCell {
         column: String,
         row: usize,
         criterion_type: Option<FieldType>,
-        optional_date: bool,
+        optional: bool,
     ) -> Self {
         Self {
             sheet,
             column,
             row,
             criterion_type,
-            optional_date,
+            optional,
         }
     }
 
@@ -5017,7 +5130,37 @@ fn export_in(
         Expression::ColumnAggregate { function, column } => {
             export_column_aggregate(*function, column, columns)
         }
-        Expression::Lookup { .. } => Err(tracker_error("LOOKUP export is not supported yet")),
+        Expression::Lookup {
+            key,
+            key_column,
+            result_column,
+            if_missing,
+        } => {
+            let (keys, key_type) = export_column_range(key_column, columns)?;
+            let (results, _) = export_column_range(result_column, columns)?;
+            let mut key_text = export_in(key, owner, addresses, columns, present)?;
+            let optional = direct_reference(key, owner)
+                .filter(|reference| !present.contains(reference))
+                .and_then(|reference| addresses.get(&reference))
+                .is_some_and(|cell| cell.optional);
+            if optional {
+                key_text = format!("IF(ISBLANK({key_text}),1/0,{key_text})");
+            }
+            if key_type == Some(FieldType::Text) {
+                key_text = format!(
+                    "SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({key_text},\"~\",\"~~\"),\"*\",\"~*\"),\"?\",\"~?\")"
+                );
+            }
+            let lookup = format!("INDEX({results},MATCH({key_text},{keys},0))");
+            if let Some(fallback) = if_missing {
+                Ok(format!(
+                    "IFNA({lookup},{})",
+                    export_in(fallback, owner, addresses, columns, present)?
+                ))
+            } else {
+                Ok(lookup)
+            }
+        }
         Expression::ColumnConditional {
             aggregate,
             criteria,
@@ -5143,7 +5286,7 @@ fn export_date_argument(
     let optional = direct_reference(argument, owner)
         .filter(|reference| !present.contains(reference))
         .and_then(|reference| addresses.get(&reference))
-        .is_some_and(|cell| cell.optional_date);
+        .is_some_and(|cell| cell.optional);
     Ok(if optional {
         format!("IF(ISBLANK({exported}),NA(),{exported})")
     } else {

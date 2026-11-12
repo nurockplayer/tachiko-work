@@ -3007,3 +3007,539 @@ fn bare_na_import_keeps_cached_value() {
     );
     assert_eq!(exported.sheets[0].rows[0][0].formula, None);
 }
+
+fn lookup_workbook(formulas: [Option<&str>; 3]) -> (SourceWorkbook, ImportSelection) {
+    let columns = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| SourceColumn {
+                name: (*name).into(),
+                width: None,
+                number_format: None,
+            })
+            .collect()
+    };
+    let text = |value: &str| {
+        source_cell(
+            SourceValue::Text {
+                value: value.into(),
+            },
+            None,
+        )
+    };
+    let workbook = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![
+            SourceSheet {
+                name: "Orders".into(),
+                has_header: true,
+                columns: columns(&["Key", "Price"]),
+                rows: ["widget", "gadget", "widget"]
+                    .into_iter()
+                    .zip(formulas)
+                    .map(|(key, formula)| {
+                        vec![
+                            text(key),
+                            source_cell(SourceValue::Number { value: 99.0 }, formula),
+                        ]
+                    })
+                    .collect(),
+                layout: SourceLayout::default(),
+            },
+            SourceSheet {
+                name: "Products".into(),
+                has_header: true,
+                columns: columns(&["Key", "Label", "Price"]),
+                rows: [("widget", 10.0), ("gadget", 20.0), ("other", 30.0)]
+                    .into_iter()
+                    .map(|(key, price)| {
+                        vec![
+                            text(key),
+                            text("Product"),
+                            source_cell(SourceValue::Number { value: price }, None),
+                        ]
+                    })
+                    .collect(),
+                layout: SourceLayout::default(),
+            },
+        ],
+    };
+    let selection = ImportSelection {
+        column_types: vec![
+            vec![ImportFieldType::Text, ImportFieldType::Number],
+            vec![
+                ImportFieldType::Text,
+                ImportFieldType::Text,
+                ImportFieldType::Number,
+            ],
+        ],
+        extra_columns: vec![vec![], vec![]],
+    };
+    (workbook, selection)
+}
+
+fn lookup_sheet_xml(bytes: &[u8]) -> String {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("xl/worksheets/sheet1.xml").unwrap(),
+        &mut xml,
+    )
+    .unwrap();
+    xml
+}
+
+#[test]
+fn lookup_spellings_import_live_and_round_trip_through_xlsx() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (source, selection) = lookup_workbook([
+        Some("=VLOOKUP(A2,Products!A2:C4,3,FALSE)"),
+        Some("=XLOOKUP(A3,Products!A2:A4,Products!C2:C4,0)"),
+        Some("=INDEX(Products!C2:C4,MATCH(A4,Products!A2:A4,0))"),
+    ]);
+    let bytes = export_xlsx(&source).unwrap();
+    let xml = lookup_sheet_xml(&bytes);
+    assert!(
+        xml.contains("_xlfn.XLOOKUP(A3,Products!A2:A4,Products!C2:C4,0)"),
+        "{xml}"
+    );
+    let source = import_xlsx(&bytes).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let findings: Vec<_> = imported
+        .ledger
+        .iter()
+        .filter(|finding| finding.blocking || finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (row, value) in [10.0, 20.0, 10.0].into_iter().enumerate() {
+        let address = format!("A{}", row + 2);
+        let key = format!(
+            "SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(IF(ISBLANK({address}),1/0,{address}),\"~\",\"~~\"),\"*\",\"~*\"),\"?\",\"~?\")"
+        );
+        let formula = format!("INDEX('Products'!$C$2:$C$4,MATCH({key},'Products'!$A$2:$A$4,0))");
+        let formula = if row == 1 {
+            format!("IFNA({formula},0)")
+        } else {
+            formula
+        };
+        assert_eq!(
+            exported.sheets[0].rows[row][1].formula.as_deref(),
+            Some(formula.as_str())
+        );
+        assert_eq!(
+            exported.sheets[0].rows[row][1].value,
+            SourceValue::Number { value }
+        );
+    }
+    let bytes = export_xlsx(&exported).unwrap();
+    let xml = lookup_sheet_xml(&bytes);
+    assert!(xml.contains("<f>_xlfn.IFNA(INDEX("), "{xml}");
+    let source = import_xlsx(&bytes).unwrap();
+    let findings: Vec<_> = source
+        .ledger
+        .iter()
+        .filter(|finding| finding.blocking || finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for row in 0..3 {
+        assert_eq!(
+            reopened.sheets[0].rows[row][1].formula,
+            exported.sheets[0].rows[row][1].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[row][1].value,
+            exported.sheets[0].rows[row][1].value
+        );
+    }
+}
+
+#[test]
+fn unsupported_lookup_shapes_keep_cached_values_and_the_workbook() {
+    use tachiko_designer_runtime::interop_adapter::{ImportOptions, export_xlsx, import_xlsx_with};
+    for formula in [
+        "=VLOOKUP(A2,Products!A2:C4,3,TRUE)",
+        "=VLOOKUP(A2,Products!A2:C4,3)",
+        "=VLOOKUP(A2,Products!A2:C4,0,FALSE)",
+        "=VLOOKUP(A2,Products!A2:C4,4,FALSE)",
+        "=VLOOKUP(A2,Products!A2:C3,3,FALSE)",
+        "=VLOOKUP(A2,Products!A1:C4,3,FALSE)",
+        "=VLOOKUP(A2,Products!A2:D4,3,FALSE)",
+        "=MATCH(A2,Products!A2:A4,1)",
+        "=INDEX(Products!C2:C4,2)",
+        "=INDEX(Products!C2:C4,MATCH(A2,Products!A2:A4,1))",
+        "=XLOOKUP(A2,Products!A2:A4,Products!C2:C4,0,0)",
+        "=XLOOKUP(A2,Products!A2:A3,Products!C2:C4)",
+    ] {
+        let (source, selection) = lookup_workbook([Some(formula), None, None]);
+        let source = import_xlsx_with(
+            &export_xlsx(&source).unwrap(),
+            &ImportOptions {
+                header_rows: vec![Some(1), Some(1)],
+                ..ImportOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{formula}: {error}"));
+        assert!(source.sheets[0].rows[0][1].formula.is_none(), "{formula}");
+        assert_eq!(
+            source.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 99.0 }
+        );
+        let finding = source
+            .ledger
+            .iter()
+            .find(|finding| finding.code == "unsupported_formula_kept_value")
+            .unwrap();
+        assert!(!finding.blocking, "{formula}: {finding:?}");
+        assert!(finding.message.contains("lookup requires"), "{finding:?}");
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert!(exported.sheets[0].rows[0][1].formula.is_none(), "{formula}");
+        assert_eq!(
+            exported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 99.0 }
+        );
+    }
+}
+
+#[test]
+fn incompatible_lookup_values_keep_the_cache_with_a_finding() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    for case in [
+        "wildcard_key",
+        "wildcard_column",
+        "tilde",
+        "question",
+        "match",
+        "date",
+        "text_result",
+        "blank",
+    ] {
+        let formula = if case == "match" {
+            "=INDEX(Products!C2:C4,MATCH(A2,Products!A2:A4,0))"
+        } else {
+            "=VLOOKUP(A2,Products!A2:C4,3,FALSE)"
+        };
+        let (mut source, mut selection) = lookup_workbook([Some(formula), None, None]);
+        match case {
+            "wildcard_key" | "match" => {
+                source.sheets[0].rows[0][0].value = SourceValue::Text { value: "w*".into() }
+            }
+            "wildcard_column" | "tilde" | "question" => {
+                source.sheets[1].rows[2][0].value = SourceValue::Text {
+                    value: match case {
+                        "tilde" => "x~",
+                        "question" => "x?",
+                        _ => "x*",
+                    }
+                    .into(),
+                }
+            }
+            "date" => {
+                source.sheets[0].rows[0][0].value = SourceValue::Number { value: 46000.0 };
+                selection.column_types[0][0] = ImportFieldType::Number;
+                selection.column_types[1][0] = ImportFieldType::Date;
+                // Keep each selected column homogeneous for the real import.
+                for row in &mut source.sheets[0].rows {
+                    row[0].value = SourceValue::Number { value: 46000.0 };
+                }
+                for row in &mut source.sheets[1].rows {
+                    row[0].value = SourceValue::Date {
+                        value: "2026-01-01".into(),
+                    };
+                }
+            }
+            "text_result" => {
+                selection.column_types[1][2] = ImportFieldType::Text;
+                for row in &mut source.sheets[1].rows {
+                    row[2].value = SourceValue::Text {
+                        value: "ten".into(),
+                    };
+                }
+            }
+            "blank" => source.sheets[0].rows[0][0].value = SourceValue::Empty,
+            _ => unreachable!(),
+        }
+        let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+        let finding = source
+            .ledger
+            .iter()
+            .find(|finding| finding.code == "unsupported_formula_kept_value")
+            .unwrap_or_else(|| panic!("{case}: {:?}", source.ledger));
+        assert!(!finding.blocking, "{case}: {finding:?}");
+        assert!(finding.message.contains("lookup requires"), "{finding:?}");
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert!(exported.sheets[0].rows[0][1].formula.is_none(), "{case}");
+        assert_eq!(
+            exported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 99.0 }
+        );
+    }
+}
+
+#[test]
+fn number_lookup_keys_export_without_text_escaping_and_keep_lazy_fallbacks() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (mut source, mut selection) = lookup_workbook([
+        Some("=VLOOKUP(A2,Products!A2:C4,3,0)"),
+        Some("=XLOOKUP(A3,Products!A2:A4,Products!C2:C4,42)"),
+        Some("=XLOOKUP(A4+0,Products!A2:A4,Products!C2:C4,1/0)"),
+    ]);
+    selection.column_types[0][0] = ImportFieldType::Number;
+    selection.column_types[1][0] = ImportFieldType::Number;
+    for (row, value) in source.sheets[0].rows.iter_mut().zip([1.0, 9.0, 2.0]) {
+        row[0].value = SourceValue::Number { value };
+    }
+    for (row, value) in source.sheets[1].rows.iter_mut().zip([1.0, 2.0, 3.0]) {
+        row[0].value = SourceValue::Number { value };
+    }
+    let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (row, value) in [10.0, 42.0, 20.0].into_iter().enumerate() {
+        let cell = &exported.sheets[0].rows[row][1];
+        let formula = cell.formula.as_deref().unwrap();
+        assert!(!formula.contains("SUBSTITUTE"), "{formula}");
+        if row < 2 {
+            let address = format!("A{}", row + 2);
+            assert!(
+                formula.contains(&format!("IF(ISBLANK({address}),1/0,{address})")),
+                "{formula}"
+            );
+        }
+        assert_eq!(cell.value, SourceValue::Number { value });
+    }
+    let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for row in 0..3 {
+        assert_eq!(
+            reopened.sheets[0].rows[row][1].formula,
+            exported.sheets[0].rows[row][1].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[row][1].value,
+            exported.sheets[0].rows[row][1].value
+        );
+    }
+}
+
+#[test]
+fn xlookup_wildcards_are_literal_and_the_escaped_match_reimports_live() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (mut source, selection) = lookup_workbook([
+        Some("=XLOOKUP(A2,Products!A2:A4,Products!C2:C4)"),
+        None,
+        None,
+    ]);
+    for sheet in &mut source.sheets {
+        sheet.rows[0][0].value = SourceValue::Text {
+            value: "w*?~".into(),
+        };
+    }
+    let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 10.0 }
+    );
+    let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let findings: Vec<_> = source
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        reopened.sheets[0].rows[0][1].formula,
+        exported.sheets[0].rows[0][1].formula
+    );
+    assert_eq!(
+        reopened.sheets[0].rows[0][1].value,
+        exported.sheets[0].rows[0][1].value
+    );
+}
+
+#[test]
+fn blank_optional_lookup_keys_fail_outside_ifna_and_round_trip_inside_iferror() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (mut source, selection) = lookup_workbook([None, None, None]);
+    source.sheets[0].rows[0][0].value = SourceValue::Empty;
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let revision = if let DesignerResponse::Published(published) = runtime.handle(DesignerRequest::FormulaUpdate {
+        expected_revision: "resident/0".into(),
+        target: FieldTarget {
+            entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+            field: imported.metadata.sheets[0].columns[1].field_id.clone(),
+        },
+        source: "IFERROR(LOOKUP([.column_1],[sheet_2.column_1:column],[sheet_2.column_3:column],42),7)".into(),
+    }).unwrap() { published.resulting_revision } else { panic!("formula update publishes") };
+    let exported = runtime
+        .export_workbook(&revision, &imported.metadata)
+        .unwrap();
+    let cell = &exported.sheets[0].rows[0][1];
+    assert_eq!(cell.value, SourceValue::Number { value: 7.0 });
+    let formula = cell.formula.as_deref().unwrap();
+    assert!(formula.starts_with("IFERROR(IFNA(INDEX("), "{formula}");
+    assert!(formula.contains("IF(ISBLANK(A2),1/0,A2)"), "{formula}");
+    let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let findings: Vec<_> = source
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "unsupported_formula_kept_value")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert_eq!(reopened.sheets[0].rows[0][1].formula, cell.formula);
+    assert_eq!(reopened.sheets[0].rows[0][1].value, cell.value);
+}
+
+#[test]
+fn date_and_boolean_lookup_keys_stay_unescaped() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    for (kind, value) in [
+        (
+            ImportFieldType::Date,
+            SourceValue::Date {
+                value: "2026-01-01".into(),
+            },
+        ),
+        (
+            ImportFieldType::Boolean,
+            SourceValue::Boolean { value: true },
+        ),
+    ] {
+        let (mut source, mut selection) = lookup_workbook([
+            Some("=INDEX(Products!C2:C4,MATCH(A2,Products!A2:A4,0))"),
+            None,
+            None,
+        ]);
+        selection.column_types[0][0] = kind;
+        selection.column_types[1][0] = kind;
+        for sheet in &mut source.sheets {
+            for row in &mut sheet.rows {
+                row[0].value = value.clone();
+            }
+        }
+        let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let exported = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            exported.sheets[0].rows[0][1].formula.as_deref(),
+            Some(
+                "INDEX('Products'!$C$2:$C$4,MATCH(IF(ISBLANK(A2),1/0,A2),'Products'!$A$2:$A$4,0))"
+            )
+        );
+        assert_eq!(
+            exported.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 10.0 }
+        );
+        let source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+        let findings: Vec<_> = source
+            .ledger
+            .iter()
+            .filter(|finding| finding.code == "unsupported_formula_kept_value")
+            .collect();
+        assert!(findings.is_empty(), "{findings:?}");
+        let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let reopened = runtime
+            .export_workbook("resident/0", &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            reopened.sheets[0].rows[0][1].value,
+            SourceValue::Number { value: 10.0 }
+        );
+    }
+}
+
+#[test]
+fn lookup_export_omits_the_blank_guard_for_a_key_already_proved_present() {
+    let (source, selection) = lookup_workbook([None, None, None]);
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let DesignerResponse::Published(published) = runtime.handle(DesignerRequest::FormulaUpdate {
+        expected_revision: "resident/0".into(),
+        target: FieldTarget {
+            entity: imported.metadata.sheets[0].rows[0].entity_id.clone(),
+            field: imported.metadata.sheets[0].columns[1].field_id.clone(),
+        },
+        source: "IF(ISBLANK([.column_1]),0,LOOKUP([.column_1],[sheet_2.column_1:column],[sheet_2.column_3:column]))".into(),
+    }).unwrap() else { panic!("formula update publishes") };
+    let exported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let formula = exported.sheets[0].rows[0][1].formula.as_deref().unwrap();
+    assert!(formula.starts_with("IF(ISBLANK(A2),0,INDEX("), "{formula}");
+    assert!(
+        formula.contains("SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(A2,"),
+        "{formula}"
+    );
+    assert!(!formula.contains("1/0"), "{formula}");
+}
+
+#[test]
+fn lookup_binding_refusals_keep_cached_values_for_the_selected_column_types() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+    let (mut source, mut selection) = lookup_workbook([
+        Some("=XLOOKUP(A2+0,Products!A2:A4,Products!C2:C4,0)"),
+        None,
+        None,
+    ]);
+    // Excel coerces numeric Text in arithmetic; Tachiko requires Number operands.
+    for row in &mut source.sheets[0].rows {
+        row[0].value = SourceValue::Text { value: "1".into() };
+    }
+    for row in &mut source.sheets[1].rows {
+        row[0].value = SourceValue::Number { value: 1.0 };
+    }
+    selection.column_types[1][0] = ImportFieldType::Number;
+    let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let finding = imported
+        .ledger
+        .iter()
+        .find(|finding| finding.code == "unsupported_formula_kept_value")
+        .unwrap();
+    assert!(
+        finding.message.contains("lookup key, columns or fallback"),
+        "{finding:?}"
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    assert!(
+        exported.sheets[0].rows[0][1].formula.is_none(),
+        "{:?}",
+        exported.sheets[0].rows[0][1]
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][1].value,
+        SourceValue::Number { value: 99.0 }
+    );
+}

@@ -777,3 +777,131 @@ fn translate_a1_iferror() {
         &["relative_copy_semantics_changed"],
     );
 }
+
+#[test]
+fn translate_a1_lookup_spellings_share_one_node() {
+    let mut rt = Some(fixture());
+    for text in [
+        "VLOOKUP(A3,A2:C4,3,FALSE)",
+        "VLOOKUP(A3,$A$2:$C$4,3,0)",
+        "vlookup(A3,A2:C4,3,false)",
+        "XLOOKUP(A3,A2:A4,C2:C4)",
+        "INDEX(C2:C4,MATCH(A3,A2:A4,0))",
+    ] {
+        ok(
+            &mut rt,
+            text,
+            "LOOKUP([.name],[items.name:column],[items.price:column])",
+            &["range_tracks_collection"],
+        );
+    }
+    ok(
+        &mut rt,
+        "XLOOKUP(A3,A2:A4,C2:C4,0)",
+        "LOOKUP([.name],[items.name:column],[items.price:column],0)",
+        &["range_tracks_collection"],
+    );
+    ok(
+        &mut rt,
+        "XLOOKUP(B3+0,B2:B4,C2:C4,1/0)",
+        "LOOKUP([.qty]+0,[items.qty:column],[items.price:column],1/0)",
+        &["range_tracks_collection"],
+    );
+    // The entire rectangle must exist even when the selected column is earlier.
+    ok(
+        &mut rt,
+        "VLOOKUP(B3,B2:D4,2,FALSE)",
+        "LOOKUP([.qty],[items.qty:column],[items.price:column])",
+        &["range_tracks_collection"],
+    );
+    ok(
+        &mut rt,
+        "VLOOKUP(2,B2:C4,1,FALSE)",
+        "LOOKUP(2,[items.qty:column],[items.qty:column])",
+        &["range_tracks_collection"],
+    );
+}
+
+#[test]
+fn translate_a1_lookup_refuses_other_shapes_and_partial_ranges() {
+    let mut rt = Some(fixture());
+    for text in [
+        "VLOOKUP(A3,A2:C4,3,TRUE)",
+        "VLOOKUP(A3,A2:C4,3)",
+        "VLOOKUP(A3,A2:C4,0,FALSE)",
+        "VLOOKUP(A3,A2:C4,4,FALSE)",
+        "VLOOKUP(A3,A2:C4,3.0,FALSE)",
+        "VLOOKUP(A3,A2:C4,3,FALSE())",
+        "MATCH(A3,A2:A4,1)",
+        "INDEX(C2:C4,2)",
+        "INDEX(C2:C4,MATCH(A3,A2:A4,1))",
+        "XLOOKUP(A3,A2:A4,C2:C4,0,0)",
+        "IFNA(B3,0)",
+    ] {
+        refused(&mut rt, &request(text), "unsupported_function");
+    }
+    for text in [
+        "VLOOKUP(A3,A2:C3,3,FALSE)",
+        "VLOOKUP(A3,A1:C4,3,FALSE)",
+        "VLOOKUP(A3,A2:E4,3,FALSE)",
+        "XLOOKUP(A3,A2:A3,C2:C4)",
+        "INDEX(C2:C4,MATCH(A3,A2:A3,0))",
+    ] {
+        refused(&mut rt, &request(text), "unsupported_range");
+    }
+}
+
+#[test]
+fn translate_a1_lookup_recognizes_only_exported_key_wrappers() {
+    let mut rt = Some(fixture());
+    let escaped = |key| {
+        format!("SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({key},\"~\",\"~~\"),\"*\",\"~*\"),\"?\",\"~?\")")
+    };
+    for key in [
+        "A3".to_owned(),
+        "IF(ISBLANK(A3),1/0,A3)".to_owned(),
+        escaped("A3"),
+        escaped("IF(ISBLANK(A3),1/0,A3)"),
+    ] {
+        ok(
+            &mut rt,
+            &format!("IFNA(INDEX(C2:C4,MATCH({key},A2:A4,0)),0)"),
+            "LOOKUP([.name],[items.name:column],[items.price:column],0)",
+            &["range_tracks_collection"],
+        );
+    }
+    // A different substitution is a function, not an export wrapper.
+    refused(
+        &mut rt,
+        &request("INDEX(C2:C4,MATCH(SUBSTITUTE(A3,\"*\",\"x\"),A2:A4,0))"),
+        "unsupported_function",
+    );
+}
+
+#[test]
+fn translate_a1_blank_guarded_lookup_key_keeps_failure_outside_ifna() {
+    let mut document = fixture_document();
+    document
+        .schemas
+        .get_mut("Items")
+        .unwrap()
+        .fields
+        .get_mut("name")
+        .unwrap()
+        .required = false;
+    document
+        .entities
+        .get_mut("r2")
+        .unwrap()
+        .fields
+        .remove("name");
+    let mut rt = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000").unwrap(),
+    );
+    ok(
+        &mut rt,
+        "IFERROR(IFNA(INDEX(C2:C4,MATCH(IF(ISBLANK(A3),1/0,A3),A2:A4,0)),42),7)",
+        "iferror(LOOKUP([.name],[items.name:column],[items.price:column],42),7)",
+        &["range_tracks_collection"],
+    );
+}
