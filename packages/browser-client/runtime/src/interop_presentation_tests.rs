@@ -778,34 +778,21 @@ fn stage5_false_bold_overrides_column() {
 
 #[test]
 fn stage5_unmapped_presentation_stays_in_metadata_and_export() {
+    // The XLSX reader only yields hex `rgb` fills, and invalid fills are
+    // refused by the import's export proof, so only an unmapped number
+    // pattern can stay behind in metadata.
     let (mut source, selection) = stage5_fixture();
     source.sheets[0].columns[2].number_format = None;
-    source.sheets[0].rows[0][1].style.fill = Some("theme1".into());
     source.sheets[0].rows[0][2].style.number_format = Some("0.00E+00".into());
     let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
-    assert_eq!(
-        imported.metadata.sheets[0].rows[0].styles[1]
-            .fill
-            .as_deref(),
-        Some("theme1")
-    );
     assert_eq!(
         imported.metadata.sheets[0].rows[0].styles[2]
             .number_format
             .as_deref(),
         Some("0.00E+00")
     );
-    // Invalid RGB fills already prevent XLSX projection; preservation must not
-    // silently turn them into a different valid color.
-    assert!(
-        runtime
-            .export_workbook(runtime.current_revision(), &imported.metadata)
-            .is_err()
-    );
-    let mut metadata = imported.metadata.clone();
-    metadata.sheets[0].rows[0].styles[1].fill = None;
     let workbook = runtime
-        .export_workbook(runtime.current_revision(), &metadata)
+        .export_workbook(runtime.current_revision(), &imported.metadata)
         .unwrap();
     assert_eq!(
         workbook.sheets[0].rows[0][2].style.number_format.as_deref(),
