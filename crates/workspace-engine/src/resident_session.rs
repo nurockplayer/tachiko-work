@@ -1046,6 +1046,37 @@ impl<Time> ResidentPublicationAuthority<'_, Time> {
     }
 }
 
+impl<Time: TrustedPublicationTimeSource> ResidentPublicationAuthority<'_, Time> {
+    /// Advance the revision for a change outside the semantic document, such as
+    /// stored presentation. The document, retained state and measurements stay as
+    /// they are and no projection invalidation is recorded.
+    pub fn publish_presentation_if_current<Authorization>(
+        &mut self,
+        expected_document_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<(SemanticRevision, Authorization), SemanticPublicationError> {
+        self.prepared = None;
+        self.projection_invalidation = None;
+        if expected_document_scope != &self.session.document_scope {
+            return Err(SemanticPublicationError::DocumentScopeMismatch);
+        }
+        let authorization =
+            authorize(self.time.now()).ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        if expected_revision != &self.session.revision {
+            return Err(SemanticPublicationError::Stale);
+        }
+        let next = self
+            .session
+            .generation
+            .checked_add(1)
+            .ok_or(SemanticPublicationError::Conflict)?;
+        self.session.generation = next;
+        self.session.revision = revision_for(next);
+        Ok((self.session.revision.clone(), authorization))
+    }
+}
+
 impl<Time> SemanticPublicationAuthority for ResidentPublicationAuthority<'_, Time>
 where
     Time: TrustedPublicationTimeSource,
@@ -1718,6 +1749,82 @@ mod tests {
         assert_eq!(publication.session.document, installed);
         assert_eq!(publication.session.revision, revision);
         assert_eq!(publication.session.measurements, measurements);
+    }
+
+    #[test]
+    fn presentation_publication_preserves_semantic_state() {
+        let mut session = ResidentWorkspaceSession::new(
+            DocumentScopeId::from("occurrence"),
+            Document::empty("document", "Before"),
+        );
+        let before = session.export_snapshot();
+        let retained = session.retained.clone();
+        let measurements = session.measurements;
+        let mut time = FixedTime;
+        let mut publication = session.publication_authority(&mut time);
+        let (revision, ()) = publication
+            .publish_presentation_if_current(before.document_scope(), before.revision(), |_| {
+                Some(())
+            })
+            .unwrap();
+        assert_eq!(revision, revision_for(1));
+        assert_eq!(publication.session.document, *before.document());
+        assert_eq!(publication.session.retained, retained);
+        assert_eq!(publication.session.measurements, measurements);
+        assert!(publication.projection_invalidation.is_none());
+        let mut candidate = before.document().clone();
+        candidate.title = "After".to_owned();
+        assert!(
+            publication
+                .publish_if_current(before.document_scope(), &revision, &candidate, |_| Some(()))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn presentation_publication_refusals_preserve_snapshot() {
+        let mut session = ResidentWorkspaceSession::new(
+            DocumentScopeId::from("occurrence"),
+            Document::empty("document", "Before"),
+        );
+        let before = session.export_snapshot();
+        let mut time = FixedTime;
+        for (scope, revision, authorized, expected) in [
+            (
+                DocumentScopeId::from("other"),
+                before.revision().clone(),
+                true,
+                SemanticPublicationError::DocumentScopeMismatch,
+            ),
+            (
+                before.document_scope().clone(),
+                revision_for(1),
+                true,
+                SemanticPublicationError::Stale,
+            ),
+            (
+                before.document_scope().clone(),
+                before.revision().clone(),
+                false,
+                SemanticPublicationError::AuthorizationDenied,
+            ),
+        ] {
+            let result = session
+                .publication_authority(&mut time)
+                .publish_presentation_if_current(&scope, &revision, |_| authorized.then_some(()));
+            assert_eq!(result, Err(expected));
+            assert_eq!(session.export_snapshot(), before);
+        }
+        session.generation = u64::MAX;
+        session.revision = revision_for(u64::MAX);
+        let before = session.export_snapshot();
+        let result = session
+            .publication_authority(&mut time)
+            .publish_presentation_if_current(before.document_scope(), before.revision(), |_| {
+                Some(())
+            });
+        assert_eq!(result, Err(SemanticPublicationError::Conflict));
+        assert_eq!(session.export_snapshot(), before);
     }
 
     #[test]
