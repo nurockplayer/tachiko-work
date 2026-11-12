@@ -798,3 +798,121 @@ fn iferror_has_fixed_bytes_and_strict_reader_refusals() {
         );
     }
 }
+
+#[test]
+fn date_functions_have_fixed_bytes_and_strict_reader_refusals() {
+    use tachiko_semantic_core::{DatePartKind, FieldRef};
+    let reference = || Box::new(Expression::Reference(FieldRef::new("entity-a", "date")));
+    let expressions = [
+        (
+            Expression::DatePart {
+                part: DatePartKind::Year,
+                operand: reference(),
+            },
+            r#"{"op":"date_part","args":{"part":"year","operand":{"op":"reference","args":{"entity":"entity-a","field":"date"}}}}"#,
+        ),
+        (
+            Expression::Weekday {
+                operand: reference(),
+                return_type: 2,
+            },
+            r#"{"op":"weekday","args":{"operand":{"op":"reference","args":{"entity":"entity-a","field":"date"}},"return_type":2}}"#,
+        ),
+        (
+            Expression::Days {
+                end: reference(),
+                start: reference(),
+            },
+            r#"{"op":"days","args":{"end":{"op":"reference","args":{"entity":"entity-a","field":"date"}},"start":{"op":"reference","args":{"entity":"entity-a","field":"date"}}}}"#,
+        ),
+    ];
+    for (expression, bytes) in expressions {
+        let mut document = fixture();
+        document
+            .entities
+            .get_mut("entity-a")
+            .unwrap()
+            .fields
+            .insert("formula".into(), Value::Formula(expression));
+        let tree = encode_roproj_v3(&document).unwrap();
+        let entity = std::str::from_utf8(tree.file("entities/6.jsonl").unwrap()).unwrap();
+        assert!(entity.contains(bytes), "{entity}");
+        assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+        assert!(encode_roproj_v1(&document).is_err());
+        assert!(encode_roproj_v2(&document).is_err());
+        assert!(tachiko_storage::to_canonical_string(&document).is_err());
+        let invalid = match bytes {
+            text if text.contains("date_part") => vec![
+                bytes.replace("\"year\"", "\"quarter\""),
+                bytes.replace("\"part\":\"year\",", "\"part\":\"year\",\"extra\":0,"),
+                bytes.replace(
+                    r#"{"op":"reference","args":{"entity":"entity-a","field":"date"}}"#,
+                    r#"{"op":"number","args":1}"#,
+                ),
+            ],
+            text if text.contains("weekday") => vec![
+                bytes.replace("\"return_type\":2", "\"return_type\":4"),
+                bytes.replace("\"return_type\":2", "\"return_type\":2,\"extra\":0"),
+                bytes.replace(
+                    r#"{"op":"reference","args":{"entity":"entity-a","field":"date"}}"#,
+                    r#"{"op":"number","args":1}"#,
+                ),
+            ],
+            _ => vec![
+                bytes.replace("\"start\":", "\"extra\":0,\"start\":"),
+                bytes.replacen(
+                    r#"{"op":"reference","args":{"entity":"entity-a","field":"date"}}"#,
+                    r#"{"op":"number","args":1}"#,
+                    1,
+                ),
+            ],
+        };
+        for bad in invalid {
+            assert!(
+                CanonicalRoProjectV3::try_from_files(replace(
+                    &tree,
+                    "entities/6.jsonl",
+                    bytes,
+                    &bad
+                ))
+                .is_err(),
+                "{bad}"
+            );
+        }
+    }
+}
+
+#[test]
+fn date_part_month_and_day_have_fixed_bytes() {
+    use tachiko_semantic_core::{DatePartKind, FieldRef};
+    for (part, bytes) in [
+        (
+            DatePartKind::Month,
+            r#"{"op":"date_part","args":{"part":"month","operand":{"op":"same_row_reference","args":"date"}}}"#,
+        ),
+        (
+            DatePartKind::Day,
+            r#"{"op":"date_part","args":{"part":"day","operand":{"op":"same_row_reference","args":"date"}}}"#,
+        ),
+    ] {
+        let mut document = fixture();
+        document
+            .entities
+            .get_mut("entity-a")
+            .unwrap()
+            .fields
+            .insert(
+                "formula".into(),
+                Value::Formula(Expression::DatePart {
+                    part,
+                    operand: Box::new(Expression::SameRowReference(
+                        FieldRef::new("entity-a", "date").field,
+                    )),
+                }),
+            );
+        let tree = encode_roproj_v3(&document).unwrap();
+        let entity = std::str::from_utf8(tree.file("entities/6.jsonl").unwrap()).unwrap();
+        assert!(entity.contains(bytes), "{entity}");
+        assert_eq!(decode_roproj_v3(&tree).unwrap(), document);
+    }
+}

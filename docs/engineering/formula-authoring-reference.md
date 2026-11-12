@@ -88,6 +88,25 @@ non-Number numeric operands remain failures. See the
 Lookups, user-defined functions, and aggregates beyond the saved column total
 remain deferred.
 
+
+### Date field functions
+
+`YEAR(d)`, `MONTH(d)`, and `DAY(d)` return the corresponding civil date part
+as a Number. `WEEKDAY(d[, type])` uses type 1 by default (Sunday = 1 through
+Saturday = 7); type 2 is Monday = 1 through Sunday = 7, and type 3 is Monday
+= 0 through Sunday = 6. The type must be an integer literal 1, 2, or 3.
+`DAYS(end, start)` returns the signed whole-day difference in the proleptic
+Gregorian calendar. For example, 1900-03-01 minus 1900-02-28 is 1; Excel's
+1900 serial system differs when the interval crosses its fictitious leap day.
+
+Each date operand must be a fixed-row or same-row Date field reference; Number,
+Text, arithmetic, and function operands are refused. An absent optional Date
+causes a runtime `FailedDependencies` failure naming that reference, which
+`IFERROR(YEAR([r.opt]), 0)` can catch. References remain dependencies for
+recalculation, including inside `IFERROR`. `TODAY()` is deferred to 1.1.
+The functions persist in `.roproj/v3`; frozen `.roproj/v1/v2` and direct
+`.ro/v2` refuse them. A1 and XLSX support are deferred to the next PR.
+
 ## References use keys, not labels
 
 `[entity.field]` is an **entity key plus a field key** in the document — the

@@ -1098,6 +1098,9 @@ impl ExpressionV2 {
             | Expression::Abs(_)
             | Expression::RoundUp { .. }
             | Expression::RoundDown { .. }
+            | Expression::DatePart { .. }
+            | Expression::Weekday { .. }
+            | Expression::Days { .. }
             | Expression::IsBlank(_) => {
                 return invalid_representation(
                     "conditional and rounding formula expressions are not representable in frozen .roproj/v2; use .roproj/v3 or direct-ro/v2".to_owned(),
@@ -1618,6 +1621,9 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Abs(_)
                     | Expression::RoundUp { .. }
                     | Expression::RoundDown { .. }
+                    | Expression::DatePart { .. }
+                    | Expression::Weekday { .. }
+                    | Expression::Days { .. }
                     | Expression::IsBlank(_) => {
                         return invalid_representation("conditional and rounding formula expressions are not representable in frozen .roproj/v2".to_owned());
                     }

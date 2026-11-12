@@ -455,6 +455,47 @@ fn bind_node(
             value: Box::new(bind_node(document, index, owner, value)?),
             digits: bind_round_digits(digits, "ROUNDDOWN")?,
         },
+        UnboundExpression::DatePart { part, operand } => Expression::DatePart {
+            part: *part,
+            operand: Box::new(bind_date_reference(
+                document,
+                index,
+                owner,
+                operand,
+                &part.as_str().to_ascii_uppercase(),
+            )?),
+        },
+        UnboundExpression::Weekday {
+            operand,
+            return_type,
+        } => {
+            let return_type = match return_type.as_deref() {
+                None => 1,
+                Some(UnboundExpression::Number(n))
+                    if (1.0..=3.0).contains(&n.get()) && n.get().fract() == 0.0 =>
+                {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    {
+                        n.get() as u8
+                    }
+                }
+                _ => {
+                    return Err(FormulaBindError::TypeMismatch {
+                        message: "WEEKDAY return_type must be 1, 2 or 3".into(),
+                    });
+                }
+            };
+            Expression::Weekday {
+                operand: Box::new(bind_date_reference(
+                    document, index, owner, operand, "WEEKDAY",
+                )?),
+                return_type,
+            }
+        }
+        UnboundExpression::Days { end, start } => Expression::Days {
+            end: Box::new(bind_date_reference(document, index, owner, end, "DAYS")?),
+            start: Box::new(bind_date_reference(document, index, owner, start, "DAYS")?),
+        },
         UnboundExpression::IsBlank(reference) => Expression::IsBlank(Box::new(
             bind_blank_reference(document, index, owner, reference)?,
         )),
@@ -490,6 +531,41 @@ fn bind_arguments(
         .iter()
         .map(|argument| bind_node(document, index, owner, argument))
         .collect()
+}
+
+fn bind_date_reference(
+    document: &Document,
+    index: &AddressIndex,
+    owner: &FieldRef,
+    expression: &UnboundExpression,
+    name: &str,
+) -> Result<Expression, FormulaBindError> {
+    if !matches!(
+        expression,
+        UnboundExpression::Reference(_) | UnboundExpression::SameRowReference(_)
+    ) {
+        return Err(FormulaBindError::TypeMismatch {
+            message: format!("{name} requires a Date field reference"),
+        });
+    }
+    let bound = bind_blank_reference(document, index, owner, expression)?;
+    let reference = match &bound {
+        Expression::Reference(reference) => reference.clone(),
+        Expression::SameRowReference(field) => FieldRef::new(owner.entity.clone(), field.clone()),
+        _ => unreachable!(),
+    };
+    let is_date = document
+        .entities
+        .get(&reference.entity)
+        .and_then(|entity| document.schemas.get(&entity.schema))
+        .and_then(|schema| schema.fields.get(&reference.field))
+        .is_some_and(|field| field.field_type == FieldType::Date);
+    if !is_date {
+        return Err(FormulaBindError::TypeMismatch {
+            message: format!("{name} requires a Date field reference"),
+        });
+    }
+    Ok(bound)
 }
 
 fn bind_blank_reference(
@@ -634,6 +710,7 @@ fn project_through_index(
     Ok(projected)
 }
 
+#[allow(clippy::too_many_lines)] // Closed expression dispatch.
 fn render_bound(
     expression: &Expression,
     owner: &FieldRef,
@@ -734,6 +811,27 @@ fn render_bound(
         Expression::RoundDown { value, digits } => format!(
             "ROUNDDOWN({}, {digits})",
             render_bound(value, owner, addresses, columns)
+        ),
+        Expression::DatePart { part, operand } => format!(
+            "{}({})",
+            part.as_str().to_ascii_uppercase(),
+            render_bound(operand, owner, addresses, columns)
+        ),
+        Expression::Weekday {
+            operand,
+            return_type,
+        } => {
+            let operand = render_bound(operand, owner, addresses, columns);
+            if *return_type == 1 {
+                format!("WEEKDAY({operand})")
+            } else {
+                format!("WEEKDAY({operand}, {return_type})")
+            }
+        }
+        Expression::Days { end, start } => format!(
+            "DAYS({}, {})",
+            render_bound(end, owner, addresses, columns),
+            render_bound(start, owner, addresses, columns)
         ),
         Expression::IsBlank(value) => format!(
             "ISBLANK({})",
