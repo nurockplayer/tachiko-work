@@ -61,6 +61,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
+  newTrackerWorkingSize(): Promise<OpenedWindowProjection>;
+  newBudgetWorkingSize(): Promise<OpenedWindowProjection>;
   importSpreadsheetWorkingSize(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
   inspectImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   openImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;

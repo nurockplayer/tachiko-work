@@ -235,9 +235,13 @@ pub enum DesignerRequest {
     },
     NewTracker {
         occurrence_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     NewBudget {
         occurrence_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<DesignerProfile>,
     },
     NewTable {
         occurrence_id: String,
@@ -3660,25 +3664,23 @@ impl DesignerRuntime {
     #[allow(clippy::too_many_lines)] // Exhaustive private request dispatch.
     fn dispatch(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
         match request {
-            DesignerRequest::NewTracker { occurrence_id } => {
-                let candidate = Self::tracker(&occurrence_id)?;
-                let opened = OpenedProjection {
-                    bootstrap: candidate.bootstrap_projection(),
-                    table: candidate.query_table("tracker")?,
-                };
-                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+            DesignerRequest::NewTracker {
+                occurrence_id,
+                profile,
+            } => {
+                let (candidate, response) =
+                    starter_candidate(&occurrence_id, profile, Starter::Tracker)?;
                 *self = candidate;
-                Ok(DesignerResponse::Opened(Box::new(opened)))
+                Ok(response)
             }
-            DesignerRequest::NewBudget { occurrence_id } => {
-                let candidate = Self::budget(&occurrence_id)?;
-                let opened = OpenedProjection {
-                    bootstrap: candidate.bootstrap_projection(),
-                    table: candidate.query_table(&candidate.default_collection)?,
-                };
-                ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+            DesignerRequest::NewBudget {
+                occurrence_id,
+                profile,
+            } => {
+                let (candidate, response) =
+                    starter_candidate(&occurrence_id, profile, Starter::Budget)?;
                 *self = candidate;
-                Ok(DesignerResponse::Opened(Box::new(opened)))
+                Ok(response)
             }
             DesignerRequest::NewTable {
                 occurrence_id,
@@ -7817,6 +7819,20 @@ impl DesignerRuntime {
     /// # Errors
     /// Returns an admission error without replacing an existing occurrence.
     pub fn tracker(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document(Self::tracker_document(occurrence_id), occurrence_id)
+    }
+
+    /// Create a working-size operational tracker.
+    ///
+    /// The document is identical to [`Self::tracker`]; only the admission profile differs.
+    ///
+    /// # Errors
+    /// Returns an admission error without replacing an existing occurrence.
+    pub fn tracker_working_size(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document_working_size(Self::tracker_document(occurrence_id), occurrence_id)
+    }
+
+    fn tracker_document(occurrence_id: &str) -> Document {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
             field_order: None,
@@ -7848,7 +7864,7 @@ impl DesignerRuntime {
             .collect(),
         };
         document.schemas.insert(schema.id.clone(), schema);
-        Self::from_document(document, occurrence_id)
+        document
     }
 
     /// Create one bounded ordinary native table from user-facing labels.
@@ -7958,8 +7974,22 @@ impl DesignerRuntime {
     /// # Errors
     ///
     /// Returns an admission error without replacing an existing occurrence.
-    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
     pub fn budget(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document(Self::budget_document(occurrence_id)?, occurrence_id)
+    }
+
+    /// Create a working-size monthly budget.
+    ///
+    /// The document is identical to [`Self::budget`]; only the admission profile differs.
+    ///
+    /// # Errors
+    /// Returns an admission error without replacing an existing occurrence.
+    pub fn budget_working_size(occurrence_id: &str) -> Result<Self, DesignerError> {
+        Self::from_document_working_size(Self::budget_document(occurrence_id)?, occurrence_id)
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep the bounded fixture readable as one document.
+    fn budget_document(occurrence_id: &str) -> Result<Document, DesignerError> {
         let mut document = Document::empty(occurrence_id, "Monthly Budget");
         let budget_items = SchemaId::from("budget_items");
         let budget_summary = SchemaId::from("budget_summary");
@@ -8074,7 +8104,7 @@ impl DesignerRuntime {
                 },
             ),
         ]);
-        Self::from_document(document, occurrence_id)
+        Ok(document)
     }
 
     fn check_revision(&self, expected: &str) -> Result<(), DesignerError> {
@@ -9193,6 +9223,34 @@ fn new_table_candidate(
     }
 }
 
+#[derive(Clone, Copy)]
+enum Starter {
+    Tracker,
+    Budget,
+}
+
+/// Build a Tracker or Budget candidate and its opening reply for the requested profile.
+fn starter_candidate(
+    occurrence_id: &str,
+    profile: Option<DesignerProfile>,
+    starter: Starter,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    match (profile, starter) {
+        (None, Starter::Tracker) => ordinary_new_project(DesignerRuntime::tracker(occurrence_id)?),
+        (None, Starter::Budget) => ordinary_new_project(DesignerRuntime::budget(occurrence_id)?),
+        (Some(DesignerProfile::WorkingSize), Starter::Tracker) => {
+            let mut candidate = DesignerRuntime::tracker_working_size(occurrence_id)?;
+            let opened = candidate.opened_window()?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+        (Some(DesignerProfile::WorkingSize), Starter::Budget) => {
+            let mut candidate = DesignerRuntime::budget_working_size(occurrence_id)?;
+            let opened = candidate.opened_window()?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+    }
+}
+
 /// Fully admit a canonical project candidate before replacing the occurrence.
 ///
 /// `occurrence_id` is a trusted host identity, not an identifier read from the
@@ -10255,17 +10313,17 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
     let reply = match serde_json::from_slice::<DesignerRequest>(input) {
         Ok(request) => {
             if let Some(occurrence_id) = match &request {
-                DesignerRequest::NewTracker { occurrence_id }
-                | DesignerRequest::NewBudget { occurrence_id }
+                DesignerRequest::NewTracker { occurrence_id, .. }
+                | DesignerRequest::NewBudget { occurrence_id, .. }
                 | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
-                    DesignerRequest::NewTracker { .. } => {
-                        DesignerRuntime::tracker(occurrence_id).and_then(ordinary_new_project)
+                    DesignerRequest::NewTracker { profile, .. } => {
+                        starter_candidate(occurrence_id, *profile, Starter::Tracker)
                     }
-                    DesignerRequest::NewBudget { .. } => {
-                        DesignerRuntime::budget(occurrence_id).and_then(ordinary_new_project)
+                    DesignerRequest::NewBudget { profile, .. } => {
+                        starter_candidate(occurrence_id, *profile, Starter::Budget)
                     }
                     DesignerRequest::NewTable {
                         name,

@@ -240,6 +240,8 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "newBudget",
     "newTable",
     "newTableWorkingSize",
+    "newTrackerWorkingSize",
+    "newBudgetWorkingSize",
     "inspectProjectWorkingSize",
     "openProjectWorkingSize",
     "openCanonicalTreeWorkingSize",
