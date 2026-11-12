@@ -2609,3 +2609,142 @@ fn iferror_round_trips_through_xlsx_with_success_and_caught_failure() {
         );
     }
 }
+
+#[test]
+fn date_functions_round_trip_through_xlsx() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: [
+                "Start",
+                "End",
+                "Year",
+                "Weekday",
+                "Days",
+                "Month",
+                "Day",
+                "Default weekday",
+            ]
+            .into_iter()
+            .map(|name| SourceColumn {
+                name: name.into(),
+                width: None,
+                number_format: None,
+            })
+            .collect(),
+            rows: vec![vec![
+                source_cell(
+                    SourceValue::Date {
+                        value: "2026-09-05".into(),
+                    },
+                    None,
+                ),
+                source_cell(
+                    SourceValue::Date {
+                        value: "2026-09-08".into(),
+                    },
+                    None,
+                ),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=YEAR(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=WEEKDAY(A2,2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=DAYS(B2,A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=MONTH(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=DAY(A2)")),
+                source_cell(SourceValue::Number { value: 0.0 }, Some("=WEEKDAY(A2)")),
+            ]],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![
+            ImportFieldType::Date,
+            ImportFieldType::Date,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+            ImportFieldType::Number,
+        ]],
+        extra_columns: vec![vec![]],
+    };
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for (index, formula, value) in [
+        (2, "YEAR(A2)", 2026.0),
+        (3, "WEEKDAY(A2,2)", 6.0),
+        (4, "DAYS(B2,A2)", 3.0),
+        (5, "MONTH(A2)", 9.0),
+        (6, "DAY(A2)", 5.0),
+        (7, "WEEKDAY(A2)", 7.0),
+    ] {
+        assert_eq!(
+            exported.sheets[0].rows[0][index].formula.as_deref(),
+            Some(formula)
+        );
+        assert_eq!(
+            exported.sheets[0].rows[0][index].value,
+            SourceValue::Number { value }
+        );
+    }
+    let reopened_source = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&reopened_source, &selection, OCCURRENCE).unwrap();
+    assert!(
+        !imported.ledger.iter().any(|finding| finding.blocking),
+        "{:?}",
+        imported.ledger
+    );
+    let reopened = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    for index in 2..8 {
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].formula,
+            exported.sheets[0].rows[0][index].formula
+        );
+        assert_eq!(
+            reopened.sheets[0].rows[0][index].value,
+            exported.sheets[0].rows[0][index].value
+        );
+    }
+}
+
+#[test]
+fn date_formula_over_number_refuses_import() {
+    let source = SourceWorkbook {
+        ledger: vec![],
+        sheets: vec![SourceSheet {
+            name: "Data".into(),
+            has_header: true,
+            columns: ["Number", "Year"]
+                .into_iter()
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .collect(),
+            rows: vec![vec![
+                source_cell(SourceValue::Number { value: 46270.0 }, None),
+                source_cell(SourceValue::Number { value: 2026.0 }, Some("=YEAR(A2)")),
+            ]],
+            layout: SourceLayout::default(),
+        }],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 2]],
+        extra_columns: vec![vec![]],
+    };
+    assert!(import_workbook(&source, &selection, OCCURRENCE).is_err());
+}

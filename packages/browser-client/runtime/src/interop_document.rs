@@ -2650,6 +2650,11 @@ fn translate_a1_inner(
                             | "NOT"
                             | "ROUND"
                             | "IFERROR"
+                            | "YEAR"
+                            | "MONTH"
+                            | "DAY"
+                            | "WEEKDAY"
+                            | "DAYS"
                             | "ABS"
                             | "ROUNDUP"
                             | "ROUNDDOWN"
@@ -4747,9 +4752,27 @@ fn export_in(
             "ROUNDDOWN({},{digits})",
             export_in(value, owner, addresses, columns, present)?
         )),
-        Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => Err(
-            tracker_error("date formulas are not supported in spreadsheet export"),
-        ),
+        Expression::DatePart { part, operand } => Ok(format!(
+            "{}({})",
+            part.as_str().to_ascii_uppercase(),
+            export_in(operand, owner, addresses, columns, present)?
+        )),
+        Expression::Weekday {
+            operand,
+            return_type,
+        } => {
+            let operand = export_in(operand, owner, addresses, columns, present)?;
+            if *return_type == 1 {
+                Ok(format!("WEEKDAY({operand})"))
+            } else {
+                Ok(format!("WEEKDAY({operand},{return_type})"))
+            }
+        }
+        Expression::Days { end, start } => Ok(format!(
+            "DAYS({},{})",
+            export_in(end, owner, addresses, columns, present)?,
+            export_in(start, owner, addresses, columns, present)?
+        )),
         Expression::IsBlank(reference) => Ok(format!(
             "ISBLANK({})",
             export_in(reference, owner, addresses, columns, present)?
