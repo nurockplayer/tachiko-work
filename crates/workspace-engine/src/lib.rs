@@ -3324,7 +3324,11 @@ fn drop_expression_iteratively(expression: Expression) {
             | Expression::Divide { left, right }
             | Expression::Minimum { left, right }
             | Expression::Maximum { left, right }
-            | Expression::Compare { left, right, .. } => {
+            | Expression::Compare { left, right, .. }
+            | Expression::IfError {
+                value: left,
+                fallback: right,
+            } => {
                 stack.push(*right);
                 stack.push(*left);
             }

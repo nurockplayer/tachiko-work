@@ -736,6 +736,18 @@ fn expression_bytes(expression: &Expression) -> u64 {
             expression_bytes(else_value),
             2, // "}}"
         ]),
+        Expression::IfError { value, fallback } => total([
+            1,
+            compact_string("op", "if_error", true),
+            compact_prefix("args"),
+            1,
+            compact_prefix("value"),
+            expression_bytes(value),
+            1,
+            compact_prefix("fallback"),
+            expression_bytes(fallback),
+            2,
+        ]),
         Expression::And(expressions) | Expression::Or(expressions) => {
             let operator = if matches!(expression, Expression::And(_)) {
                 "and"
@@ -814,5 +826,64 @@ fn expression_bytes(expression: &Expression) -> u64 {
             expression_bytes(value),
             1,
         ]),
+    }
+}
+
+#[cfg(test)]
+mod iferror_tests {
+    use super::expression_bytes;
+    use tachiko_storage::to_canonical_string;
+    use tachiko_workspace_engine::{
+        Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldType, Number, Schema,
+        Value,
+    };
+
+    #[test]
+    fn iferror_size_matches_the_canonical_expression() {
+        let expression = Expression::IfError {
+            value: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            fallback: Box::new(Expression::Number(Number::new(2.0).unwrap())),
+        };
+        let mut document = Document::empty("size", "Size");
+        document.schemas.insert(
+            "schema".into(),
+            Schema {
+                id: "schema".into(),
+                key: "schema".into(),
+                display_name: None,
+                field_order: None,
+                fields: [(
+                    "result".into(),
+                    FieldDefinition {
+                        id: "result".into(),
+                        key: "result".into(),
+                        display_name: None,
+                        field_type: FieldType::Number,
+                        required: true,
+                        constraint: FieldConstraint::None,
+                        number_format: None,
+                        date_format: None,
+                    },
+                )]
+                .into(),
+            },
+        );
+        document.entities.insert(
+            "row".into(),
+            Entity {
+                id: "row".into(),
+                key: "row".into(),
+                schema: "schema".into(),
+                fields: [("result".into(), Value::Formula(expression.clone()))].into(),
+            },
+        );
+        let canonical: serde_json::Value =
+            serde_json::from_str(&to_canonical_string(&document).unwrap()).unwrap();
+        let written =
+            serde_json::to_vec(&canonical["entities"]["row"]["fields"]["result"]["value"]).unwrap();
+        assert_eq!(
+            expression_bytes(&expression),
+            u64::try_from(written.len()).unwrap()
+        );
     }
 }

@@ -2649,6 +2649,7 @@ fn translate_a1_inner(
                             | "OR"
                             | "NOT"
                             | "ROUND"
+                            | "IFERROR"
                             | "ABS"
                             | "ROUNDUP"
                             | "ROUNDDOWN"
@@ -4635,6 +4636,7 @@ fn guarded_present(
     present
 }
 
+#[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 fn export_in(
     expression: &Expression,
     owner: &FieldRef,
@@ -4727,6 +4729,11 @@ fn export_in(
         Expression::Round { value, digits } => Ok(format!(
             "ROUND({},{digits})",
             export_in(value, owner, addresses, columns, present)?
+        )),
+        Expression::IfError { value, fallback } => Ok(format!(
+            "IFERROR({},{})",
+            export_in(value, owner, addresses, columns, present)?,
+            export_in(fallback, owner, addresses, columns, present)?
         )),
         Expression::Abs(value) => Ok(format!(
             "ABS({})",

@@ -964,6 +964,7 @@ impl ExpressionV1 {
             | Expression::Or(_)
             | Expression::Not(_)
             | Expression::Round { .. }
+            | Expression::IfError { .. }
             | Expression::Abs(_)
             | Expression::RoundUp { .. }
             | Expression::RoundDown { .. }
@@ -1368,6 +1369,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Or(_)
                     | Expression::Not(_)
                     | Expression::Round { .. }
+                    | Expression::IfError { .. }
                     | Expression::Abs(_)
                     | Expression::RoundUp { .. }
                     | Expression::RoundDown { .. }

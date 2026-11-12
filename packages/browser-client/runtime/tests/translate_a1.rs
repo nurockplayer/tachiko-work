@@ -746,3 +746,14 @@ fn translate_a1_absolute_and_directed_rounding() {
         &["relative_copy_semantics_changed"],
     );
 }
+
+#[test]
+fn translate_a1_iferror() {
+    let mut rt = Some(fixture());
+    ok(
+        &mut rt,
+        "IFERROR(B2/C2,0)",
+        "iferror([r1.qty]/[r1.price],0)",
+        &["relative_copy_semantics_changed"],
+    );
+}

@@ -146,6 +146,10 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "if",
             "args": {"condition": expression_json(condition), "then_value": expression_json(then_value), "else_value": expression_json(else_value)}
         }),
+        Expression::IfError { value, fallback } => serde_json::json!({
+            "op": "if_error",
+            "args": {"value": expression_json(value), "fallback": expression_json(fallback)}
+        }),
         Expression::And(expressions) => serde_json::json!({
             "op": "and",
             "args": expressions.iter().map(expression_json).collect::<Vec<_>>()
