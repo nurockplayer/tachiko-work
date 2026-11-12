@@ -531,11 +531,11 @@ fn assert_working_success(source: &[u8], format: &str) {
         let reply: Value = serde_json::from_slice(&host.request(&query)).unwrap();
         assert_eq!(reply["status"], "ok", "{reply}");
         let rows = reply["response"]["payload"]["rows"].as_array().unwrap();
-        assert!(!rows.is_empty());
+        assert_ne!(rows.len(), 0);
         for row in rows {
             let id = row["id"].as_str().unwrap();
             assert!(last_id.as_str() < id);
-            last_id = id.to_owned();
+            id.clone_into(&mut last_id);
             if start == 0 || start == 9_999 {
                 let value = &row["fields"][0]["stored"]["value"];
                 if format == "csv" {
@@ -573,7 +573,7 @@ fn assert_working_refusal(source: &[u8], format: &str, limit: &str) {
             }
         }
         let request = serde_json::to_vec(&request).unwrap();
-        REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+        REQUEST.with(|slot| slot.borrow_mut().clone_from(&request));
         PROJECT.with(|slot| *slot.borrow_mut() = source.to_vec());
         tachiko_designer_spreadsheet_run();
         let reply = host.spreadsheet(&request, source);

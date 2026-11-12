@@ -1589,6 +1589,7 @@ fn stable_reference_binding() -> FidelityFinding {
     }
 }
 
+#[allow(clippy::too_many_lines)] // One ordered admission pass over geometry, types, formulas and size.
 fn validate_selection(
     workbook: &SourceWorkbook,
     selection: &ImportSelection,
