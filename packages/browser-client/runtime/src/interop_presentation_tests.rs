@@ -367,22 +367,17 @@ fn assert_promoted(runtime: &DesignerRuntime, metadata: &crate::interop_document
     let column = &runtime.presentation.styles[&table.column_styles[&text]];
     assert_eq!(column.alignment, None);
     assert_eq!(column.wrap, Some(true));
-    for (row, alignment) in sheet
-        .rows
-        .iter()
+    for (entity, alignment) in snapshot
+        .document()
+        .entities
+        .values()
         .zip([CellAlignment::Center, CellAlignment::Right])
     {
-        let key = (EntityId::from(row.entity_id.clone()), text.clone());
+        let key = (entity.id.clone(), text.clone());
         assert_eq!(
             runtime.presentation.styles[&runtime.presentation.cells[&key]].alignment,
             Some(alignment)
         );
-        assert!(
-            row.styles
-                .iter()
-                .all(|style| style.alignment.is_none() && !style.wrap)
-        );
-        assert_eq!(row.styles[0].number_format, None);
     }
     assert_eq!(sheet.columns[0].width, None);
 }
@@ -626,6 +621,271 @@ fn stage5_fixture() -> (SourceWorkbook, ImportSelection) {
 }
 
 #[test]
+fn blank_number_cell_keeps_its_format_through_xlsx() {
+    let (mut source, selection) = stage5_fixture();
+    source.sheets[0].rows[1][2].value = SourceValue::Empty;
+    let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    assert_eq!(
+        source.sheets[0].columns[2].number_format,
+        crate::interop_number_format::from_excel("#,##0.00")
+    );
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let workbook = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    assert!(matches!(
+        reread.sheets[0].rows[1][2].value,
+        SourceValue::Empty
+    ));
+    assert_eq!(
+        reread.sheets[0].rows[1][2].style.number_format.as_deref(),
+        Some("0%")
+    );
+}
+
+fn metadata_v2_fixture() -> (SourceWorkbook, ImportSelection) {
+    let (mut source, mut selection) = stage5_fixture();
+    source.sheets[0].columns[1].name = "Quantity".into();
+    source.sheets[0].columns.push(SourceColumn {
+        name: "Amount".into(),
+        width: None,
+        number_format: None,
+    });
+    source.sheets[0].columns.push(SourceColumn {
+        name: "Date".into(),
+        width: Some(14.0),
+        number_format: None,
+    });
+    for (index, row) in source.sheets[0].rows.iter_mut().enumerate() {
+        row[1].value = SourceValue::Number { value: 2.0 };
+        row.push(SourceCell {
+            value: SourceValue::Number { value: 2.0 },
+            formula: Some(format!("B{}*C{}", index + 2, index + 2)),
+            ..Default::default()
+        });
+        row.push(SourceCell {
+            value: SourceValue::Date {
+                value: "2024-02-29".into(),
+            },
+            style: CellStyle {
+                number_format: Some("mmm d, yyyy".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    selection.column_types[0] = vec![
+        ImportFieldType::Text,
+        ImportFieldType::Number,
+        ImportFieldType::Number,
+        ImportFieldType::Number,
+        ImportFieldType::Date,
+    ];
+    let xlsx = export_xlsx(&source).unwrap();
+    (import_xlsx(&xlsx).unwrap(), selection)
+}
+
+#[test]
+fn working_metadata_v2_wire_parity_and_reopen() {
+    let (source, selection) = metadata_v2_fixture();
+    let (mut ordinary, v1) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let (mut working, v2) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(v1.metadata.version, 1);
+    assert_eq!(v2.metadata.version, 2);
+    let v1_json = serde_json::to_string(&v1.metadata).unwrap();
+    assert!(v1_json.contains("\"rows\""));
+    assert!(v1_json.contains("\"width\""));
+    let json = serde_json::to_string(&v2.metadata).unwrap();
+    assert!(!json.contains("\"rows\""));
+    assert!(!json.contains("\"width\""));
+    let decoded: crate::InteropMetadata = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, v2.metadata);
+    let first = working
+        .export_workbook(working.current_revision(), &decoded)
+        .unwrap();
+    let legacy = working
+        .export_workbook(working.current_revision(), &v1.metadata)
+        .unwrap();
+    assert_eq!(legacy.sheets, first.sheets);
+    assert_eq!(
+        first.sheets[0].rows[0][3].formula.as_deref(),
+        Some("(B2*C2)")
+    );
+    assert!(first.sheets[0].rows[0][0].style.bold);
+    assert!(first.sheets[0].rows[0][0].style.fill.is_some());
+    assert_eq!(first.sheets[0].columns[0].width, Some(12.0));
+    for runtime in [&mut ordinary, &mut working] {
+        let schema = v1.metadata.sheets[0].schema_id.clone();
+        let deleted = v1.metadata.sheets[0].rows[2].entity_id.clone();
+        runtime
+            .handle(DesignerRequest::RemoveTableRows {
+                expected_revision: runtime.current_revision().to_owned(),
+                collection: schema.clone(),
+                entities: vec![deleted],
+            })
+            .unwrap();
+        runtime
+            .handle(DesignerRequest::InsertRow {
+                expected_revision: runtime.current_revision().to_owned(),
+                collection: schema,
+                initializers: vec![],
+            })
+            .unwrap();
+    }
+    let a = ordinary
+        .export_workbook(ordinary.current_revision(), &v1.metadata)
+        .unwrap();
+    let b = working
+        .export_workbook(working.current_revision(), &decoded)
+        .unwrap();
+    let a = import_xlsx(&export_xlsx(&a).unwrap()).unwrap();
+    let b = import_xlsx(&export_xlsx(&b).unwrap()).unwrap();
+    assert_eq!(a.sheets, b.sheets);
+    let saved = working
+        .export_project_v3(working.current_revision())
+        .unwrap();
+    let (reopened, _) =
+        crate::admit_imported_project_working_size(&saved.bytes, OCCURRENCE, &decoded).unwrap();
+    let reopened = reopened
+        .export_workbook(reopened.current_revision(), &decoded)
+        .unwrap();
+    assert_eq!(
+        b.sheets,
+        import_xlsx(&export_xlsx(&reopened).unwrap())
+            .unwrap()
+            .sheets
+    );
+}
+
+#[test]
+fn working_metadata_v2_rejects_foreign_mappings_and_profiles() {
+    let (mut source, mut selection) = stage5_fixture();
+    let mut other = source.sheets[0].clone();
+    other.name = "Other".into();
+    source.sheets.push(other);
+    selection
+        .column_types
+        .push(selection.column_types[0].clone());
+    selection.extra_columns.push(vec![]);
+    let (working, imported) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    let (ordinary, ordinary_imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let error = ordinary
+        .export_workbook(ordinary.current_revision(), &imported.metadata)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::DesignerError::ImportedSpreadsheetExport { .. }
+    ));
+    let snapshot = working.session.export_snapshot();
+    let error = crate::interop_document::validate_import_metadata_for_profile(
+        snapshot.document(),
+        &imported.metadata,
+        crate::capacity::SessionProfile::TextCapacity,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::DesignerError::ImportedSpreadsheetExport { .. }
+    ));
+    let mut foreign = imported.metadata.clone();
+    foreign.sheets[0].columns[0].field_id = foreign.sheets[1].columns[0].field_id.clone();
+    let error = working
+        .export_workbook(working.current_revision(), &foreign)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::DesignerError::ImportedSpreadsheetExport { finding }
+            if finding.code == "imported_spreadsheet_unrepresentable"
+                && finding.location.contains(foreign.sheets[1].columns[0].field_id.as_str())
+    ));
+    for (runtime, metadata) in [
+        (&working, &imported.metadata),
+        (&ordinary, &ordinary_imported.metadata),
+    ] {
+        let mut foreign = metadata.clone();
+        foreign.sheets[0].schema_id = "foreign".into();
+        let error = runtime
+            .export_workbook(runtime.current_revision(), &foreign)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::DesignerError::ImportedSpreadsheetExport { .. }
+        ));
+    }
+    let mut json = serde_json::to_value(&imported.metadata).unwrap();
+    json["sheets"][0]["rows"] = serde_json::json!([]);
+    assert!(serde_json::from_value::<crate::InteropMetadata>(json).is_err());
+    let mut json = serde_json::to_value(&imported.metadata).unwrap();
+    json["sheets"][0]["columns"][0]["width"] = serde_json::json!(null);
+    assert!(serde_json::from_value::<crate::InteropMetadata>(json).is_err());
+}
+
+#[test]
+fn working_metadata_v2_omits_deleted_column_like_v1() {
+    let (source, selection) = stage5_fixture();
+    let (mut ordinary, v1) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let (mut working, v2) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    let collection = v1.metadata.sheets[0].schema_id.clone();
+    let field = v1.metadata.sheets[0].columns[1].field_id.clone();
+    for runtime in [&mut ordinary, &mut working] {
+        runtime
+            .handle(DesignerRequest::RemoveColumn {
+                expected_revision: runtime.current_revision().to_owned(),
+                collection: collection.clone(),
+                field: field.clone(),
+            })
+            .unwrap();
+    }
+    let ordinary = ordinary
+        .export_workbook(ordinary.current_revision(), &v1.metadata)
+        .unwrap();
+    let working = working
+        .export_workbook(working.current_revision(), &v2.metadata)
+        .unwrap();
+    assert_eq!(working.sheets, ordinary.sheets);
+    assert_eq!(
+        working.sheets[0]
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Uniform", "Number"]
+    );
+}
+
+#[test]
+fn working_metadata_v2_reports_unmapped_presentation() {
+    let (mut source, selection) = stage5_fixture();
+    source.sheets[0].rows[0][2].style.number_format = Some("0.00E+00".into());
+    let (runtime, imported) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    assert_eq!(imported.metadata.version, 2);
+    let findings: Vec<_> = imported
+        .ledger
+        .iter()
+        .filter(|item| item.code == "presentation_not_kept")
+        .collect();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].category,
+        crate::interop_adapter::FidelityCategory::LossyOnExport
+    );
+    assert_eq!(findings[0].location, "Styles:column 3");
+    assert!(findings[0].message.contains("0.00E+00"));
+    let exported = runtime
+        .export_workbook(runtime.current_revision(), &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][2].value,
+        SourceValue::Number { value: 1.0 }
+    );
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn stage5_promotion_export_reopen_and_working_size() {
     use tachiko_workspace_engine::{BorderSide, FieldId};
@@ -711,7 +971,7 @@ fn stage5_promotion_export_reopen_and_working_size() {
     let (working, working_imported) =
         crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
     assert_eq!(working.presentation, runtime.presentation);
-    assert_eq!(working_imported.metadata, imported.metadata);
+    assert_eq!(working_imported.metadata.version, 2);
 }
 
 #[test]

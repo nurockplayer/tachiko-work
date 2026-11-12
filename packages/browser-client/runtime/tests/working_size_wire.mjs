@@ -107,6 +107,9 @@ const importedReply = spreadsheet({
 assert.equal(importedReply.status, "ok", JSON.stringify(importedReply));
 assert.equal(importedReply.response.type, "imported_window", JSON.stringify(importedReply));
 const imported = importedReply.response.payload;
+assert.equal(imported.metadata.version, 2);
+assert.equal("rows" in imported.metadata.sheets[0], false);
+assert.ok(imported.metadata.sheets[0].columns.every(column => !("width" in column)));
 assert.equal(imported.opened.profile, "working_size");
 assert.equal(imported.opened.window.total_rows, 2);
 assert.equal(imported.opened.table, undefined, "an imported working-size reply carries no whole table");
