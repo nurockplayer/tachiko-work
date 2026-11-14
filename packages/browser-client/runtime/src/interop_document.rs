@@ -1164,6 +1164,7 @@ fn import_workbook_document(
     let runtime = admit(document, PREFLIGHT_OCCURRENCE)?;
     let mut document = runtime.session.export_snapshot().into_document();
     drop(runtime);
+    let numeric_columns = super::interop_adapter::numeric_columns(&workbook.sheets);
     let mut pending = BTreeMap::new();
     for (sheet_index, row, column, source) in formulas {
         let target = metadata_target(&metadata, sheet_index, row, column)?;
@@ -1171,6 +1172,7 @@ fn import_workbook_document(
             &source,
             &metadata,
             &workbook.sheets,
+            &numeric_columns,
             sheet_index,
             &target,
             &document,
@@ -1206,7 +1208,7 @@ fn import_workbook_document(
     // Binding only replaces field values, so one index serves every formula.
     let index = AddressIndex::build(&document)
         .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
-    for next in import_formula_order(&pending)? {
+    for next in import_formula_order(&pending, &document)? {
         let (source, _, (sheet_index, row, column)) = pending
             .get(&next)
             .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
@@ -2098,37 +2100,81 @@ fn export_a1_maps(
     (addresses, columns)
 }
 
-/// Order pending formulas so each one is bound after every pending formula it
-/// references, breaking ties by the lowest `FieldRef` so the order stays
-/// deterministic and identical to the former repeated scan.
-type PendingImportFormula = (String, BTreeSet<FieldRef>, (usize, usize, usize));
+/// Cell and whole-column dependencies collected by the shared A1 translator.
+#[derive(Default)]
+pub(super) struct FormulaReferences {
+    pub(super) cells: BTreeSet<FieldRef>,
+    pub(super) columns: BTreeSet<ColumnRef>,
+}
 
+impl FormulaReferences {
+    fn extend(&mut self, nested: Self) {
+        self.cells.extend(nested.cells);
+        self.columns.extend(nested.columns);
+    }
+}
+
+type PendingImportFormula = (String, FormulaReferences, (usize, usize, usize));
+
+/// Ready column nodes run before cells, so newly unblocked formulas still
+/// compete with every other ready formula by lowest `FieldRef`.
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+enum ImportDependency {
+    Column(ColumnRef),
+    Cell(FieldRef),
+}
+
+/// Bind after every pending dependency, with one virtual node per read column.
 fn import_formula_order(
     pending: &BTreeMap<FieldRef, PendingImportFormula>,
+    document: &Document,
 ) -> Result<Vec<FieldRef>, DesignerError> {
-    let mut dependents: BTreeMap<FieldRef, Vec<FieldRef>> = BTreeMap::new();
-    let mut remaining: BTreeMap<FieldRef, usize> = BTreeMap::new();
+    let mut dependents: BTreeMap<ImportDependency, Vec<ImportDependency>> = BTreeMap::new();
+    let mut remaining: BTreeMap<ImportDependency, usize> = BTreeMap::new();
     for (target, (_, references, _)) in pending {
-        let mut pending_references = 0;
-        for reference in references {
+        let cell = ImportDependency::Cell(target.clone());
+        remaining.entry(cell.clone()).or_default();
+        for column in &references.columns {
+            let node = ImportDependency::Column(column.clone());
+            remaining.entry(node.clone()).or_default();
+            dependents.entry(node).or_default().push(cell.clone());
+            *remaining.entry(cell.clone()).or_default() += 1;
+        }
+        for reference in &references.cells {
             if pending.contains_key(reference) {
                 dependents
-                    .entry(reference.clone())
+                    .entry(ImportDependency::Cell(reference.clone()))
                     .or_default()
-                    .push(target.clone());
-                pending_references += 1;
+                    .push(cell.clone());
+                *remaining.entry(cell.clone()).or_default() += 1;
             }
         }
-        remaining.insert(target.clone(), pending_references);
+    }
+    for target in pending.keys() {
+        let entity = document
+            .entities
+            .get(&target.entity)
+            .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
+        let column =
+            ImportDependency::Column(ColumnRef::new(entity.schema.clone(), target.field.clone()));
+        if let Some(count) = remaining.get_mut(&column) {
+            *count += 1;
+            dependents
+                .entry(ImportDependency::Cell(target.clone()))
+                .or_default()
+                .push(column);
+        }
     }
     let mut ready = remaining
         .iter()
         .filter(|(_, count)| **count == 0)
-        .map(|(target, _)| target.clone())
+        .map(|(node, _)| node.clone())
         .collect::<BTreeSet<_>>();
     let mut order = Vec::with_capacity(pending.len());
     while let Some(next) = ready.pop_first() {
-        order.push(next.clone());
+        if let ImportDependency::Cell(target) = &next {
+            order.push(target.clone());
+        }
         let Some(targets) = dependents.get(&next) else {
             continue;
         };
@@ -2527,7 +2573,7 @@ pub(super) trait A1Geometry {
         sheet: usize,
         address: &str,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError>;
     fn aggregate(
         &mut self,
@@ -2535,7 +2581,7 @@ pub(super) trait A1Geometry {
         current: usize,
         aggregate: SummaryAggregate,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError>;
     /// One column argument of a conditional aggregate, as `[schema.field:column]`.
     /// `numeric` is true for the value column.
@@ -2545,7 +2591,7 @@ pub(super) trait A1Geometry {
         current: usize,
         numeric: bool,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError>;
     /// Start one conditional call so `column` can enforce its same-rows rule
     /// across that call's column arguments.
@@ -2572,6 +2618,7 @@ pub(super) trait A1Geometry {
 struct ImportA1Geometry<'a> {
     metadata: &'a InteropMetadata,
     sources: &'a [SourceSheet],
+    numeric_columns: &'a [Vec<bool>],
     owner: &'a FieldRef,
     /// The first conditional column's sheet and row span, for the same-rows rule.
     conditional_span: Option<(usize, usize, usize)>,
@@ -2591,10 +2638,11 @@ impl A1Geometry for ImportA1Geometry<'_> {
         current: usize,
         aggregate: SummaryAggregate,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
-        let (sheet, column, _, _) = whole_column_argument(argument, current, self.sources, true)
-            .ok_or_else(|| tracker_error("aggregate range must cover one whole data column"))?;
+        let (sheet, column, _, _) =
+            whole_column_argument(argument, current, self.sources, self.numeric_columns, true)
+                .ok_or_else(|| tracker_error("aggregate range must cover one whole data column"))?;
         column_source(
             aggregate.suffix(),
             column,
@@ -2610,12 +2658,16 @@ impl A1Geometry for ImportA1Geometry<'_> {
         current: usize,
         numeric: bool,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
-        let (sheet, column, first_row, last_row) =
-            whole_column_argument(argument, current, self.sources, numeric).ok_or_else(|| {
-                tracker_error("conditional range must cover one whole data column")
-            })?;
+        let (sheet, column, first_row, last_row) = whole_column_argument(
+            argument,
+            current,
+            self.sources,
+            self.numeric_columns,
+            numeric,
+        )
+        .ok_or_else(|| tracker_error("conditional range must cover one whole data column"))?;
         let span = (sheet, first_row, last_row);
         if self.conditional_span.is_some_and(|first| first != span) {
             return Err(tracker_error(
@@ -2633,7 +2685,7 @@ impl A1Geometry for ImportA1Geometry<'_> {
         sheet_index: usize,
         address: &str,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
         let metadata = self.metadata;
         let sources = self.sources;
@@ -2670,7 +2722,7 @@ impl A1Geometry for ImportA1Geometry<'_> {
         declared_type(document, &reference)?;
         let entity = &document.entities[&reference.entity];
         let field = &document.schemas[&entity.schema].fields[&reference.field];
-        references.insert(reference);
+        references.cells.insert(reference);
         Ok(format!(
             "[{}.{}]",
             if same_row { "" } else { entity.key.as_str() },
@@ -2683,10 +2735,11 @@ fn translate_a1(
     source: &str,
     metadata: &InteropMetadata,
     sources: &[SourceSheet],
+    numeric_columns: &[Vec<bool>],
     current_sheet: usize,
     owner: &FieldRef,
     document: &Document,
-) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+) -> Result<(String, FormulaReferences), DesignerError> {
     // Import counts the optional leading equals sign in its existing input bound.
     if source.len() > MAX_PROFILE_STRING_BYTES {
         return Err(tracker_error(
@@ -2698,6 +2751,7 @@ fn translate_a1(
         &mut ImportA1Geometry {
             metadata,
             sources,
+            numeric_columns,
             owner,
             conditional_span: None,
         },
@@ -2711,7 +2765,7 @@ pub(super) fn translate_a1_with(
     geometry: &mut impl A1Geometry,
     current_sheet: usize,
     document: &Document,
-) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+) -> Result<(String, FormulaReferences), DesignerError> {
     translate_a1_inner(source, geometry, current_sheet, document, true)
 }
 
@@ -2722,14 +2776,14 @@ fn translate_a1_inner(
     current_sheet: usize,
     document: &Document,
     record_tokens: bool,
-) -> Result<(String, BTreeSet<FieldRef>), DesignerError> {
+) -> Result<(String, FormulaReferences), DesignerError> {
     if source.len() > MAX_PROFILE_STRING_BYTES {
         return Err(tracker_error(
             "source formula exceeds the bounded authoring limit",
         ));
     }
     let mut output = String::new();
-    let mut references = BTreeSet::new();
+    let mut references = FormulaReferences::default();
     let mut cursor = 0;
     while cursor < source.len() {
         let ch = source[cursor..]
@@ -2953,14 +3007,20 @@ fn translate_lookup_call(
     current_sheet: usize,
     geometry: &mut impl A1Geometry,
     document: &Document,
-    references: &mut BTreeSet<FieldRef>,
+    references: &mut FormulaReferences,
 ) -> Result<String, DesignerError> {
     let call = lookup_call(name, argument).ok_or_else(|| geometry.unknown_function())?;
     geometry.begin_conditional();
     let keys = geometry.column(&call.keys, current_sheet, false, document, references)?;
     let results = geometry.column(&call.results, current_sheet, true, document, references)?;
     if let Some(end) = &call.range_end {
-        geometry.column(end, current_sheet, false, document, &mut BTreeSet::new())?;
+        geometry.column(
+            end,
+            current_sheet,
+            false,
+            document,
+            &mut FormulaReferences::default(),
+        )?;
     }
     let (key, nested) = translate_a1_inner(
         lookup_key(call.key).0,
@@ -2990,7 +3050,7 @@ fn translate_conditional_call(
     current_sheet: usize,
     geometry: &mut impl A1Geometry,
     document: &Document,
-    references: &mut BTreeSet<FieldRef>,
+    references: &mut FormulaReferences,
 ) -> Result<String, DesignerError> {
     let parts = split_arguments(argument)
         .ok_or_else(|| tracker_error("unterminated source formula call"))?;
@@ -3046,7 +3106,7 @@ fn translate_conditional_criterion(
     current_sheet: usize,
     geometry: &mut impl A1Geometry,
     document: &Document,
-    references: &mut BTreeSet<FieldRef>,
+    references: &mut FormulaReferences,
 ) -> Result<(String, CriterionKind), DesignerError> {
     let unsupported = || DesignerError::A1Translation {
         code: A1RefusalCode::UnsupportedCriterion,
@@ -3084,17 +3144,17 @@ fn offset_translation(error: DesignerError, base: usize) -> DesignerError {
 /// reference, or `None` for any other expression.
 fn translated_criterion_kind(
     translated: &str,
-    references: &BTreeSet<FieldRef>,
+    references: &FormulaReferences,
     document: &Document,
 ) -> Option<CriterionKind> {
     if writable_criterion(translated) == Some(CriterionKind::Number) {
         return Some(CriterionKind::Number);
     }
     let inner = translated.strip_prefix('[')?.strip_suffix(']')?;
-    if inner.contains(['[', ']']) || references.len() != 1 {
+    if inner.contains(['[', ']']) || references.cells.len() != 1 || !references.columns.is_empty() {
         return None;
     }
-    let reference = references.iter().next()?;
+    let reference = references.cells.iter().next()?;
     let entity = document.entities.get(&reference.entity)?;
     let field_type = document
         .schemas
@@ -3160,7 +3220,7 @@ fn column_source(
     sheet_index: usize,
     metadata: &InteropMetadata,
     document: &Document,
-    references: &mut BTreeSet<FieldRef>,
+    references: &mut FormulaReferences,
 ) -> Result<String, DesignerError> {
     let sheet = metadata
         .sheets
@@ -3179,11 +3239,9 @@ fn column_source(
         .fields
         .get(&FieldId::from(field_id.clone()))
         .ok_or_else(|| tracker_error("formula field is unavailable"))?;
-    // Binding after every cell formula of the column keeps a formula column
-    // bound before a total that reads it.
-    for row in &sheet.rows {
-        references.insert(FieldRef::new(row.entity_id.clone(), field_id.clone()));
-    }
+    references
+        .columns
+        .insert(ColumnRef::new(sheet.schema_id.clone(), field_id.clone()));
     Ok(format!(
         "[{}.{}:{}]",
         schema.key.as_str(),
@@ -5521,7 +5579,200 @@ mod a1_import_boundary_tests {
         };
         let document = tachiko_workspace_engine::Document::empty("bound", "Bound");
         let owner = tachiko_workspace_engine::FieldRef::new("entity", "field");
-        assert!(super::translate_a1(&source, &metadata, &[], 0, &owner, &document).is_err());
-        assert!(super::translate_a1(&source[1..], &metadata, &[], 0, &owner, &document).is_ok());
+        assert!(super::translate_a1(&source, &metadata, &[], &[], 0, &owner, &document).is_err());
+        assert!(
+            super::translate_a1(&source[1..], &metadata, &[], &[], 0, &owner, &document).is_ok()
+        );
+    }
+}
+
+#[cfg(test)]
+mod import_dependency_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::{
+        FormulaReferences, InteropColumnMetadata, InteropMetadata, InteropRowMetadata,
+        InteropSheetMetadata, PendingImportFormula, column_source, import_formula_order,
+        translated_criterion_kind,
+    };
+    use crate::interop_adapter::CriterionKind;
+    use tachiko_workspace_engine::{
+        ColumnRef, Document, Entity, FieldConstraint, FieldDefinition, FieldRef, FieldType, Schema,
+    };
+
+    fn document() -> Document {
+        let mut document = Document::empty("dependencies", "Dependencies");
+        let fields = ["value", "total"]
+            .into_iter()
+            .map(|id| {
+                (
+                    id.into(),
+                    FieldDefinition {
+                        id: id.into(),
+                        key: id.into(),
+                        display_name: None,
+                        number_format: None,
+                        date_format: None,
+                        field_type: FieldType::Number,
+                        required: true,
+                        constraint: FieldConstraint::None,
+                    },
+                )
+            })
+            .collect();
+        document.schemas.insert(
+            "sheet".into(),
+            Schema {
+                id: "sheet".into(),
+                key: "sheet".into(),
+                display_name: None,
+                field_order: None,
+                fields,
+            },
+        );
+        for id in ["a", "b", "c", "d"] {
+            document.entities.insert(
+                id.into(),
+                Entity {
+                    id: id.into(),
+                    key: id.into(),
+                    schema: "sheet".into(),
+                    fields: BTreeMap::new(),
+                },
+            );
+        }
+        document
+    }
+
+    fn formula(cells: &[(&str, &str)], columns: &[(&str, &str)]) -> PendingImportFormula {
+        (
+            String::new(),
+            FormulaReferences {
+                cells: cells
+                    .iter()
+                    .map(|(row, field)| FieldRef::new(*row, *field))
+                    .collect(),
+                columns: columns
+                    .iter()
+                    .map(|(sheet, field)| ColumnRef::new(*sheet, *field))
+                    .collect(),
+            },
+            (0, 0, 0),
+        )
+    }
+
+    #[test]
+    fn column_node_orders_every_formula_before_total_with_lowest_cell_ties() {
+        let pending = BTreeMap::from([
+            (
+                FieldRef::new("a", "total"),
+                formula(&[], &[("sheet", "value")]),
+            ),
+            (FieldRef::new("b", "value"), formula(&[("c", "value")], &[])),
+            (FieldRef::new("c", "value"), formula(&[], &[])),
+            (FieldRef::new("d", "total"), formula(&[], &[])),
+        ]);
+        assert_eq!(
+            import_formula_order(&pending, &document()).unwrap(),
+            vec![
+                FieldRef::new("c", "value"),
+                FieldRef::new("b", "value"),
+                FieldRef::new("a", "total"),
+                FieldRef::new("d", "total"),
+            ]
+        );
+    }
+
+    #[test]
+    fn total_inside_its_aggregated_column_is_a_cycle() {
+        let pending = BTreeMap::from([
+            (
+                FieldRef::new("a", "value"),
+                formula(&[], &[("sheet", "value")]),
+            ),
+            (FieldRef::new("b", "value"), formula(&[], &[])),
+        ]);
+        assert_eq!(
+            import_formula_order(&pending, &document())
+                .unwrap_err()
+                .to_string(),
+            super::tracker_error("source formulas contain a dependency cycle").to_string()
+        );
+    }
+
+    #[test]
+    fn cell_only_order_matches_repeated_lowest_ready_scan() {
+        let pending = BTreeMap::from([
+            (FieldRef::new("a", "value"), formula(&[("c", "value")], &[])),
+            (
+                FieldRef::new("b", "value"),
+                formula(&[("external", "value")], &[]),
+            ),
+            (FieldRef::new("c", "value"), formula(&[("d", "value")], &[])),
+            (FieldRef::new("d", "value"), formula(&[], &[])),
+        ]);
+        assert_eq!(
+            import_formula_order(&pending, &document()).unwrap(),
+            vec![
+                FieldRef::new("b", "value"),
+                FieldRef::new("d", "value"),
+                FieldRef::new("c", "value"),
+                FieldRef::new("a", "value"),
+            ]
+        );
+    }
+
+    #[test]
+    fn column_source_records_one_column_independent_of_row_count() {
+        for count in [0, 1, 10_000] {
+            let metadata = InteropMetadata {
+                version: 1,
+                sheets: vec![InteropSheetMetadata {
+                    schema_id: "sheet".into(),
+                    name: "Sheet".into(),
+                    has_header: true,
+                    columns: vec![InteropColumnMetadata {
+                        field_id: "value".into(),
+                        name: "Value".into(),
+                        width: None,
+                    }],
+                    rows: (0..count)
+                        .map(|row| InteropRowMetadata {
+                            entity_id: format!("row-{row}"),
+                            styles: Vec::new(),
+                        })
+                        .collect(),
+                }],
+            };
+            let mut references = FormulaReferences::default();
+            for suffix in ["total", "column"] {
+                assert_eq!(
+                    column_source(suffix, 0, 0, &metadata, &document(), &mut references).unwrap(),
+                    format!("[sheet.value:{suffix}]")
+                );
+            }
+            assert!(references.cells.is_empty());
+            assert_eq!(
+                references.columns,
+                BTreeSet::from([ColumnRef::new("sheet", "value")])
+            );
+        }
+    }
+
+    #[test]
+    fn criterion_requires_one_cell_and_no_columns_and_nested_references_merge() {
+        let mut references = FormulaReferences::default();
+        references.extend(formula(&[("a", "value")], &[]).1);
+        assert_eq!(
+            translated_criterion_kind("[a.value]", &references, &document()),
+            Some(CriterionKind::Number)
+        );
+        references.extend(formula(&[], &[("sheet", "value")]).1);
+        assert_eq!(references.cells.len(), 1);
+        assert_eq!(references.columns.len(), 1);
+        assert_eq!(
+            translated_criterion_kind("[a.value]", &references, &document()),
+            None
+        );
     }
 }
