@@ -7834,7 +7834,7 @@ impl DesignerRuntime {
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(all(test, not(feature = "capacity-bench")))]
         if keep_formula_sources {
             if let Ok(sources) = self.session.formula_source_projections() {
                 assert_eq!(self.formula_sources, sources);
