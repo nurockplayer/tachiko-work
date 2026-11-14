@@ -1529,8 +1529,8 @@ fn ledger_summary_total(finding: &FidelityFinding) -> Option<usize> {
 
 // A summary is keyed by the location it names. Worksheet names may contain
 // `!` but never `:`, so for other findings only a trailing `!<A1 cell or
-// range>` (optionally followed by `/detail`), `:row <r>` or `:column <n>` is
-// cut off.
+// range>` (optionally followed by `/detail`), `:row <r>`, `:column <n>` or
+// `:columns <a>..<b>` is cut off.
 fn ledger_key(finding: &FidelityFinding) -> &str {
     let location = finding.location.as_str();
     if ledger_summary_total(finding).is_some() {
@@ -1549,8 +1549,16 @@ fn ledger_key(finding: &FidelityFinding) -> &str {
                 || part
                     .strip_prefix("column ")
                     .is_some_and(|column| column.bytes().all(|byte| byte.is_ascii_digit()))
+                || part
+                    .strip_prefix("columns ")
+                    .and_then(|columns| columns.split_once(".."))
+                    .is_some_and(|(min, max)| is_decimal(min) && is_decimal(max))
         })
         .map_or(location, |(sheet, _)| sheet)
+}
+
+fn is_decimal(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn is_a1_reference(address: &str) -> bool {
@@ -7811,6 +7819,25 @@ mod ledger_cap_tests {
             assert_eq!(ledger.len(), 101);
             assert_eq!(ledger[100].location, sheet);
             assert_eq!(ledger_summary_total(&ledger[100]), Some(151));
+        }
+    }
+
+    #[test]
+    fn column_range_locations_share_their_sheet_cap() {
+        for sheet in ["Sheet1", "Sales!East"] {
+            let mut ledger: Vec<_> = (1..=150)
+                .map(|column| FidelityFinding {
+                    category: FidelityCategory::Converted,
+                    code: "hidden_column".into(),
+                    location: format!("{sheet}:columns {column}..{column}"),
+                    message: format!("column {column} is hidden"),
+                    blocking: false,
+                })
+                .collect();
+            cap_ledger(&mut ledger);
+            assert_eq!(ledger.len(), 101);
+            assert_eq!(ledger[100].location, sheet);
+            assert_eq!(ledger_summary_total(&ledger[100]), Some(150));
         }
     }
 
