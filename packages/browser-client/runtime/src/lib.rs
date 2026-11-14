@@ -6543,7 +6543,7 @@ impl DesignerRuntime {
             entities: entities.iter().map(|entity| entity.id.clone()).collect(),
         }];
         let inverse = vec![SemanticCommand::AppendCollection { schema, entities }];
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.default_collection.clone_from(&new_default);
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::TableCommands {
@@ -6633,7 +6633,7 @@ impl DesignerRuntime {
             schema: schema.id,
             entities: Vec::new(),
         }];
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.duplicate_serial = serial;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
@@ -6829,7 +6829,7 @@ impl DesignerRuntime {
             }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
-        let publication = self.publish_commands(expected_revision, forward.clone())?;
+        let publication = self.publish_commands(expected_revision, &forward)?;
         self.duplicate_serial = ids.serial;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
@@ -7249,7 +7249,7 @@ impl DesignerRuntime {
             return Err(PatchLifecycleError::NoChange.into());
         }
         inverse.reverse();
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
             HistoryAction::Commands(inverse),
@@ -7292,10 +7292,10 @@ impl DesignerRuntime {
     fn publish_commands(
         &mut self,
         expected_revision: &str,
-        commands: Vec<SemanticCommand>,
+        commands: &[SemanticCommand],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let keep_formula_sources = self.commands_preserve_formula_sources(&commands);
+        let keep_formula_sources = self.commands_preserve_formula_sources(commands);
         let document_scope = self.session.document_scope().clone();
         if commands
             .iter()
@@ -7303,7 +7303,7 @@ impl DesignerRuntime {
         {
             return Err(tracker_error("unsupported history command"));
         }
-        let body = SemanticPatchBody::atomic_batch(commands.clone())?;
+        let body = SemanticPatchBody::atomic_batch(commands.to_vec())?;
         let prepared = self
             .lifecycle
             .plan_resident_commands(&self.session, &body)
@@ -7315,7 +7315,7 @@ impl DesignerRuntime {
         // derives the candidate's totals from the base's instead of walking it.
         let working_edit = match self.profile {
             SessionProfile::WorkingSize => {
-                let totals = self.working_value_edit_totals(&commands, candidate);
+                let totals = self.working_value_edit_totals(commands, candidate);
                 #[cfg(test)]
                 match &totals {
                     Some(_) => admission_counters::record_value_delta(),
@@ -7382,7 +7382,7 @@ impl DesignerRuntime {
                             SessionProfile::Ordinary,
                         )?;
                     }
-                    (_, SessionProfile::TextCapacity) => match commands.as_slice() {
+                    (_, SessionProfile::TextCapacity) => match commands {
                         [
                             SemanticCommand::SetFieldValue {
                                 field,
@@ -8010,7 +8010,7 @@ impl DesignerRuntime {
         if forward.is_empty() {
             return Err(PatchLifecycleError::NoChange.into());
         }
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
             HistoryAction::Commands(inverse),
@@ -8119,12 +8119,12 @@ impl DesignerRuntime {
         .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
         let action = if redo { &entry.forward } else { &entry.inverse };
         let result = match action {
-            HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
+            HistoryAction::Commands(commands) => self.publish_commands(expected, commands),
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
-                let result = self.publish_commands(expected, commands.clone())?;
+                let result = self.publish_commands(expected, commands)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
@@ -14595,7 +14595,7 @@ mod tests {
             let error = runtime
                 .publish_commands(
                     "resident/1",
-                    vec![SemanticCommand::AppendSchemaField {
+                    &[SemanticCommand::AppendSchemaField {
                         schema: schema.clone().into(),
                         field: FieldDefinition {
                             id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
@@ -14988,7 +14988,7 @@ mod tests {
                 runtime
                     .publish_commands(
                         "resident/0",
-                        vec![super::SemanticCommand::SetFieldValue {
+                        &[super::SemanticCommand::SetFieldValue {
                             field: super::FieldRef::new("utilities", "actual"),
                             value: super::Value::Number(super::Number::new(170.0).unwrap()),
                         }]
