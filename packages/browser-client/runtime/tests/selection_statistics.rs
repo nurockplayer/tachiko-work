@@ -1,5 +1,5 @@
 //! Work #811: revision-bound selection statistics over resident values.
-use std::{collections::BTreeMap, time::Instant};
+use std::{collections::BTreeMap, io::Write, time::Instant};
 
 use tachiko_designer_runtime::{
     DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
@@ -102,25 +102,31 @@ fn statistics(
 fn selection_statistics_wire_round_trip_and_read_preserves_revision() {
     let runtime = runtime();
     let before = runtime.observe_occurrence();
-    let input = serde_json::json!({
-        "type": "query_selection_statistics", "expected_revision": before.revision,
-        "targets": [{"entity": "e00002", "field": "f00"}],
-    });
+    let mut input: serde_json::Value = serde_json::from_str(
+        r#"{
+        "type": "query_selection_statistics", "expected_revision": "",
+        "targets": [{"entity": "e00002", "field": "f00"}]
+    }"#,
+    )
+    .unwrap();
+    input["expected_revision"] = serde_json::to_value(&before.revision).unwrap();
     let request: DesignerRequest = serde_json::from_value(input.clone()).unwrap();
     assert_eq!(serde_json::to_value(request).unwrap(), input);
     let mut runtime = Some(runtime);
     let bytes = process_wire_request(&mut runtime, &serde_json::to_vec(&input).unwrap());
     let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(reply["status"], "ok");
-    assert_eq!(
-        reply["response"],
-        serde_json::json!({
-            "type": "selection_statistics", "payload": {
-                "revision": before.revision, "count": 1, "numerical_count": 1,
-                "sum": 1.0, "average": 1.0, "min": 1.0, "max": 1.0, "error_count": 0,
-            },
-        })
-    );
+    let mut expected: serde_json::Value = serde_json::from_str(
+        r#"{
+        "type": "selection_statistics", "payload": {
+            "revision": "", "count": 1, "numerical_count": 1,
+            "sum": 1.0, "average": 1.0, "min": 1.0, "max": 1.0, "error_count": 0
+        }
+    }"#,
+    )
+    .unwrap();
+    expected["payload"]["revision"] = serde_json::to_value(&before.revision).unwrap();
+    assert_eq!(reply["response"], expected);
     let response: DesignerResponse = serde_json::from_value(reply["response"].clone()).unwrap();
     assert_eq!(serde_json::to_value(response).unwrap(), reply["response"]);
     assert_eq!(runtime.as_ref().unwrap().observe_occurrence(), before);
@@ -248,10 +254,12 @@ fn selection_statistics_one_hundred_thousand_targets_reply_is_bounded() {
     let mut runtime = Some(runtime);
     let started = Instant::now();
     let bytes = process_wire_request(&mut runtime, &input);
-    eprintln!(
+    writeln!(
+        std::io::stderr(),
         "selection statistics 100000 targets elapsed_ms={}",
         started.elapsed().as_millis()
-    );
+    )
+    .unwrap();
     assert!(
         bytes.len() < 1024,
         "aggregate reply is {} bytes",
@@ -260,12 +268,14 @@ fn selection_statistics_one_hundred_thousand_targets_reply_is_bounded() {
     let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(reply["status"], "ok", "{reply}");
     assert_eq!(reply["response"]["type"], "selection_statistics");
-    assert_eq!(
-        reply["response"]["payload"],
-        serde_json::json!({
-            "revision": before.revision, "count": 100_000, "numerical_count": 100_000,
-            "sum": 200_000.0, "average": 2.0, "min": 2.0, "max": 2.0, "error_count": 0,
-        })
-    );
+    let mut expected: serde_json::Value = serde_json::from_str(
+        r#"{
+        "revision": "", "count": 100000, "numerical_count": 100000,
+        "sum": 200000.0, "average": 2.0, "min": 2.0, "max": 2.0, "error_count": 0
+    }"#,
+    )
+    .unwrap();
+    expected["revision"] = serde_json::to_value(&before.revision).unwrap();
+    assert_eq!(reply["response"]["payload"], expected);
     assert_eq!(runtime.as_ref().unwrap().observe_occurrence(), before);
 }
