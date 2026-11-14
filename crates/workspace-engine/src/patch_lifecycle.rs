@@ -4926,7 +4926,7 @@ impl PatchLifecycle {
                     &formula_projection_document(base),
                     &formula_projection_document(candidate),
                     &base_calculation,
-                    candidate_calculation,
+                    &candidate_calculation,
                 )
                 .map_err(|source| PatchLifecycleError::CommandRejected {
                     source: Box::new(source.into()),
