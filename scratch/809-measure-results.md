@@ -2569,3 +2569,117 @@ remote-test: success after 1185s; step log /Users/tachikoma/.local/state/remote-
 
 The first run stopped at compilation on a misplaced storage timer (`E0425`); `748ee11f` corrected it before this successful measurement. No host cargo builds, product fixes, or capacity-gate changes were made.
 
+
+## Change set A — measured commit c6e1ac441f3a2cc3b09b54a5b23f60dc27bac9d4; main e5e961a6
+
+**Scratch only — PR #816 must never merge.** Main: `e5e961a63c52b46daf1987f8312703bda66683c5`. This results commit only appends the report; the measured source is `c6e1ac441f3a2cc3b09b54a5b23f60dc27bac9d4`.
+
+Run: **2026-11-14 21:43:22–21:53:45 JST**. [Successful hosted run](https://github.com/nurockplayer/tachiko-work/actions/runs/43596207026). Native 10,000-row size only, no WASM. `809_COUNTS rows=10000 opens=3 edits=30 saves=3 reduced=false`. Each clear width has n=3; all requested repetitions completed. Native bench: 42.49 s.
+
+### 10,000-row operations and step-2 comparison
+
+Durations are milliseconds. Step-2 values are the recorded measurements in [809-diagnosis.md](809-diagnosis.md). Clone counts are per operation and identical across its samples. The following window is sampled separately from edit.
+
+| operation | n | step-2 p50 ms | change-set-A p50 ms | p95 ms | max ms | p50 change ms | Document clones |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| edit | 30 | 187.000 | 215.432 | 233.424 | 239.104 | +28.432 | 2 |
+| following zero-row window | 30 | 8.061 | 13.378 | 14.308 | 14.538 | +5.317 | 0 |
+| clear one | 3 | 546.578 | 614.876 | 618.803 | 618.803 | +68.298 | 2 |
+| clear seven | 3 | 2031.394 | 2720.505 | 2977.934 | 2977.934 | +689.111 | 2 |
+| open combined | 3 | 996.600 | 1564.907 | 1639.105 | 1639.105 | +568.307 | 1 |
+
+Step-2 repeated opens excluded replacement/destruction of the previous resident, as recorded in its open-timer correction. This run includes resident replacement/destruction in the retained slot. Step-2 edit had four Document clones; this run has two. Clear one removes Text column_0; clear seven removes stored columns 0–6 and retains the three formula columns.
+
+The benchmark is a runtime unit test: main’s `#[cfg(test)]` formula-source equality assertion remains included. Its projection call appears under `post_publication/project_all_formula_sources`, separately from the guarded `formula_source_refresh` path.
+
+### Phase leaves with p50 ≥ 3 ms
+
+Each table is sorted by descending p50. A leaf has no timed descendants in the emitted phase table. `[rest]` is a leaf representing per-sample parent time minus direct children; it is included when its p50 meets the threshold. Paths are exact native timer paths. p50/p95 are nearest-rank percentiles; n=3 p95 equals max.
+
+#### edit (n=30; 17 leaves)
+
+| phase leaf | p50 ms | p95 ms | max ms |
+|---|---:|---:|---:|
+| `step/handle/dispatch/edit_cells/publish_commands/post_publication/project_all_formula_sources` | 81.443 | 83.190 | 84.670 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/authorize_and_publish/publish_candidate/publish_if_current/replace_and_drop_old_retained` | 16.713 | 21.888 | 22.176 |
+| `step/handle/dispatch/edit_cells/publish_commands/snapshot_clone/document_clone/clone_document_entities` | 12.852 | 15.076 | 16.200 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/plan_commands/planner_document_clone/document_clone/clone_document_entities` | 11.669 | 14.629 | 14.747 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_edit_changes_with_validation/v1_finalize_edit/scoped_formula_diff/compare_formula_outcomes_and_causes/push_formula_impacts/compare_all_formula_values` | 11.126 | 11.610 | 11.618 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/authorize_and_publish/publish_candidate/publish_if_current/replace_and_drop_old_document` | 8.256 | 10.987 | 12.252 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/projection_changes/scan_entity_projection_changes` | 7.485 | 8.993 | 9.064 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/drop_evaluated_document` | 6.778 | 9.569 | 9.994 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_edit_changes_with_validation/v1_finalize_edit/scoped_formula_diff/enumerate_all_formula_candidates` | 5.858 | 7.765 | 8.130 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_clone/clone_resident_state/clone_calculation_state/clone_calculation_state/clone_calculation/clone_calculation/clone_graph/clone_dependency_graph/clone_reference_uses` | 5.323 | 6.160 | 7.431 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_clone/clone_resident_state/clone_calculation_state/clone_calculation_state/clone_calculation/clone_calculation/clone_graph/clone_dependency_graph/clone_cell_readers` | 4.779 | 5.579 | 6.071 |
+| `step/handle/dispatch/edit_cells/publish_commands/post_publication/[rest]` | 4.030 | 10.960 | 11.019 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/receipt_building` | 4.011 | 5.572 | 5.897 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_edit_changes_with_validation/v1_finalize_edit/candidate_matches_prepared` | 3.553 | 5.388 | 5.781 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/authorize_and_publish/publish_candidate/publish_if_current/installation_matches_candidate` | 3.527 | 5.355 | 5.409 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/verification/verify_publication` | 3.464 | 5.212 | 5.393 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/plan_commands/apply_and_derive_writes/formula_structure_scan` | 3.360 | 3.483 | 3.511 |
+
+#### clear 1 (n=3; 37 leaves)
+
+| phase leaf | p50 ms | p95 ms | max ms |
+|---|---:|---:|---:|
+| `step/handle/dispatch/edit_cells/publish_commands/post_publication/project_all_formula_sources` | 82.649 | 83.323 | 83.323 |
+| `step/handle/dispatch/edit_cells/publish_commands/capacity_checks` | 42.855 | 42.884 | 42.884 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_update/calculation_update/incremental_calculation_update/dirty_root_impact` | 32.797 | 34.303 | 34.303 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/scoped_formula_projection` | 29.101 | 42.741 | 42.741 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/projection_changes/scan_entity_projection_changes` | 25.498 | 25.956 | 25.956 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/plan_commands/apply_and_derive_writes/[rest]` | 24.978 | 25.103 | 25.103 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/[rest]` | 24.375 | 25.631 | 25.631 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_impacts_and_disclosures/derive_disclosures` | 23.402 | 23.856 | 23.856 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/authorize_and_publish/publish_candidate/publish_if_current/replace_and_drop_old_retained` | 22.693 | 25.525 | 25.525 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/scoped_formula_diff/[rest]` | 22.126 | 22.829 | 22.829 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/canonical_delta_scoped` | 21.413 | 21.805 | 21.805 |
+| `step/handle/dispatch/edit_cells/[rest]` | 15.907 | 16.119 | 16.119 |
+| `step/handle/dispatch/edit_cells/publish_commands/post_publication/collection_specs_scan` | 14.878 | 15.249 | 15.249 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/receipt_store_and_redact` | 14.430 | 15.186 | 15.186 |
+| `step/handle/dispatch/edit_cells/publish_commands/preview` | 13.326 | 14.216 | 14.216 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/scoped_formula_diff/compare_formula_outcomes_and_causes/push_formula_impacts/compare_all_formula_values` | 12.358 | 12.433 | 12.433 |
+| `step/handle/dispatch/edit_cells/publish_commands/snapshot_clone/document_clone/clone_document_entities` | 10.790 | 10.812 | 10.812 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/plan_commands/planner_document_clone/document_clone/clone_document_entities` | 10.542 | 10.700 | 10.700 |
+| `step/handle/dispatch/edit_cells/publish_commands/[rest]` | 8.715 | 9.529 | 9.529 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/receipt_building` | 8.488 | 10.560 | 10.560 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_clone/clone_resident_state/clone_calculation_state/clone_calculation_state/clone_calculation/clone_calculation/clone_graph/clone_dependency_graph/clone_reference_uses` | 8.330 | 8.419 | 8.419 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/finalize_evaluation/finalize_evaluation_v2/v2_evidence/scoped_formula_diff/enumerate_all_formula_candidates` | 8.323 | 8.373 | 8.373 |
+| `step/handle/dispatch/edit_cells/publish_commands/published_projection` | 7.728 | 8.548 | 8.548 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/authorize_and_publish/publish_candidate/publish_if_current/replace_and_drop_old_document` | 6.903 | 10.105 | 10.105 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_clone/clone_resident_state/clone_calculation_state/clone_calculation_state/clone_calculation/clone_calculation/clone_graph/clone_dependency_graph/clone_cell_readers` | 6.778 | 7.247 | 7.247 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_update/validation_report` | 6.693 | 6.714 | 6.714 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/execute_context` | 6.579 | 6.673 | 6.673 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/drop_evaluated_document` | 6.380 | 6.505 | 6.505 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/[rest]` | 6.359 | 6.816 | 6.816 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/drop_evaluated_footprint` | 6.199 | 6.554 | 6.554 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/store_evaluation_memo` | 5.416 | 5.719 | 5.719 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/formula_preflight` | 4.200 | 4.290 | 4.290 |
+| `step/handle/dispatch/edit_cells/publish_commands/prepare_evaluation/retained_update/calculation_update/incremental_calculation_update/recompute_dirty_nodes/recompute_dirty/update_node_membership` | 4.059 | 4.317 | 4.317 |
+| `step/handle/dispatch/edit_cells/publish_commands/post_publication/[rest]` | 3.882 | 4.386 | 4.386 |
+| `step/handle/dispatch/edit_cells/publish_commands/apply_commands` | 3.779 | 3.932 | 3.932 |
+| `step/handle/dispatch/edit_cells/publish_commands/lifecycle_propose/propose_inner/plan_commands/apply_and_derive_writes/formula_structure_scan` | 3.423 | 3.799 | 3.799 |
+| `step/handle/dispatch/edit_cells/publish_commands/execute/execute_profile/[rest]` | 3.089 | 3.378 | 3.378 |
+
+#### edit zero-row window (n=30; 1 leaves)
+
+| phase leaf | p50 ms | p95 ms | max ms |
+|---|---:|---:|---:|
+| `step/handle/dispatch/query_table_window/window_column_totals/totals_for_entities/resident_column_totals/fold_all_members_numeric_fields` | 13.321 | 14.245 | 14.474 |
+
+### Merge conflict resolutions
+
+- `crates/formula-engine/src/lib.rs`: main’s dirty-closure selection and test-only complete-formula assertion remain. `dirty_root_impact` and `recompute_dirty_nodes` remain around main’s work; `select_changed_formula_outcomes` now times main’s selection. Removed `enumerate_all_before_formulas` and `enumerate_all_after_formulas`; no complete-formula enumeration was restored outside tests.
+- `crates/workspace-engine/src/lib.rs`: kept main’s `finalize_edit_with_validation`, new `finalize_edit_changes_with_validation`, and shared `with_edit_calculations`. Both finalizers retain `v1_finalize_edit`; `candidate_matches_prepared` wraps the shared existing equality. `formula_projection_preflight` wraps only main’s guarded fallback preflight.
+- `crates/workspace-engine/src/patch_lifecycle.rs`: kept main’s returned document and semantic-change vector. Renamed `finalize_edit_with_validation` timer to `finalize_edit_changes_with_validation`; retained `evidence_impact_and_disclosures`. Removed `drop_v1_diff_snapshots` because main no longer constructs those snapshots on this path.
+- `packages/browser-client/runtime/src/lib.rs`: kept main’s `keep_formula_sources` guard and test-only assertion. `formula_source_refresh` and `replace_and_drop_formula_sources` remain inside that guard. No unconditional refresh was restored.
+
+### Command and result
+
+```sh
+job-run --id 809-remeasure-a -- remote-test -- 'cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture'
+```
+
+```text
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 328 filtered out; finished in 42.49s
+remote-test: success after 611s; step log /Users/tachikoma/.local/state/remote-test/tachiko-work-20261114-214323-54861.log, whole run /Users/tachikoma/.local/state/remote-test/tachiko-work-20261114-214323-54861.full.log
+```
