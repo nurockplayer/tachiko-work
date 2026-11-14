@@ -283,8 +283,8 @@ fn selection_statistics_one_hundred_thousand_targets_reply_is_bounded() {
 #[test]
 fn selection_statistics_wire_request_limit_depends_on_session_profile() {
     let mut doc = document(&vec![2.0; 128], 32);
-    // Absent optional cells keep the ordinary open projection small, while
-    // 4096 distinct declared targets exceed its wire request limit.
+    // 4096 distinct declared targets, one of them holding a Number, exceed the
+    // ordinary wire request limit.
     for entity in doc.entities.values_mut() {
         entity.fields.clear();
     }
@@ -293,10 +293,13 @@ fn selection_statistics_wire_request_limit_depends_on_session_profile() {
         .unwrap()
         .fields
         .insert("f00".into(), number(2.0));
-    let ordinary = DesignerRuntime::from_document(doc.clone(), OCCURRENCE).unwrap();
+    // The limit is checked on the raw bytes before parsing, so the ordinary
+    // session needs no document these targets could name: an ordinary open
+    // refuses a 128 x 32 document's worst-case projection anyway.
+    let ordinary = DesignerRuntime::from_document(document(&[2.0], 1), OCCURRENCE).unwrap();
+    let ordinary_before = ordinary.observe_occurrence();
     let working = DesignerRuntime::from_document_working_size(doc, OCCURRENCE).unwrap();
-    let before = ordinary.observe_occurrence();
-    assert_eq!(working.observe_occurrence(), before);
+    let before = working.observe_occurrence();
     let targets = (0..128)
         .flat_map(|row| {
             (0..32).map(move |column| FieldTarget {
@@ -318,8 +321,11 @@ fn selection_statistics_wire_request_limit_depends_on_session_profile() {
         panic!("expected oversized request refusal");
     };
     assert_eq!(error.code, "request_too_large");
-    assert_eq!(error.current_revision, before.revision);
-    assert_eq!(ordinary.as_ref().unwrap().observe_occurrence(), before);
+    assert_eq!(error.current_revision, ordinary_before.revision);
+    assert_eq!(
+        ordinary.as_ref().unwrap().observe_occurrence(),
+        ordinary_before
+    );
 
     let mut working = Some(working);
     let reply = process_wire_request(&mut working, &input);
