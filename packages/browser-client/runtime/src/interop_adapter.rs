@@ -112,10 +112,11 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
         && text_capacity_sheet_shape(&workbook.sheets[0])
         && !workbook.ledger.iter().any(|finding| {
             finding.code == "bounded_workbook"
-                || matches!(
-                    finding.category,
-                    FidelityCategory::LossyOnExport | FidelityCategory::UnsupportedSafeDisabled
-                )
+                || (finding.code != "rows_above_header_skipped"
+                    && matches!(
+                        finding.category,
+                        FidelityCategory::LossyOnExport | FidelityCategory::UnsupportedSafeDisabled
+                    ))
         })
 }
 
@@ -3613,6 +3614,12 @@ pub(crate) fn import_xlsx_profile(
             }
         }
         let mut rows: Vec<Vec<SourceCell>> = Vec::new();
+        let row_limit = if working {
+            crate::capacity::WORKING_LIMITS.table_rows
+        } else {
+            MAX_TEXT_CAPACITY_ROWS
+        };
+        let physical_row_limit = max_physical_rows(row_limit, options, sheet_index);
         let mut seen = BTreeSet::new();
         let mut width = 0;
         let data = xml
@@ -3647,17 +3654,15 @@ pub(crate) fn import_xlsx_profile(
             if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
             }
-            check_import_limit(
-                crate::CapacityLimit::TableRows,
-                if working {
-                    crate::capacity::WORKING_LIMITS.table_rows
-                } else {
-                    MAX_TEXT_CAPACITY_ROWS
-                },
-                row_index - 1,
-                Some(&name),
-                true,
-            )?;
+            if row_index - 1 > physical_row_limit {
+                check_import_limit(
+                    crate::CapacityLimit::TableRows,
+                    row_limit,
+                    row_index - 1,
+                    Some(&name),
+                    true,
+                )?;
+            }
             rows.resize_with(rows.len().max(row_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
@@ -3834,6 +3839,13 @@ pub(crate) fn import_xlsx_profile(
                 });
             }
         }
+        check_import_limit(
+            crate::CapacityLimit::TableRows,
+            row_limit,
+            rows.len(),
+            Some(&name),
+            false,
+        )?;
         let mut capacity_plain = header.iter().all(|cell| cell.style == CellStyle::default());
         let mut headers = BTreeSet::new();
         let mut columns = Vec::new();
@@ -3998,6 +4010,21 @@ pub(crate) fn import_xlsx_profile(
 
 /// Leading title rows are skipped only when a complete header follows them.
 const MAX_DETECTED_ROWS_ABOVE_HEADER: usize = 10;
+
+fn max_physical_rows(limit: usize, options: &ImportOptions, sheet_index: usize) -> usize {
+    let above = options
+        .header_rows
+        .get(sheet_index)
+        .copied()
+        .flatten()
+        .map_or(MAX_DETECTED_ROWS_ABOVE_HEADER, |row| {
+            usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1)
+        });
+    // The caller already discounts the header with row_index - 1.
+    limit
+        .saturating_add(above)
+        .saturating_add(usize::from(!options.keep_summary_rows))
+}
 
 fn present(cell: &SourceCell) -> bool {
     cell.formula.is_some() || !matches!(cell.value, SourceValue::Empty)
@@ -6279,13 +6306,80 @@ mod scalar_carrier_tests {
 #[cfg(test)]
 mod capacity_proof_tests {
     use std::fmt::Write;
+    use std::io::{Cursor, Read};
+
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     use super::{
-        CapacityXmlCount, ImportOptions, SourceColumn, SourceLayout, SourceValue,
-        capacity_auxiliary_xml_reserve, capacity_header_bytes, capacity_header_limit,
-        capacity_worksheet, export_xlsx, import_csv, import_xlsx, plain_tag, st_xstring,
-        validate_text_capacity,
+        CapacityXmlCount, ImportOptions, InteropError, MAX_TEXT_CAPACITY_ROWS, OutputProfile,
+        SourceColumn, SourceLayout, SourceValue, capacity_auxiliary_xml_reserve,
+        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
+        import_xlsx, output_profile, plain_tag, st_xstring, validate_text_capacity,
     };
+    use crate::{CapacityExceeded, CapacityLimit};
+
+    fn capacity_xlsx_with_title(rows: usize) -> Vec<u8> {
+        let csv = format!("Name,Amount\n{}", "1,2\n".repeat(MAX_TEXT_CAPACITY_ROWS));
+        let workbook = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
+        let template = export_xlsx(&workbook).unwrap();
+        let mut xml = String::from(
+            "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Title</t></is></c></row><row r=\"2\"/><row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>Name</t></is></c><c r=\"B3\" t=\"inlineStr\"><is><t>Amount</t></is></c></row>",
+        );
+        for row in 4..=rows + 3 {
+            write!(
+                xml,
+                "<row r=\"{row}\"><c r=\"A{row}\"><v>1</v></c><c r=\"B{row}\"><v>2</v></c></row>"
+            )
+            .unwrap();
+        }
+        xml.push_str("</sheetData></worksheet>");
+        let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
+        let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let name = entry.name().to_owned();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            output.start_file(&name, options).unwrap();
+            if name == "xl/worksheets/sheet1.xml" {
+                std::io::Write::write_all(&mut output, xml.as_bytes()).unwrap();
+            } else {
+                std::io::Write::write_all(&mut output, &bytes).unwrap();
+            }
+        }
+        output.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn capacity_xlsx_title_and_blank_rows_do_not_count_as_data() {
+        let workbook = import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS)).unwrap();
+        assert_eq!(workbook.sheets[0].rows.len(), MAX_TEXT_CAPACITY_ROWS);
+        assert_eq!(workbook.sheets[0].layout.rows_above_header, 2);
+        assert!(
+            workbook
+                .ledger
+                .iter()
+                .any(|finding| finding.code == "rows_above_header_skipped")
+        );
+        assert_eq!(output_profile(&workbook), OutputProfile::TextCapacity);
+        assert!(!workbook.ledger.iter().any(|finding| finding.blocking));
+    }
+
+    #[test]
+    fn capacity_xlsx_header_offset_refuses_exact_data_row_count() {
+        let error = import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS + 1)).unwrap_err();
+        assert_eq!(
+            error,
+            InteropError::Capacity(CapacityExceeded {
+                limit: CapacityLimit::TableRows,
+                maximum: MAX_TEXT_CAPACITY_ROWS,
+                attempted: MAX_TEXT_CAPACITY_ROWS + 1,
+                collection: Some("Imported table".into()),
+            })
+        );
+    }
 
     #[test]
     fn raw_csv_inspection_defers_capacity_output_until_explicit_number_selection() {
