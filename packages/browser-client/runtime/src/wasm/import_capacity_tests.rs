@@ -1148,6 +1148,115 @@ fn working_size_sparse_xlsx_ten_thousand_rows() {
     assert_working_refusal(&output.finish().unwrap().into_inner(), "xlsx", "table_rows");
 }
 
+fn working_xlsx_with_layout(rows: usize, header_row: usize, summary: bool) -> Vec<u8> {
+    use std::fmt::Write as _;
+
+    let mut xml = String::from(
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>",
+    );
+    if header_row > 1 {
+        xml.push_str("<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Title</t></is></c></row>");
+        for row in 2..header_row {
+            write!(xml, "<row r=\"{row}\"/>").unwrap();
+        }
+    }
+    write!(xml, "<row r=\"{header_row}\"><c r=\"A{header_row}\" t=\"inlineStr\"><is><t>Name</t></is></c><c r=\"B{header_row}\" t=\"inlineStr\"><is><t>Amount</t></is></c></row>").unwrap();
+    for row in header_row + 1..=header_row + rows {
+        write!(
+            xml,
+            "<row r=\"{row}\"><c r=\"A{row}\"><v>1</v></c><c r=\"B{row}\"><v>2</v></c></row>"
+        )
+        .unwrap();
+    }
+    if summary {
+        let first = header_row + 1;
+        let last = header_row + rows;
+        let row = last + 1;
+        write!(xml, "<row r=\"{row}\"><c r=\"A{row}\" t=\"inlineStr\"><is><t>Total</t></is></c><c r=\"B{row}\"><f>SUM(B{first}:B{last})</f><v>0</v></c></row>").unwrap();
+    }
+    xml.push_str("</sheetData></worksheet>");
+    let mut input = ZipArchive::new(Cursor::new(working_xlsx(1, 2, 2, false))).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        output.start_file(&name, options).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            output.write_all(xml.as_bytes()).unwrap();
+        } else {
+            output.write_all(&bytes).unwrap();
+        }
+    }
+    output.finish().unwrap().into_inner()
+}
+
+fn assert_working_layout_import(source: &[u8], options: &ImportOptions, code: &str) {
+    let workbook = crate::interop_adapter::import_xlsx_profile(source, options, true).unwrap();
+    assert_eq!(workbook.sheets[0].rows.len(), 10_000);
+    assert!(workbook.ledger.iter().any(|finding| finding.code == code));
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 2]],
+        extra_columns: vec![Vec::new()],
+    };
+    let (_, imported) =
+        crate::import_workbook_working_size(&workbook, &selection, OCCURRENCE).unwrap();
+    assert_eq!(imported.opened.window.total_rows, 10_000);
+    assert!(imported.ledger.iter().any(|finding| finding.code == code));
+}
+
+#[test]
+fn working_size_xlsx_title_and_blank_rows_do_not_count_as_data() {
+    assert_working_layout_import(
+        &working_xlsx_with_layout(10_000, 3, false),
+        &ImportOptions::default(),
+        "rows_above_header_skipped",
+    );
+}
+
+#[test]
+fn working_size_xlsx_summary_row_does_not_count_as_data() {
+    assert_working_layout_import(
+        &working_xlsx_with_layout(10_000, 1, true),
+        &ImportOptions::default(),
+        "summary_row_excluded",
+    );
+}
+
+#[test]
+fn working_size_xlsx_header_offset_refuses_exact_data_row_count() {
+    let error = crate::interop_adapter::import_xlsx_profile(
+        &working_xlsx_with_layout(10_001, 3, false),
+        &ImportOptions::default(),
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        InteropError::Capacity(CapacityExceeded {
+            limit: CapacityLimit::TableRows,
+            maximum: 10_000,
+            attempted: 10_001,
+            collection: Some("Sales1".into()),
+        })
+    );
+}
+
+#[test]
+fn working_size_xlsx_explicit_header_row_twenty_has_full_capacity() {
+    let options = ImportOptions {
+        header_rows: vec![Some(20)],
+        ..ImportOptions::default()
+    };
+    assert_working_layout_import(
+        &working_xlsx_with_layout(10_000, 20, false),
+        &options,
+        "rows_above_header_skipped",
+    );
+}
+
 #[test]
 fn working_size_sparse_csv_ten_thousand_rows() {
     let mut source = (0..30)
