@@ -194,6 +194,38 @@ fn selection_statistics_negative_zero_and_overflow_safe_average() {
 }
 
 #[test]
+fn selection_statistics_exact_sum_retains_cancellation_remainder() {
+    let doc = document(vec![
+        ("a", FieldType::Number, Some(number(1e16))),
+        ("b", FieldType::Number, Some(number(1.0))),
+        ("c", FieldType::Number, Some(number(-1e16))),
+    ]);
+    let stats = query(doc, &["a", "b", "c"]);
+    assert_eq!(stats.sum.map(f64::to_bits), Some(1.0_f64.to_bits()));
+    assert_eq!(
+        stats.average.map(f64::to_bits),
+        Some((1.0_f64 / 3.0).to_bits())
+    );
+}
+
+#[test]
+fn selection_statistics_sum_leaving_f64_is_null_like_formula_sum() {
+    // The shared exact reducer is not reordered here: a sum that leaves f64
+    // on the way is null, as SUM is, while the average stays finite.
+    let doc = document(vec![
+        ("a", FieldType::Number, Some(number(1e308))),
+        ("b", FieldType::Number, Some(number(1e308))),
+        ("c", FieldType::Number, Some(number(-1e308))),
+    ]);
+    let stats = query(doc, &["a", "b", "c"]);
+    assert_eq!(stats.sum, None);
+    assert_eq!(
+        stats.average.map(f64::to_bits),
+        Some((1e308_f64 / 3.0).to_bits())
+    );
+}
+
+#[test]
 fn selection_statistics_mixed_collections_raw_formats_and_canonical_order() {
     let mut doc = document(vec![
         ("a", FieldType::Number, Some(number(1e16))),

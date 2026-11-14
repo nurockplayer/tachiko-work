@@ -16,7 +16,7 @@ use tachiko_semantic_core::{
 use thiserror::Error;
 
 // Shared arithmetic only; this does not evaluate formulas.
-pub use evaluation::average as numeric_average;
+pub use evaluation::{average as numeric_average, exact_sum as numeric_sum};
 
 pub use parser::{
     ExpressionComplexityError, FormulaParseError, UnboundColumnCriterion,

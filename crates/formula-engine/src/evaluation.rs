@@ -1105,8 +1105,9 @@ fn value_count(len: usize) -> f64 {
 /// Shewchuk's exact summation with a correctly rounded result (the algorithm
 /// of Python's `math.fsum`): non-overlapping partials hold the sum exactly.
 /// A non-finite result means the sum left f64.
+#[must_use]
 #[allow(clippy::float_cmp)] // exactness tests on error terms are the algorithm
-fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
+pub fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
     let mut partials: Vec<f64> = Vec::new();
     for mut value in values {
         let mut kept = 0;

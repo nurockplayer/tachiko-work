@@ -2,9 +2,9 @@
 use std::{collections::BTreeMap, io::Write, time::Instant};
 
 use tachiko_designer_runtime::{
-    DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget,
-    SelectionStatisticsProjection, SortDirection, TableView, ViewSortKey, ViewTextOrder,
-    process_wire_request,
+    DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime, DesignerWireReply,
+    FieldTarget, SelectionStatisticsProjection, SortDirection, TableView, ViewSortKey,
+    ViewTextOrder, process_wire_request,
 };
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, FieldConstraint, FieldDefinition, FieldId, FieldType, Number,
@@ -278,4 +278,69 @@ fn selection_statistics_one_hundred_thousand_targets_reply_is_bounded() {
     expected["revision"] = serde_json::to_value(&before.revision).unwrap();
     assert_eq!(reply["response"]["payload"], expected);
     assert_eq!(runtime.as_ref().unwrap().observe_occurrence(), before);
+}
+
+#[test]
+fn selection_statistics_wire_request_limit_depends_on_session_profile() {
+    let mut doc = document(&vec![2.0; 128], 32);
+    // Absent optional cells keep the ordinary open projection small, while
+    // 4096 distinct declared targets exceed its wire request limit.
+    for entity in doc.entities.values_mut() {
+        entity.fields.clear();
+    }
+    doc.entities
+        .get_mut("e00000")
+        .unwrap()
+        .fields
+        .insert("f00".into(), number(2.0));
+    let ordinary = DesignerRuntime::from_document(doc.clone(), OCCURRENCE).unwrap();
+    let working = DesignerRuntime::from_document_working_size(doc, OCCURRENCE).unwrap();
+    let before = ordinary.observe_occurrence();
+    assert_eq!(working.observe_occurrence(), before);
+    let targets = (0..128)
+        .flat_map(|row| {
+            (0..32).map(move |column| FieldTarget {
+                entity: format!("e{row:05}"),
+                field: format!("f{column:02}"),
+            })
+        })
+        .collect();
+    let input = serde_json::to_vec(&DesignerRequest::QuerySelectionStatistics {
+        expected_revision: before.revision.clone(),
+        targets,
+    })
+    .unwrap();
+    assert!(input.len() > 65_536);
+    assert!(input.len() < 64 * 1024 * 1024);
+    let mut ordinary = Some(ordinary);
+    let reply = process_wire_request(&mut ordinary, &input);
+    let DesignerWireReply::Error { error } = serde_json::from_slice(&reply).unwrap() else {
+        panic!("expected oversized request refusal");
+    };
+    assert_eq!(error.code, "request_too_large");
+    assert_eq!(error.current_revision, before.revision);
+    assert_eq!(ordinary.as_ref().unwrap().observe_occurrence(), before);
+
+    let mut working = Some(working);
+    let reply = process_wire_request(&mut working, &input);
+    let DesignerWireReply::Ok {
+        response: DesignerResponse::SelectionStatistics(stats),
+    } = serde_json::from_slice(&reply).unwrap()
+    else {
+        panic!("expected working-size selection statistics");
+    };
+    assert_eq!(
+        stats,
+        SelectionStatisticsProjection {
+            revision: before.revision.clone(),
+            count: 1,
+            numerical_count: 1,
+            sum: Some(2.0),
+            average: Some(2.0),
+            min: Some(2.0),
+            max: Some(2.0),
+            error_count: 0,
+        }
+    );
+    assert_eq!(working.as_ref().unwrap().observe_occurrence(), before);
 }

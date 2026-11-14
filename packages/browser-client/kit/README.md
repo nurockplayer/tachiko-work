@@ -217,6 +217,11 @@ It reads retained formula results without changing revision or history or
 creating cell projections. Unknown entities, undeclared fields, duplicates and
 stale revisions refuse before aggregation. Target order does not affect results.
 
+The request counts against the session's advertised request limit (64 KiB for
+ordinary and text-capacity sessions, 64 MiB for working-size sessions), oversized
+selections receive `request_too_large`, and clients can compare the encoded
+request size against that advertised limit before sending.
+
 | Selected cell | count | Numeric contribution |
 | --- | --- | --- |
 | Absent optional field | 0 | Skip |

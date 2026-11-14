@@ -471,7 +471,7 @@ impl ResidentWorkspaceSession {
             }
         }
         let complete = error_count == 0;
-        let sum = numbers.iter().fold(0.0, |sum, value| sum + value);
+        let sum = tachiko_formula_engine::numeric_sum(numbers.iter().copied());
         let average =
             (!numbers.is_empty()).then(|| tachiko_formula_engine::numeric_average(&numbers));
         Ok(ResidentQueryResult {
