@@ -103,9 +103,9 @@ pub struct ResidentWorkspaceSession {
     generation: u64,
     measurements: ResidentRuntimeMeasurements,
     /// Whether `document` is known to pass the formula projection preflight.
-    /// A publication that establishes it sets the flag; any other publication
-    /// or a fresh session leaves it unknown, so the base preflight still runs
-    /// and keeps its exact error.
+    /// Creation checks it once; a publication that establishes it sets the
+    /// flag. Any other publication leaves it unknown, so the base preflight
+    /// still runs and keeps its exact error.
     preflight_succeeded: bool,
 }
 
@@ -116,6 +116,7 @@ impl ResidentWorkspaceSession {
         let _phase809 =
             tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_session_new");
         let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
+        let preflight_succeeded = super::preflight_formula_projections(&document).is_ok();
         Self {
             document_scope,
             occurrence: SessionOccurrence::next(),
@@ -124,7 +125,7 @@ impl ResidentWorkspaceSession {
             revision: revision_for(0),
             generation: 0,
             measurements: ResidentRuntimeMeasurements::initial(calculation_work),
-            preflight_succeeded: false,
+            preflight_succeeded,
         }
     }
 

@@ -3389,7 +3389,7 @@ impl DesignerRuntime {
         )
     }
 
-    /// Candidate admission totals for a batch whose every command replaces a
+    /// Candidate admission totals for a batch whose every command sets or clears a
     /// stored value on an entity the base already holds.
     ///
     /// `None` means the batch changes more than that, so the caller takes the
@@ -3408,7 +3408,8 @@ impl DesignerRuntime {
         let mut targets = BTreeSet::new();
         for command in commands {
             match command {
-                SemanticCommand::SetFieldValue { field, .. } => {
+                SemanticCommand::SetFieldValue { field, .. }
+                | SemanticCommand::UnsetField { field } => {
                     if !base_document.entities.contains_key(&field.entity) {
                         return None;
                     }
@@ -3424,7 +3425,6 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
-                | SemanticCommand::UnsetField { .. }
                 | SemanticCommand::FormulaInverseRestore(_)
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
@@ -3459,13 +3459,16 @@ impl DesignerRuntime {
         let mut needs_full_strings = false;
         for (entity_id, field_id) in &targets {
             let old = base_document.entities.get(entity_id)?.fields.get(field_id);
-            let new = candidate.entities.get(entity_id)?.fields.get(field_id)?;
-            // The walk adds every stored field's identity; the base already
-            // holds the ones that existed.
-            if old.is_none() {
+            let new = candidate.entities.get(entity_id)?.fields.get(field_id);
+            // Stored field identities enter and leave with their values.
+            if old.is_none() && new.is_some() {
                 let bytes = field_id.as_str().len();
                 needs_full_strings |= bytes > MAX_PROFILE_STRING_BYTES;
                 strings.profile_strings = strings.profile_strings.saturating_add(bytes);
+            } else if old.is_some() && new.is_none() {
+                strings.profile_strings = strings
+                    .profile_strings
+                    .saturating_sub(field_id.as_str().len());
             }
             if let Some(old) = old {
                 // The base was admitted, so its own items never refuse here;
@@ -3476,14 +3479,15 @@ impl DesignerRuntime {
                     .saturating_sub(contribution.profile_strings);
                 strings.stored_text = strings.stored_text.saturating_sub(contribution.stored_text);
             }
-            match value_profile_contribution(new) {
-                Ok(contribution) => {
+            match new.map(value_profile_contribution).transpose() {
+                Ok(Some(contribution)) => {
                     strings.profile_strings = strings
                         .profile_strings
                         .saturating_add(contribution.profile_strings);
                     strings.stored_text =
                         strings.stored_text.saturating_add(contribution.stored_text);
                 }
+                Ok(None) => {}
                 Err(_) => needs_full_strings = true,
             }
         }
@@ -7304,6 +7308,24 @@ impl DesignerRuntime {
         }
     }
 
+    /// Stored-value edits preserve expression text and every address key.
+    fn commands_preserve_formula_sources(&self, commands: &[SemanticCommand]) -> bool {
+        commands.iter().all(|command| {
+            let (field, new) = match command {
+                SemanticCommand::SetFieldValue { field, value } => (field, Some(value)),
+                SemanticCommand::UnsetField { field } => (field, None),
+                _ => return false,
+            };
+            let old = self
+                .session
+                .document()
+                .entities
+                .get(&field.entity)
+                .and_then(|entity| entity.fields.get(&field.field));
+            !matches!(old, Some(Value::Formula(_))) && !matches!(new, Some(Value::Formula(_)))
+        })
+    }
+
     #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
     fn publish_commands(
         &mut self,
@@ -7314,6 +7336,7 @@ impl DesignerRuntime {
             tachiko_workspace_engine::instrumentation::PhaseTimer::new("publish_commands");
         let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("snapshot_clone");
         self.check_revision(expected_revision)?;
+        let keep_formula_sources = self.commands_preserve_formula_sources(&commands);
         let document_scope = self.session.document_scope().clone();
         let mut candidate = self.session.document().clone();
         drop(phase809);
@@ -7799,15 +7822,22 @@ impl DesignerRuntime {
                 }
                 None => self.refresh_structure(),
             }
-            if let Ok(sources) =
-                tachiko_workspace_engine::instrumentation::timed("formula_source_refresh", || {
-                    self.session.formula_source_projections()
-                })
-            {
-                tachiko_workspace_engine::instrumentation::timed(
-                    "replace_and_drop_formula_sources",
-                    || self.formula_sources = sources,
-                );
+            if !keep_formula_sources {
+                if let Ok(sources) = tachiko_workspace_engine::instrumentation::timed(
+                    "formula_source_refresh",
+                    || self.session.formula_source_projections(),
+                ) {
+                    tachiko_workspace_engine::instrumentation::timed(
+                        "replace_and_drop_formula_sources",
+                        || self.formula_sources = sources,
+                    );
+                }
+            }
+        }
+        #[cfg(test)]
+        if keep_formula_sources {
+            if let Ok(sources) = self.session.formula_source_projections() {
+                assert_eq!(self.formula_sources, sources);
             }
         }
         // Only the resident registry accumulates one receipt and settled

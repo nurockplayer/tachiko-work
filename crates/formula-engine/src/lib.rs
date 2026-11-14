@@ -1269,19 +1269,21 @@ impl RetainedCalculationState {
         }
 
         let before_failed = self.is_failed();
-        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
-            "enumerate_all_before_formulas",
-        );
+        #[cfg(test)]
         let before_formulas = self
             .calculation
             .graph
             .formulas()
             .cloned()
             .collect::<BTreeSet<_>>();
-        drop(part809);
         let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("dirty_root_impact");
         let dirty_roots =
             &Self::with_column_total_roots(document, &self.calculation.graph, dirty_roots);
+        let before_root_formulas = dirty_roots
+            .iter()
+            .filter(|field| self.calculation.graph.is_formula(field))
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let impact = self.update_dependency_impact(document, dirty_roots);
         let before_projections = impact
             .dirty
@@ -1307,28 +1309,39 @@ impl RetainedCalculationState {
             ..IncrementalCalculationWork::default()
         };
         let after_failed = self.is_failed();
-        let part809 =
-            tachiko_semantic_core::instrumentation::PhaseTimer::new("enumerate_all_after_formulas");
-        let formula_fields = before_formulas
-            .into_iter()
-            .chain(self.calculation.graph.formulas().cloned())
-            .collect::<BTreeSet<_>>();
-        drop(part809);
         let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
             "select_changed_formula_outcomes",
         );
-        let changed_calculation_projections = if before_failed == after_failed {
-            formula_fields
-                .intersection(&impact.dirty)
+        let changed_calculation_projections: Vec<_> = if before_failed == after_failed {
+            impact
+                .dirty
+                .iter()
+                .filter(|field| {
+                    before_root_formulas.contains(*field)
+                        || self.calculation.graph.is_formula(field)
+                })
                 .filter(|field| {
                     before_projections.get(*field) != Some(&self.node_projection(field))
                 })
                 .cloned()
                 .collect()
         } else {
-            formula_fields.into_iter().collect()
+            before_root_formulas
+                .into_iter()
+                .chain(self.calculation.graph.formulas().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
         };
         drop(part809);
+        #[cfg(test)]
+        self.assert_changed_calculation_projections(
+            before_formulas,
+            before_failed,
+            &before_projections,
+            &impact.dirty,
+            &changed_calculation_projections,
+        );
         IncrementalCalculationTransition {
             work,
             affected_calculations: impact
@@ -1340,6 +1353,36 @@ impl RetainedCalculationState {
                 .collect(),
             changed_calculation_projections,
         }
+    }
+
+    #[cfg(test)]
+    fn assert_changed_calculation_projections(
+        &self,
+        before_formulas: BTreeSet<FieldRef>,
+        before_failed: bool,
+        before_projections: &BTreeMap<FieldRef, RetainedNodeProjection>,
+        dirty: &BTreeSet<FieldRef>,
+        actual: &[FieldRef],
+    ) {
+        let formula_fields = before_formulas
+            .into_iter()
+            .chain(self.calculation.graph.formulas().cloned())
+            .collect::<BTreeSet<_>>();
+        let expected: Vec<_> = if before_failed == self.is_failed() {
+            formula_fields
+                .intersection(dirty)
+                .filter(|field| {
+                    before_projections.get(*field) != Some(&self.node_projection(field))
+                })
+                .cloned()
+                .collect()
+        } else {
+            formula_fields.into_iter().collect()
+        };
+        assert_eq!(
+            actual, expected,
+            "dirty formula reporting matches the full set"
+        );
     }
 
     /// A column total's dependencies are the schema's current rows, so a
@@ -2246,6 +2289,10 @@ impl DependencyGraph {
 
     fn formulas(&self) -> impl Iterator<Item = &FieldRef> {
         self.reference_uses.keys()
+    }
+
+    fn is_formula(&self, field: &FieldRef) -> bool {
+        self.reference_uses.contains_key(field)
     }
 
     fn tracked_columns(&self) -> impl Iterator<Item = &ColumnRef> {
