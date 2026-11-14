@@ -48,3 +48,5 @@ job-run --id 809-measure -- remote-test -- 'cargo test --release --manifest-path
 
 The full remote command-step log contains all tables. Do not merge this branch,
 change production behavior, or recommend fixes from this measurement.
+
+Completed measurements and all phase tables: [809-measure-results.md](809-measure-results.md).
