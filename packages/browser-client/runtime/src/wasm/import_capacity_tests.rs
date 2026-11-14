@@ -1499,3 +1499,158 @@ fn working_size_serialized_source_refusal_is_typed() {
         "serialized_source_bytes",
     );
 }
+
+// Keep the sparse 30-column shape used by assert_working_success. Cached
+// totals are correct, so its existing export proof remains applicable.
+fn column_totals_xlsx(rows: usize, formula_column: bool, mixed: bool) -> Vec<u8> {
+    use std::fmt::Write;
+
+    let last = rows + 1;
+    let total = rows * (rows + 1) / 2;
+    let mut xml = String::from(
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\">",
+    );
+    for col in 0..30 {
+        write!(
+            xml,
+            "<c r=\"{}1\" t=\"inlineStr\"><is><t>C{col}</t></is></c>",
+            column(col)
+        )
+        .unwrap();
+    }
+    xml.push_str("</row>");
+    for row in 2..=last {
+        let value = row - 1;
+        write!(xml, "<row r=\"{row}\">").unwrap();
+        if mixed && row == 2 {
+            write!(
+                xml,
+                "<c r=\"A{row}\" t=\"inlineStr\"><is><t>mixed</t></is></c>"
+            )
+            .unwrap();
+        } else {
+            write!(xml, "<c r=\"A{row}\"><v>{value}</v></c>").unwrap();
+        }
+        if formula_column {
+            write!(xml, "<c r=\"B{row}\"><v>2</v></c><c r=\"C{row}\"><f>A{row}*2</f><v>{}</v></c><c r=\"D{row}\"><f>SUM($C$2:$C${last})</f><v>{}</v></c>", value * 2, total * 2).unwrap();
+        } else {
+            let cached = if mixed { 123 } else { total };
+            write!(xml, "<c r=\"B{row}\"><f>SUM($A$2:$A${last})</f><v>{cached}</v></c><c r=\"C{row}\"><v>3</v></c><c r=\"D{row}\"><f>2*3</f><v>6</v></c>").unwrap();
+        }
+        xml.push_str("</row>");
+    }
+    xml.push_str("</sheetData></worksheet>");
+    let template = source_xlsx(1, 1, 1, false, false);
+    let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            bytes.clear();
+            bytes.extend_from_slice(xml.as_bytes());
+        }
+        output.start_file(name, options).unwrap();
+        std::io::Write::write_all(&mut output, &bytes).unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+fn assert_imported_column_total(
+    source: &[u8],
+    request: &[u8],
+    column: usize,
+    expected: f64,
+    formula: bool,
+) -> Value {
+    let mut host = DesignerHost::new();
+    let imported = host.spreadsheet(request, source);
+    let response: Value = serde_json::from_slice(&imported.reply).unwrap();
+    assert_eq!(response["status"], "ok", "{response}");
+    let payload = &response["response"]["payload"];
+    let window = &payload["opened"]["window"];
+    let count = window["total_rows"].as_u64().unwrap();
+    for start in [0, count - 1] {
+        let query = serde_json::to_vec(&object(vec![
+            ("type", "query_table_window".into()),
+            ("expected_revision", window["revision"].clone()),
+            ("collection", window["collection"]["id"].clone()),
+            ("start", start.into()),
+            ("count", 1.into()),
+        ]))
+        .unwrap();
+        let reply: Value = serde_json::from_slice(&host.request(&query)).unwrap();
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let field = &reply["response"]["payload"]["rows"][0]["fields"][column];
+        assert_eq!(!field["formula"].is_null(), formula, "{field}");
+        let value = if formula {
+            &field["calculated"]["value"]
+        } else {
+            &field["stored"]["value"]
+        };
+        assert_eq!(value.as_f64().unwrap(), expected, "{field}");
+    }
+    payload.clone()
+}
+
+#[test]
+fn working_size_repeated_whole_column_totals_import_ten_thousand_rows() {
+    let source = column_totals_xlsx(10_000, false, false);
+    assert_working_success(&source, "xlsx");
+    let payload =
+        assert_imported_column_total(&source, &working_request("xlsx", 30), 1, 50_005_000.0, true);
+    assert_eq!(payload["opened"]["window"]["total_rows"], 10_000);
+}
+
+#[test]
+fn working_size_totals_over_formula_column_bind_every_row_first() {
+    let source = column_totals_xlsx(10_000, true, false);
+    let payload = assert_imported_column_total(
+        &source,
+        &working_request("xlsx", 30),
+        3,
+        100_010_000.0,
+        true,
+    );
+    assert_eq!(payload["opened"]["window"]["total_rows"], 10_000);
+}
+
+#[test]
+fn working_size_mixed_column_sum_keeps_cached_value_with_existing_finding() {
+    let source = column_totals_xlsx(10, false, true);
+    let workbook =
+        crate::interop_adapter::import_xlsx_profile(&source, &ImportOptions::default(), true)
+            .unwrap();
+    assert!(
+        workbook.sheets[0]
+            .rows
+            .iter()
+            .all(|row| row[1].formula.is_none())
+    );
+    let findings = workbook
+        .ledger
+        .iter()
+        .filter(|finding| finding.code == "unsupported_formula_kept_value")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 10);
+    assert!(findings.iter().all(|finding| !finding.blocking));
+    let mut request: Value = serde_json::from_slice(&working_request("xlsx", 30)).unwrap();
+    request["selection"]["column_types"][0][0] = "text".into();
+    let payload = assert_imported_column_total(
+        &source,
+        &serde_json::to_vec(&request).unwrap(),
+        1,
+        123.0,
+        false,
+    );
+    assert!(
+        payload["ledger"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "unsupported_formula_kept_value")
+    );
+}
