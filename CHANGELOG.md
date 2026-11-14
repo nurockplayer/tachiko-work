@@ -137,6 +137,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Whole-column formula imports share column dependencies and numeric admission scans, keeping repeated totals within working-size capacity (#678).
+
 - Import fidelity ledgers retain the first 100 findings per code and sheet with exact summaries, keeping working-size imports within the reply budget (#678).
 - Fidelity ledger caps keep worksheets whose names contain `!` apart, so each such sheet keeps its own first 100 findings and exact summary (#828).
 - XLSX row capacity counts data after skipping title/header offsets and an

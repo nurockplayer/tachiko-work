@@ -8,7 +8,8 @@ use tachiko_workspace_engine::{Document, FieldRef, FieldType};
 
 use crate::interop_adapter::SummaryAggregate;
 use crate::interop_document::{
-    A1Geometry, excel_extremum, parse_a1_address, row_is_absolute, translate_a1_with,
+    A1Geometry, FormulaReferences, excel_extremum, parse_a1_address, row_is_absolute,
+    translate_a1_with,
 };
 use crate::{
     DesignerError, DesignerRuntime, FormulaUpdateRequest, constraint_failure, designer_lifecycle,
@@ -249,7 +250,7 @@ impl A1Geometry for GridGeometry<'_> {
         sheet: usize,
         address: &str,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
         let (column, row) = grid_address(address)?;
         let grid = &self.sheets[sheet].1;
@@ -274,7 +275,9 @@ impl A1Geometry for GridGeometry<'_> {
             self.notes
                 .insert(A1TranslationNote::RelativeCopySemanticsChanged);
         }
-        references.insert(FieldRef::new(entity_id.clone(), field_id.clone()));
+        references
+            .cells
+            .insert(FieldRef::new(entity_id.clone(), field_id.clone()));
         Ok(format!(
             "[{}.{}]",
             if same_row { "" } else { entity.key.as_str() },
@@ -288,14 +291,16 @@ impl A1Geometry for GridGeometry<'_> {
         current: usize,
         aggregate: SummaryAggregate,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
         let column = self.whole_column(argument, current, document)?;
         if column.field_type != FieldType::Number {
             return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
         for row in column.rows {
-            references.insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
+            references
+                .cells
+                .insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
         }
         let suffix = aggregate.suffix();
         let rendered = format!("[{}.{}:{suffix}]", column.schema_key, column.field_key);
@@ -309,7 +314,7 @@ impl A1Geometry for GridGeometry<'_> {
         current: usize,
         numeric: bool,
         document: &Document,
-        references: &mut BTreeSet<FieldRef>,
+        references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
         let column = self.whole_column(argument, current, document)?;
         if numeric && column.field_type != FieldType::Number {
@@ -325,7 +330,9 @@ impl A1Geometry for GridGeometry<'_> {
             return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
         for row in column.rows {
-            references.insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
+            references
+                .cells
+                .insert(FieldRef::new(row.clone(), column.field_id.to_owned()));
         }
         let rendered = format!("[{}.{}:column]", column.schema_key, column.field_key);
         self.conditional_span = Some(span);
