@@ -2544,6 +2544,143 @@ fn publish_prepared_edit(
     );
 }
 
+#[test]
+fn first_resident_v1_scalar_edit_reuses_preflight_and_publishes_the_same_diff() {
+    let document = formula_document();
+    evaluation_counters::reset();
+    let mut session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    assert_eq!(evaluation_counters::preflight_counts(), (1, 1));
+    let body = set_g_number(2.0);
+    let candidate = chain_candidate(&document, &body, "first scalar edit");
+    let revision = session.revision().clone();
+    let mut plain = formula_lifecycle();
+    let expected = propose_plain(&mut plain, &document, revision.as_str(), body.clone()).unwrap();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate.clone());
+    assert!(prepared.base_preflight_succeeded());
+    assert!(prepared.candidate_preflight_succeeded());
+    let mut reused = formula_lifecycle();
+    let actual = propose_with(&mut reused, &document, revision.as_str(), body, &prepared).unwrap();
+    assert_eq!(evaluation_counters::preflight_counts(), (0, 0));
+    assert_eq!(actual, expected);
+    assert_same_evaluation(&plain, &reused);
+    let installation = prepared.into_installable();
+    assert_eq!(
+        publish_chain_step(&mut session, &candidate, Some(installation)),
+        Ok(())
+    );
+    assert_eq!(
+        session.document(),
+        &plain.evaluation_memo.unwrap().evaluated.document
+    );
+}
+
+#[test]
+fn first_resident_v2_unset_batch_reuses_the_open_preflight() {
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .required = false;
+    let mut second = document.entities["e1"].clone();
+    second.id = "e2".into();
+    second.key = "row2".into();
+    document.entities.insert(second.id.clone(), second);
+    let mut session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::UnsetField {
+            field: FieldRef::new("e1", "f"),
+        },
+        SemanticCommand::UnsetField {
+            field: FieldRef::new("e2", "f"),
+        },
+    ])
+    .unwrap();
+    let candidate = chain_candidate(&document, &body, "first clear");
+    let revision = session.revision().clone();
+    let mut plain = v2_lifecycle();
+    let expected = propose_plain(&mut plain, &document, revision.as_str(), body.clone()).unwrap();
+
+    evaluation_counters::reset();
+    let prepared = session.prepare_evaluation(candidate.clone());
+    assert!(prepared.base_preflight_succeeded());
+    let mut reused = v2_lifecycle();
+    let actual = propose_with(&mut reused, &document, revision.as_str(), body, &prepared).unwrap();
+    assert_eq!(evaluation_counters::preflight_counts(), (0, 0));
+    assert_eq!(actual, expected);
+    assert_same_evaluation(&plain, &reused);
+    let installation = prepared.into_installable();
+    assert_eq!(
+        publish_chain_step(&mut session, &candidate, Some(installation)),
+        Ok(())
+    );
+    assert_eq!(session.document(), &candidate);
+}
+
+#[test]
+fn a_prepared_candidate_with_a_projection_failure_keeps_the_exact_error() {
+    let candidate = unprojectable_document();
+    let mut document = candidate.clone();
+    document
+        .entities
+        .get_mut("e1")
+        .unwrap()
+        .fields
+        .insert("h".into(), Value::Formula(reference_g()));
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let prepared = session.prepare_evaluation(candidate.clone());
+    assert!(prepared.base_preflight_succeeded());
+    assert!(!prepared.candidate_preflight_succeeded());
+    let expected =
+        crate::finalize_edit_with_validation(&document, candidate.clone(), None).unwrap_err();
+    let actual =
+        crate::finalize_edit_with_validation(&document, candidate, Some(&prepared)).unwrap_err();
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    let WorkspaceError::FormulaProjection { field, .. } = actual else {
+        panic!("expected formula projection failure");
+    };
+    assert_eq!(field, FieldRef::new("e1", "h"));
+}
+
+#[test]
+fn a_fresh_resident_with_failing_preflight_keeps_the_first_scalar_edit_error() {
+    for v2 in [false, true] {
+        let document = unprojectable_document();
+        let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+        let body = set_f_text("new");
+        let candidate = chain_candidate(&document, &body, "failing initial document");
+        let prepared = session.prepare_evaluation(candidate);
+        assert!(!prepared.base_preflight_succeeded());
+        assert!(!prepared.candidate_preflight_succeeded());
+        let revision = session.revision().as_str();
+        let mut plain = if v2 {
+            v2_lifecycle()
+        } else {
+            formula_lifecycle()
+        };
+        let expected = propose_plain(&mut plain, &document, revision, body.clone()).unwrap_err();
+        let mut reused = if v2 {
+            v2_lifecycle()
+        } else {
+            formula_lifecycle()
+        };
+        let actual = propose_with(&mut reused, &document, revision, body, &prepared).unwrap_err();
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        let PatchLifecycleError::CommandRejected { source } = actual else {
+            panic!("expected command rejection");
+        };
+        let WorkspaceError::FormulaProjection { field, .. } = source.as_ref() else {
+            panic!("expected formula projection failure");
+        };
+        assert_eq!(field, &FieldRef::new("e1", "h"));
+    }
+}
+
 /// The preflight counter: a value edit on a known-good base runs none, and a
 /// formula edit projects only the formula that changed.
 #[test]
