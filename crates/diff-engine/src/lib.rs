@@ -152,6 +152,12 @@ impl SemanticDiff {
         &self.changes
     }
 
+    /// Consume this diff, returning its ordered changes without copying them.
+    #[must_use]
+    pub fn into_changes(self) -> Vec<SemanticChange> {
+        self.changes
+    }
+
     #[must_use]
     pub fn render_text(&self) -> String {
         if self.changes.is_empty() {

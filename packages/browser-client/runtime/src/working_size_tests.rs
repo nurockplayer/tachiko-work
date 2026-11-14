@@ -4735,3 +4735,272 @@ fn a_value_edit_that_would_cross_the_formula_node_item_bound_is_refused_earlier(
     assert_eq!(revision(&runtime), base_revision);
     assert_eq!(&runtime.retained_working_totals(), &base);
 }
+
+// ---- #809 set C: clear deltas and unchanged formula sources ----
+
+fn clear_source_grid() -> Document {
+    let mut document = number_grid(8, 3);
+    document
+        .schemas
+        .get_mut(&SchemaId::from("grid"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("c0"))
+        .unwrap()
+        .field_type = FieldType::Text;
+    for entity in document.entities.values_mut() {
+        entity
+            .fields
+            .insert(FieldId::from("c0"), Value::Text("clear \"é\"\n".to_owned()));
+        entity.fields.insert(
+            FieldId::from("c2"),
+            Value::Formula(Expression::SameRowReference(FieldId::from("c1"))),
+        );
+    }
+    document
+        .entities
+        .get_mut(&entity_id(1))
+        .unwrap()
+        .fields
+        .remove(&FieldId::from("c0"));
+    document
+}
+
+fn assert_clear_totals_and_sources(runtime: &DesignerRuntime) {
+    assert_totals_match(runtime);
+    let measured = DesignerRuntime::measure_working_admission(runtime.session.document()).unwrap();
+    let retained = runtime.working_admission.as_ref().unwrap();
+    assert_eq!(retained.saved_bytes, measured.saved_bytes);
+    assert_eq!(retained.strings, measured.strings);
+    assert_eq!(
+        runtime.formula_sources,
+        runtime.session.formula_source_projections().unwrap()
+    );
+}
+
+#[test]
+fn working_size_stored_column_clear_matches_full_walk() {
+    let document = clear_source_grid();
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(document.clone(), OCCURRENCE).unwrap();
+    let mut full = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    assert_eq!(runtime.profile, SessionProfile::WorkingSize);
+    let sources = runtime.formula_sources.clone();
+    let current = revision(&runtime);
+    let edits = (0..8)
+        .map(|row| CellEdit {
+            target: target(&format!("r{row:05}"), "c0"),
+            input: ScalarEditInput::Clear,
+        })
+        .collect::<Vec<_>>();
+    full.working_admission = None; // Exercise the existing full-walk branch.
+    let delta_before = super::admission_counters::value_delta_admissions();
+    let full_before = super::admission_counters::full_walk_admissions();
+    let publication = runtime.edit_cells(&current, &edits).unwrap();
+    assert_eq!(
+        super::admission_counters::value_delta_admissions(),
+        delta_before + 1
+    );
+    assert_eq!(
+        super::admission_counters::full_walk_admissions(),
+        full_before
+    );
+    assert_eq!(publication, full.edit_cells(&current, &edits).unwrap());
+    assert_ne!(publication.resulting_revision, current);
+    assert_eq!(publication.resulting_revision, revision(&runtime));
+    assert_eq!(runtime.session.document(), full.session.document());
+    assert_eq!(
+        runtime.retained_working_totals(),
+        full.retained_working_totals()
+    );
+    assert_eq!(runtime.formula_sources, sources);
+    assert_eq!(runtime.collections, full.collections);
+    assert_eq!(
+        runtime.build_table_projection("grid").unwrap(),
+        full.build_table_projection("grid").unwrap()
+    );
+    assert_clear_totals_and_sources(&runtime);
+    let absent = runtime
+        .working_value_edit_totals(
+            &[SemanticCommand::UnsetField {
+                field: FieldRef::new("r00001", "c0"),
+            }],
+            runtime.session.document(),
+        )
+        .unwrap();
+    assert_eq!(absent.capacity, runtime.capacity_usage);
+    assert_eq!(
+        absent.saved_bytes,
+        runtime.working_admission.as_ref().unwrap().saved_bytes
+    );
+    assert_eq!(
+        absent.strings,
+        runtime.working_admission.as_ref().unwrap().strings
+    );
+    for row in 0..8 {
+        assert!(
+            !runtime.session.document().entities[&entity_id(row)]
+                .fields
+                .contains_key(&FieldId::from("c0"))
+        );
+    }
+}
+
+#[test]
+fn formula_cell_clear_reprojects_sources() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(clear_source_grid(), OCCURRENCE).unwrap();
+    let field = FieldRef::new("r00000", "c2");
+    assert!(runtime.formula_sources.contains_key(&field));
+    runtime
+        .publish_commands(
+            &revision(&runtime),
+            vec![SemanticCommand::UnsetField {
+                field: field.clone(),
+            }],
+        )
+        .unwrap();
+    assert!(!runtime.formula_sources.contains_key(&field));
+    assert_clear_totals_and_sources(&runtime);
+}
+
+#[test]
+fn formula_replacements_reproject_sources() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(number_grid(1, 2), OCCURRENCE).unwrap();
+    let field = FieldRef::new("r00000", "c1");
+    let formula = Value::Formula(Expression::SameRowReference(FieldId::from("c0")));
+    runtime
+        .publish_commands(
+            &revision(&runtime),
+            vec![SemanticCommand::set_field_value(field.clone(), formula)],
+        )
+        .unwrap();
+    assert!(runtime.formula_sources.contains_key(&field));
+    assert_clear_totals_and_sources(&runtime);
+
+    // Main refuses a scalar over a formula; rejection must retain its source.
+    let current = revision(&runtime);
+    let document = runtime.session.document().clone();
+    let totals = runtime.retained_working_totals();
+    let sources = runtime.formula_sources.clone();
+    let error = runtime
+        .publish_commands(
+            &current,
+            vec![SemanticCommand::set_field_value(
+                field.clone(),
+                Value::Number(Number::new(3.0).unwrap()),
+            )],
+        )
+        .unwrap_err();
+    let DesignerError::Lifecycle(super::PatchLifecycleError::CommandRejected { source }) = error
+    else {
+        panic!("expected the existing formula-edit refusal, got {error:?}");
+    };
+    assert!(
+        matches!(*source, tachiko_workspace_engine::WorkspaceError::FormulaEdit { field: rejected } if rejected == field)
+    );
+    assert_eq!(revision(&runtime), current);
+    assert_eq!(runtime.session.document(), &document);
+    assert_eq!(runtime.retained_working_totals(), totals);
+    assert_eq!(runtime.formula_sources, sources);
+    assert_clear_totals_and_sources(&runtime);
+}
+
+#[test]
+fn clear_with_structural_command_matches_full_walk() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(clear_source_grid(), OCCURRENCE).unwrap();
+    let commands = vec![
+        SemanticCommand::UnsetField {
+            field: FieldRef::new("r00000", "c0"),
+        },
+        SemanticCommand::RenameSchemaField {
+            schema: SchemaId::from("grid"),
+            field: FieldId::from("c1"),
+            key: FieldKey::from("renamed"),
+        },
+    ];
+    let sources = runtime.formula_sources.clone();
+    let mut candidate = with_value(
+        runtime.session.document(),
+        "r00000",
+        &FieldId::from("c0"),
+        None,
+    );
+    candidate
+        .schemas
+        .get_mut(&SchemaId::from("grid"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("c1"))
+        .unwrap()
+        .key = FieldKey::from("renamed");
+    assert!(
+        runtime
+            .working_value_edit_totals(&commands, &candidate)
+            .is_none()
+    );
+    let delta_before = super::admission_counters::value_delta_admissions();
+    let full_before = super::admission_counters::full_walk_admissions();
+    runtime
+        .publish_commands(&revision(&runtime), commands)
+        .unwrap();
+    assert_eq!(
+        super::admission_counters::value_delta_admissions(),
+        delta_before
+    );
+    assert_eq!(
+        super::admission_counters::full_walk_admissions(),
+        full_before + 1
+    );
+    assert_eq!(runtime.session.document(), &candidate);
+    assert_ne!(runtime.formula_sources, sources);
+    assert_clear_totals_and_sources(&runtime);
+}
+
+#[test]
+fn clear_batch_limits_and_refusal_match_full_walk() {
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(clear_source_grid(), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    let edits = vec![
+        CellEdit {
+            target: target("r00000", "c0"),
+            input: ScalarEditInput::Clear
+        };
+        runtime.max_batch_targets() + 1
+    ];
+    let error = runtime.edit_cells(&current, &edits).unwrap_err();
+    assert_tracker_message(&error, "the edit range is empty or too large");
+    assert_eq!(revision(&runtime), current);
+    let base = runtime.retained_working_totals();
+    let sources = runtime.formula_sources.clone();
+    let text = Value::Text("x".repeat(STORED_TEXT_ITEM_MAX + 1));
+    let mut candidate = with_value(
+        runtime.session.document(),
+        "r00000",
+        &FieldId::from("c0"),
+        None,
+    );
+    candidate
+        .entities
+        .get_mut(&entity_id(1))
+        .unwrap()
+        .fields
+        .insert(FieldId::from("c0"), text.clone());
+    let error = runtime
+        .publish_commands(
+            &current,
+            vec![
+                SemanticCommand::UnsetField {
+                    field: FieldRef::new("r00000", "c0"),
+                },
+                SemanticCommand::set_field_value(FieldRef::new("r00001", "c0"), text),
+            ],
+        )
+        .unwrap_err();
+    assert_same_refusal(&runtime, &base, &current, &candidate, &error);
+    assert_eq!(runtime.formula_sources, sources);
+    assert_clear_totals_and_sources(&runtime);
+}

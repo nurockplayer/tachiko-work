@@ -1008,6 +1008,7 @@ fn import_workbook_candidate(
             &mut projection.ledger,
             occurrence_id,
         )?;
+        super::interop_adapter::cap_ledger(&mut projection.ledger);
         drop(runtime.export_workbook(runtime.current_revision(), &projection.metadata)?);
         projection.opened = OpenedProjection {
             bootstrap: runtime.bootstrap_projection(),
@@ -1092,6 +1093,7 @@ fn import_workbook_working_size_candidate(
     // The same representation proof as an ordinary import, without promotion.
     drop(runtime.export_workbook(runtime.current_revision(), &metadata)?);
     ledger.push(stable_reference_binding());
+    super::interop_adapter::cap_ledger(&mut ledger);
     // The reply also carries the metadata and ledger, so the window gets what
     // is left of the one reply budget.
     let overhead =
@@ -1278,6 +1280,7 @@ fn finish_import(
     let bootstrap = runtime.bootstrap_projection();
     let table = runtime.query_table(&bootstrap.default_collection)?;
     ledger.push(stable_reference_binding());
+    super::interop_adapter::cap_ledger(&mut ledger);
     let mut projection = ImportedProjection {
         opened: OpenedProjection { bootstrap, table },
         metadata,
@@ -1847,7 +1850,21 @@ fn build_import_sheet(
                     .map(|value| convert_value(value, &kind))
                     .transpose()?;
                 if converted != value {
-                    ledger.push(FidelityFinding { category: FidelityCategory::Converted, code: "explicit_column_type".into(), location: format!("{}:{}:{}", source.name, row_index + 1, column + 1), message: "Source scalar converted using the explicitly selected column type; original source remains available.".into(), blocking: false });
+                    ledger.push(FidelityFinding {
+                        category: FidelityCategory::Converted,
+                        code: "explicit_column_type".into(),
+                        location: format!(
+                            "{}!{}{}",
+                            source.name,
+                            super::interop_adapter::column_name(column),
+                            source.layout.rows_above_header as usize
+                                + usize::from(source.has_header)
+                                + row_index
+                                + 1
+                        ),
+                        message: "Source scalar converted using the explicitly selected column type; original source remains available.".into(),
+                        blocking: false,
+                    });
                 }
                 converted
             };

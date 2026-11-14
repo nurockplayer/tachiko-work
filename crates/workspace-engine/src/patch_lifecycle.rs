@@ -33,7 +33,7 @@ use super::{
     EntityKey, Expression, FieldDefinition, FieldEditPlanning, FieldId, FieldKey, FieldRef,
     FieldType, Number, PreparedEvaluation, PreparedVerdict, SchemaId, SemanticChange,
     ValidationReport, Value, WorkspaceError, apply_field_value_candidate_with_planning,
-    finalize_edit_with_validation, formula_inverse_restore_candidate_in_place,
+    finalize_edit_changes_with_validation, formula_inverse_restore_candidate_in_place,
     formula_restore_candidate_in_place, formula_update_candidate_in_place,
     resident_session::DocumentWitness, unset_field_candidate_in_place,
 };
@@ -4494,8 +4494,8 @@ impl PatchLifecycle {
                 },
             });
         }
-        let (edit, validation_report) =
-            match finalize_edit_with_validation(base, candidate, prepared) {
+        let (document, semantic_changes, validation_report) =
+            match finalize_edit_changes_with_validation(base, candidate, prepared) {
                 Ok(result) => result,
                 Err(WorkspaceError::InvalidDocument { report, .. }) => {
                     return Err(PatchLifecycleError::ValidationFailed { report });
@@ -4506,12 +4506,11 @@ impl PatchLifecycle {
                     });
                 }
             };
-        let semantic_changes = edit.diff.changes().to_vec();
         let formula_impacts = formula_impacts(&semantic_changes);
         let disclosure_requirements =
-            self.derive_disclosures(base, &edit.document, body, &semantic_changes)?;
+            self.derive_disclosures(base, &document, body, &semantic_changes)?;
         Ok(EvaluatedPatch {
-            document: edit.document,
+            document,
             evidence: PatchEvidence::V1(semantic_changes),
             formula_impacts,
             validation_report,
