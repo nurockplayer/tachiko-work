@@ -113,6 +113,8 @@ impl ResidentWorkspaceSession {
     /// Start a resident occurrence at its initial internal revision.
     #[must_use]
     pub fn new(document_scope: DocumentScopeId, document: Document) -> Self {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_session_new");
         let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
         let preflight_succeeded = super::preflight_formula_projections(&document).is_ok();
         Self {
@@ -377,9 +379,14 @@ impl ResidentWorkspaceSession {
         members: &[EntityId],
         fields: &[FieldId],
     ) -> Result<ResidentQueryResult<Vec<ResidentColumnTotal>>, WorkspaceError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_column_totals");
         // `(sum, complete)`, folded like the runtime footer: `complete` turns
         // off on the first cell that is not a usable Number.
         let mut fold = vec![(0.0_f64, true); fields.len()];
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "fold_all_members_numeric_fields",
+        );
         for id in members {
             let entity = self
                 .document
@@ -408,6 +415,7 @@ impl ResidentWorkspaceSession {
                 }
             }
         }
+        drop(part809);
         Ok(ResidentQueryResult {
             document_scope: self.document_scope.clone(),
             revision: self.revision.clone(),
@@ -447,8 +455,11 @@ impl ResidentWorkspaceSession {
     /// them to publication as a [`PreparedInstallation`].
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("prepare_evaluation");
         let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
+        let phase809 = instrumentation::PhaseTimer::new("projection_changes");
         let mut changes = projection_changes(&self.document, &candidate);
         // The prepared path evaluates the candidate exactly once, as it did
         // through `semantic_validation`; the update is that one evaluation. It
@@ -456,7 +467,10 @@ impl ResidentWorkspaceSession {
         // change.
         #[cfg(test)]
         super::evaluation_counters::record_candidate_calculation();
+        drop(phase809);
+        let phase809 = instrumentation::PhaseTimer::new("retained_clone");
         let mut retained = self.retained.clone();
+        drop(phase809);
         let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
         let transition = retained.update(&self.document, &candidate, &changes);
         // Publication folds the diagnostics projection changes into the same
@@ -468,12 +482,14 @@ impl ResidentWorkspaceSession {
             &retained.diagnostics_by_field,
             &mut changes,
         );
+        let phase809 = instrumentation::PhaseTimer::new("formula_preflight");
         let candidate_preflight_succeeded = candidate_preflight_succeeded(
             &self.document,
             &candidate,
             &changes,
             self.preflight_succeeded,
         );
+        drop(phase809);
         PreparedEvaluation::new(
             PreparedInstallation {
                 base_occurrence: self.occurrence.0,
@@ -547,7 +563,7 @@ fn candidate_preflight_succeeded(
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct ResidentDerivedState {
     calculation_state: RetainedCalculationState,
     validation_report: ValidationReport,
@@ -555,8 +571,34 @@ pub(crate) struct ResidentDerivedState {
     diagnostics_by_field: BTreeMap<FieldRef, Vec<Diagnostic>>,
 }
 
+impl Clone for ResidentDerivedState {
+    fn clone(&self) -> Self {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("clone_resident_state");
+        Self {
+            calculation_state: tachiko_semantic_core::instrumentation::timed(
+                "clone_calculation_state",
+                || self.calculation_state.clone(),
+            ),
+            validation_report: tachiko_semantic_core::instrumentation::timed(
+                "clone_validation_report",
+                || self.validation_report.clone(),
+            ),
+            address_index: tachiko_semantic_core::instrumentation::timed(
+                "clone_address_index",
+                || self.address_index.clone(),
+            ),
+            diagnostics_by_field: tachiko_semantic_core::instrumentation::timed(
+                "clone_diagnostics_by_field",
+                || self.diagnostics_by_field.clone(),
+            ),
+        }
+    }
+}
+
 impl ResidentDerivedState {
     fn rebuild(document: &Document) -> (Self, IncrementalCalculationWork) {
+        let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_rebuild");
         let (calculation_state, calculation_work) = RetainedCalculationState::rebuild(document);
         (
             Self::from_calculation(document, calculation_state, AddressIndex::build(document)),
@@ -570,6 +612,7 @@ impl ResidentDerivedState {
         document: &Document,
         changes: &ProjectionChanges,
     ) -> DerivedStateTransition {
+        let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("retained_update");
         let previous_address_index_valid = self.address_index.is_ok();
         if changes.address_index_changed {
             self.address_index = AddressIndex::build(document);
@@ -579,6 +622,7 @@ impl ResidentDerivedState {
         // state equal to a full rebuild by taking that branch. It isn't an
         // address-index fallback, so it isn't counted as one.
         let incremental_safe = address_index_safe && !changes.unaddressable_calculation_change;
+        let phase809 = instrumentation::PhaseTimer::new("calculation_update");
         let calculation = if incremental_safe {
             self.calculation_state
                 .update(document, &changes.calculation_roots)
@@ -602,6 +646,7 @@ impl ResidentDerivedState {
                 changed_calculation_projections: changed_calculation_outcomes(&before, &after),
             }
         };
+        drop(phase809);
         self.validation_report = self.validation_report_for_update(
             before,
             document,
@@ -631,6 +676,8 @@ impl ResidentDerivedState {
         incremental_safe: bool,
         calculation: &IncrementalCalculationTransition,
     ) -> ValidationReport {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("validation_report");
         let local = locally_validated_report(
             self.validation_report.is_valid(),
             before,
@@ -656,6 +703,8 @@ impl ResidentDerivedState {
         calculation_state: RetainedCalculationState,
         address_index: Result<AddressIndex, AddressIndexError>,
     ) -> Self {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("initial_validation");
         let validation_report =
             validation_report_for_retained_calculation(document, &calculation_state);
         let diagnostics_by_field = index_field_diagnostics(&validation_report);
@@ -1110,6 +1159,8 @@ where
         (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("publish_if_current");
         // Any installation belongs to this one attempt: it is used or dropped,
         // and never carried into a later compare-and-publish call.
         let prepared = self.prepared.take();
@@ -1118,7 +1169,10 @@ where
             return Err(SemanticPublicationError::DocumentScopeMismatch);
         }
         let authorization =
-            authorize(self.time.now()).ok_or(SemanticPublicationError::AuthorizationDenied)?;
+            tachiko_semantic_core::instrumentation::timed("authorization_at_publish", || {
+                authorize(self.time.now())
+            })
+            .ok_or(SemanticPublicationError::AuthorizationDenied)?;
         if expected_revision != &self.session.revision {
             return Err(SemanticPublicationError::Stale);
         }
@@ -1126,7 +1180,9 @@ where
             return Err(SemanticPublicationError::Conflict);
         }
         instrumentation::record_publication_document_comparison();
-        if candidate == &self.session.document {
+        if tachiko_semantic_core::instrumentation::timed("candidate_equals_current", || {
+            candidate == &self.session.document
+        }) {
             return Err(SemanticPublicationError::NoChange);
         }
         let next_generation = self
@@ -1144,7 +1200,10 @@ where
             Some(installation)
                 if installation.base_occurrence == self.session.occurrence.0
                     && installation.base_revision == *expected_revision
-                    && installation.candidate == *candidate =>
+                    && tachiko_semantic_core::instrumentation::timed(
+                        "installation_matches_candidate",
+                        || installation.candidate == *candidate,
+                    ) =>
             {
                 let (invalidation, transition_work) = invalidation_from_transition(
                     installation.changes,
@@ -1153,8 +1212,14 @@ where
                     expected_revision.clone(),
                     resulting_revision.clone(),
                 );
-                self.session.retained = installation.retained;
-                self.session.document = installation.candidate;
+                tachiko_semantic_core::instrumentation::timed(
+                    "replace_and_drop_old_retained",
+                    || self.session.retained = installation.retained,
+                );
+                tachiko_semantic_core::instrumentation::timed(
+                    "replace_and_drop_old_document",
+                    || self.session.document = installation.candidate,
+                );
                 self.session.preflight_succeeded = installation.candidate_preflight_succeeded;
                 #[cfg(test)]
                 installation_counters::record_prepared_installation();
@@ -1310,14 +1375,22 @@ fn invalidation_from_transition(
 /// Every projection change between two documents, collected the same way for
 /// publication and for evaluation preparation.
 fn projection_changes(before: &Document, after: &Document) -> ProjectionChanges {
+    let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("union_entity_ids");
     let entity_ids = before
         .entities
         .keys()
         .chain(after.entities.keys())
         .collect::<BTreeSet<_>>();
+    drop(part809);
     let mut changes = ProjectionChanges::default();
-    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
-    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    tachiko_semantic_core::instrumentation::timed("scan_entity_projection_changes", || {
+        collect_entity_projection_changes(before, after, &entity_ids, &mut changes)
+    });
+
+    tachiko_semantic_core::instrumentation::timed("scan_schema_projection_changes", || {
+        collect_schema_projection_changes(before, after, &entity_ids, &mut changes)
+    });
+
     changes
 }
 

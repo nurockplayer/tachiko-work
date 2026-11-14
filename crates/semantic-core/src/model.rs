@@ -407,13 +407,21 @@ impl Document {
 // `capacity-instrumentation` feature is enabled.
 impl Clone for Document {
     fn clone(&self) -> Self {
+        let _phase809b = crate::instrumentation::PhaseTimer::new("document_clone");
         crate::instrumentation::record_document_clone();
         Self {
-            id: self.id.clone(),
-            title: self.title.clone(),
-            schemas: self.schemas.clone(),
-            entities: self.entities.clone(),
-            keyed_grouped_sum_definitions: self.keyed_grouped_sum_definitions.clone(),
+            id: crate::instrumentation::timed("clone_document_id", || self.id.clone()),
+            title: crate::instrumentation::timed("clone_document_title", || self.title.clone()),
+            schemas: crate::instrumentation::timed("clone_document_schemas", || {
+                self.schemas.clone()
+            }),
+            entities: crate::instrumentation::timed("clone_document_entities", || {
+                self.entities.clone()
+            }),
+            keyed_grouped_sum_definitions: crate::instrumentation::timed(
+                "clone_document_keyed_grouped_sum_definitions",
+                || self.keyed_grouped_sum_definitions.clone(),
+            ),
         }
     }
 }

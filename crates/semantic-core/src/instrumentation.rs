@@ -8,6 +8,67 @@
 //! only configuration for release WASM — every recorder below is an empty
 //! inline function, so call sites compile away to nothing.
 
+// Scratch #809 only: inclusive, thread-local native phase durations in nanoseconds.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static PHASES: std::cell::RefCell<Vec<(String, u128)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PHASE_STACK: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn reset_phases() {
+    #[cfg(not(target_arch = "wasm32"))]
+    PHASES.with(|p| p.borrow_mut().clear());
+}
+
+pub fn take_phases() -> Vec<(String, u128)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        PHASES.with(|p| std::mem::take(&mut *p.borrow_mut()))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Vec::new()
+    }
+}
+
+pub struct PhaseTimer {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: std::time::Instant,
+}
+
+impl PhaseTimer {
+    pub fn new(name: &'static str) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            PHASE_STACK.with(|p| p.borrow_mut().push(name));
+            Self {
+                started: std::time::Instant::now(),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = name;
+            Self {}
+        }
+    }
+}
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let nanos = self.started.elapsed().as_nanos();
+            let path = PHASE_STACK.with(|p| {
+                let mut stack = p.borrow_mut();
+                let path = stack.join("/");
+                stack.pop();
+                path
+            });
+            PHASES.with(|p| p.borrow_mut().push((path, nanos)));
+        }
+    }
+}
+
 /// Cumulative counters recorded by one instrumented process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CapacityCounters {
@@ -136,4 +197,10 @@ mod enabled {
     pub(super) const fn record_publication_document_comparison() {}
 
     pub(super) const fn record_json_bytes(_count: u64) {}
+}
+
+// Scratch diagnosis: expression timer, including the expression's own temporaries.
+pub fn timed<R>(name: &'static str, action: impl FnOnce() -> R) -> R {
+    let _phase = PhaseTimer::new(name);
+    action()
 }

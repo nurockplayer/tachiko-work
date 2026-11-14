@@ -1016,6 +1016,8 @@ fn formula_source_projections_with_index(
     document: &Document,
     index: &AddressIndex,
 ) -> Result<BTreeMap<FieldRef, String>, WorkspaceError> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("project_all_formula_sources");
     let mut sources = BTreeMap::new();
     for entity in document.entities.values() {
         for (field_id, value) in &entity.fields {
@@ -2514,6 +2516,7 @@ pub(crate) fn finalize_edit_with_validation(
     edited: Document,
     prepared: Option<&PreparedEvaluation<'_>>,
 ) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
+    let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("v1_finalize_edit");
     let (semantic_diff, report) = with_edit_calculations(
         document,
         &edited,
@@ -2537,6 +2540,7 @@ pub(crate) fn finalize_edit_changes_with_validation(
     edited: Document,
     prepared: Option<&PreparedEvaluation<'_>>,
 ) -> Result<(Document, Vec<SemanticChange>, ValidationReport), WorkspaceError> {
+    let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("v1_finalize_edit");
     let (changes, report) = with_edit_calculations(
         document,
         &edited,
@@ -2579,7 +2583,11 @@ fn with_edit_calculations<T>(
         Option<&PreparedEvaluation<'_>>,
     ) -> Result<T, WorkspaceError>,
 ) -> Result<(T, ValidationReport), WorkspaceError> {
-    let prepared = prepared.filter(|prepared| prepared.document() == edited);
+    let prepared = prepared.filter(|prepared| {
+        tachiko_semantic_core::instrumentation::timed("candidate_matches_prepared", || {
+            prepared.document() == edited
+        })
+    });
     let fallback;
     let (report, calculation) = if let Some(prepared) = prepared {
         // The prepared calculation is `None` exactly when the candidate's
@@ -2604,7 +2612,9 @@ fn with_edit_calculations<T>(
         }
     };
     if !prepared.is_some_and(PreparedEvaluation::candidate_preflight_succeeded) {
-        preflight_formula_projections(edited)?;
+        tachiko_semantic_core::instrumentation::timed("formula_projection_preflight", || {
+            preflight_formula_projections(edited)
+        })?;
     }
     tachiko_diff_engine::require_diff_supported(document, edited)?;
     let calculated_base;
@@ -3294,12 +3304,19 @@ fn field_ref_fact(field: &FieldRef) -> String {
 }
 
 fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceError> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("preflight_formula_projections");
     #[cfg(test)]
     evaluation_counters::record_preflight_run();
     // One index serves every formula. When it cannot be built, each formula
     // keeps the per-formula projection failure reported before the shared
     // index, so the first formula still decides the error.
-    let index = AddressIndex::build(document);
+    let index = tachiko_semantic_core::instrumentation::timed("build_address_index", || {
+        AddressIndex::build(document)
+    });
+    let part809 =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("scan_and_project_formulas");
+
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             if let Value::Formula(expression) = value {
@@ -3330,9 +3347,17 @@ fn preflight_changed_formula_projections(
     document: &Document,
     changed: &BTreeSet<FieldRef>,
 ) -> Result<(), WorkspaceError> {
+    let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+        "preflight_changed_formula_projections",
+    );
     #[cfg(test)]
     evaluation_counters::record_preflight_run();
-    let index = AddressIndex::build(document);
+    let index = tachiko_semantic_core::instrumentation::timed("build_address_index", || {
+        AddressIndex::build(document)
+    });
+    let part809 =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("scan_and_project_formulas");
+
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
             let field = FieldRef::new(entity_id.clone(), field_id.clone());
@@ -3363,6 +3388,8 @@ fn field_holds_formula(document: &Document, field: &FieldRef) -> bool {
 }
 
 fn preflight_formula_structures(document: &Document) -> Result<(), WorkspaceError> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("formula_structure_scan");
     #[cfg(test)]
     planning_counters::record_structure_preflight();
     for (entity_id, entity) in &document.entities {

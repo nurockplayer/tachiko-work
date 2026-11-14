@@ -67,6 +67,7 @@ pub(crate) fn check_working_saved_bytes(
     document: &Document,
     presentation_saved_bytes: u64,
 ) -> Result<(), DesignerError> {
+    let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("saved_bytes_check");
     check_working_saved_bytes_bound(
         crate::save_size::saved_bytes_upper_bound(document),
         presentation_saved_bytes,
@@ -226,6 +227,8 @@ impl CapacityUsage {
     }
 
     pub(crate) fn measure_for(document: &Document, profile: SessionProfile) -> Self {
+        let _phase809b =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("measure_document_capacity");
         let mut usage = Self {
             collections: document.schemas.len(),
             total_entities: document.entities.len(),
@@ -402,6 +405,8 @@ pub(crate) fn check_document_for(
     document: &Document,
     profile: SessionProfile,
 ) -> Result<CapacityUsage, DesignerError> {
+    let _phase809 =
+        tachiko_workspace_engine::instrumentation::PhaseTimer::new("document_capacity_check");
     let usage = CapacityUsage::measure_for(document, profile);
     usage.check(limits_for_profile(profile))?;
     Ok(usage)

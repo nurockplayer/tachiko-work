@@ -1106,10 +1106,25 @@ pub fn extract_dependencies(
     dependencies
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Calculation {
     values: BTreeMap<FieldRef, Number>,
     graph: DependencyGraph,
+}
+
+impl Clone for Calculation {
+    fn clone(&self) -> Self {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("clone_calculation");
+        Self {
+            values: tachiko_semantic_core::instrumentation::timed("clone_values", || {
+                self.values.clone()
+            }),
+            graph: tachiko_semantic_core::instrumentation::timed("clone_graph", || {
+                self.graph.clone()
+            }),
+        }
+    }
 }
 
 /// Complete atomic result of a fresh full-document recomputation.
@@ -1130,11 +1145,29 @@ pub enum CalculationOutcome {
 /// are never exposed through [`Self::outcome`] while any failure exists.
 /// This state is derived entirely from one [`Document`] and is not canonical
 /// semantic state, a cache key contract, or a serialization surface.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct RetainedCalculationState {
     nodes: BTreeSet<FieldRef>,
     calculation: Calculation,
     failures: FailureMap,
+}
+
+impl Clone for RetainedCalculationState {
+    fn clone(&self) -> Self {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("clone_calculation_state");
+        Self {
+            nodes: tachiko_semantic_core::instrumentation::timed("clone_nodes", || {
+                self.nodes.clone()
+            }),
+            calculation: tachiko_semantic_core::instrumentation::timed("clone_calculation", || {
+                self.calculation.clone()
+            }),
+            failures: tachiko_semantic_core::instrumentation::timed("clone_failures", || {
+                self.failures.clone()
+            }),
+        }
+    }
 }
 
 /// Deterministic work evidence for one retained calculation transition.
@@ -1221,6 +1254,9 @@ impl RetainedCalculationState {
         document: &Document,
         dirty_roots: &BTreeSet<FieldRef>,
     ) -> IncrementalCalculationTransition {
+        let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "incremental_calculation_update",
+        );
         if dirty_roots.is_empty() {
             return IncrementalCalculationTransition {
                 work: IncrementalCalculationWork {
@@ -1240,6 +1276,7 @@ impl RetainedCalculationState {
             .formulas()
             .cloned()
             .collect::<BTreeSet<_>>();
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("dirty_root_impact");
         let dirty_roots =
             &Self::with_column_total_roots(document, &self.calculation.graph, dirty_roots);
         let before_root_formulas = dirty_roots
@@ -1253,7 +1290,11 @@ impl RetainedCalculationState {
             .iter()
             .map(|field| (field.clone(), self.node_projection(field)))
             .collect::<BTreeMap<_, _>>();
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("recompute_dirty_nodes");
         self.recompute_dirty(document, dirty_roots, &impact.dirty);
+        drop(part809);
 
         let nodes_recomputed = impact
             .dirty
@@ -1268,6 +1309,9 @@ impl RetainedCalculationState {
             ..IncrementalCalculationWork::default()
         };
         let after_failed = self.is_failed();
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "select_changed_formula_outcomes",
+        );
         let changed_calculation_projections: Vec<_> = if before_failed == after_failed {
             impact
                 .dirty
@@ -1289,6 +1333,7 @@ impl RetainedCalculationState {
                 .into_iter()
                 .collect()
         };
+        drop(part809);
         #[cfg(test)]
         self.assert_changed_calculation_projections(
             before_formulas,
@@ -1423,6 +1468,9 @@ impl RetainedCalculationState {
         dirty_roots: &BTreeSet<FieldRef>,
         dirty: &BTreeSet<FieldRef>,
     ) {
+        let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("recompute_dirty");
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("update_node_membership");
         for root in dirty_roots {
             if calculation_value(document, root).is_some() {
                 self.nodes.insert(root.clone());
@@ -1430,6 +1478,10 @@ impl RetainedCalculationState {
                 self.nodes.remove(root);
             }
         }
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "collect_dirty_values_and_formulas",
+        );
         let dirty_nodes = dirty
             .iter()
             .filter_map(|field| {
@@ -1448,16 +1500,28 @@ impl RetainedCalculationState {
             })
             .collect::<FormulaNodes<'_>>();
 
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("remove_old_dirty_outcomes");
         for field in dirty {
             self.failures.remove(field);
             self.calculation.values.remove(field);
         }
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("dirty_pregraph_cycle_checks");
         self.failures
             .extend(pregraph_failures(document, &dirty_nodes, &dirty_formulas));
         assign_cycle_failures(&dirty_formulas, &self.calculation.graph, &mut self.failures);
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("dirty_initial_values");
         self.calculation
             .values
             .extend(initial_values(&dirty_nodes, &self.failures));
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("evaluate_dirty_formulas");
         evaluate_remaining_formulas(
             document,
             &dirty_formulas,
@@ -1953,11 +2017,20 @@ type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
+    let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("full_calculation");
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("collect_nodes_graph");
     let (nodes, formulas, graph) = collect_calculation_nodes(document);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("pregraph_cycle_checks");
     let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &graph, &mut failures);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("initial_values");
     let mut values = initial_values(&nodes, &failures);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("evaluate_formulas");
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
+    drop(phase809);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,
@@ -2026,7 +2099,7 @@ fn formula_uses(
 /// edges; `column_slots` holds every entity of a read column's schema (blank
 /// slots included), exactly the set [`extract_dependencies`] expands to, and
 /// `slot_columns` maps a slot back to its column.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 struct DependencyGraph {
     reference_uses: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
     column_uses: BTreeMap<FieldRef, BTreeSet<ColumnRef>>,
@@ -2035,6 +2108,42 @@ struct DependencyGraph {
     column_slots: BTreeMap<ColumnRef, BTreeSet<FieldRef>>,
     slot_columns: BTreeMap<FieldRef, ColumnRef>,
     entity_schemas: BTreeMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
+}
+
+impl Clone for DependencyGraph {
+    fn clone(&self) -> Self {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("clone_dependency_graph");
+        Self {
+            reference_uses: tachiko_semantic_core::instrumentation::timed(
+                "clone_reference_uses",
+                || self.reference_uses.clone(),
+            ),
+            column_uses: tachiko_semantic_core::instrumentation::timed("clone_column_uses", || {
+                self.column_uses.clone()
+            }),
+            cell_readers: tachiko_semantic_core::instrumentation::timed(
+                "clone_cell_readers",
+                || self.cell_readers.clone(),
+            ),
+            column_readers: tachiko_semantic_core::instrumentation::timed(
+                "clone_column_readers",
+                || self.column_readers.clone(),
+            ),
+            column_slots: tachiko_semantic_core::instrumentation::timed(
+                "clone_column_slots",
+                || self.column_slots.clone(),
+            ),
+            slot_columns: tachiko_semantic_core::instrumentation::timed(
+                "clone_slot_columns",
+                || self.slot_columns.clone(),
+            ),
+            entity_schemas: tachiko_semantic_core::instrumentation::timed(
+                "clone_entity_schemas",
+                || self.entity_schemas.clone(),
+            ),
+        }
+    }
 }
 
 impl DependencyGraph {

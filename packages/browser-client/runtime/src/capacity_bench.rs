@@ -1732,3 +1732,363 @@ fn working_size_bulk() {
     wb_edit_formulas();
     wb_fill_9999();
 }
+
+// #809 scratch: Sheet #375's exact cell-formula table, not schema definitions.
+fn formula_table_809(rows: usize) -> Document {
+    let mut document = Document::empty("formula-table-809", "Formula table");
+    let types = [
+        FieldType::Text,
+        FieldType::Number,
+        FieldType::Number,
+        FieldType::Date,
+        FieldType::Boolean,
+        FieldType::Text,
+        FieldType::Number,
+        FieldType::Number,
+        FieldType::Number,
+        FieldType::Number,
+    ];
+    let mut schema = Schema {
+        id: SchemaId::from("grid"),
+        key: SchemaKey::from("grid"),
+        display_name: None,
+        field_order: None,
+        fields: BTreeMap::new(),
+    };
+    for (column, field_type) in types.into_iter().enumerate() {
+        let name = format!("column_{column}");
+        schema.fields.insert(
+            FieldId::from(name.clone()),
+            FieldDefinition {
+                id: FieldId::from(name.clone()),
+                key: FieldKey::from(name),
+                display_name: None,
+                field_type,
+                required: false,
+                constraint: FieldConstraint::None,
+                number_format: None,
+                date_format: None,
+            },
+        );
+    }
+    document.schemas.insert(schema.id.clone(), schema);
+    for row in 0..rows {
+        let id = entity_id(row);
+        let mut fields = [
+            Value::Text(format!("Row {}", row + 1)),
+            number((row + 1) as f64),
+            number(2.0),
+            Value::Date(tachiko_workspace_engine::Date::new(2026, 10, 20).unwrap()),
+            Value::Boolean(true),
+            Value::Text("Filled".to_owned()),
+            number(3.0),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(c, v)| (FieldId::from(format!("column_{c}")), v))
+        .collect::<BTreeMap<_, _>>();
+        for (c, left, right) in [(7, 1, 1), (8, 1, 2), (9, 2, 6)] {
+            let reference = |column| {
+                Box::new(Expression::Reference(FieldRef::new(
+                    id.clone(),
+                    FieldId::from(format!("column_{column}")),
+                )))
+            };
+            fields.insert(
+                FieldId::from(format!("column_{c}")),
+                Value::Formula(Expression::Add {
+                    left: reference(left),
+                    right: reference(right),
+                }),
+            );
+        }
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                id,
+                key: EntityKey::from(format!("r{row:05}")),
+                schema: SchemaId::from("grid"),
+                fields,
+            },
+        );
+    }
+    document
+}
+
+#[derive(Clone)]
+struct PhaseSample809 {
+    phases: BTreeMap<String, f64>,
+    clones: u64,
+}
+
+fn measure_809<R>(action: impl FnOnce() -> R) -> (R, PhaseSample809) {
+    instrumentation::reset();
+    instrumentation::reset_phases();
+    let result;
+    {
+        let _phase = instrumentation::PhaseTimer::new("step");
+        result = action();
+    }
+    let mut phases = BTreeMap::new();
+    for (name, nanos) in instrumentation::take_phases() {
+        *phases.entry(name).or_default() += nanos as f64 / 1_000_000.0;
+    }
+    let inclusive = phases.clone();
+    for (parent, duration) in &inclusive {
+        let children: f64 = inclusive
+            .iter()
+            .filter(|(name, _)| name.rsplit_once('/').is_some_and(|(p, _)| p == parent))
+            .map(|(_, ms)| ms)
+            .sum();
+        if children > 0.0 {
+            phases.insert(format!("{parent}/[rest]"), (duration - children).max(0.0));
+        }
+    }
+    (
+        result,
+        PhaseSample809 {
+            phases,
+            clones: instrumentation::counters().document_clones,
+        },
+    )
+}
+
+fn percentile_809(mut values: Vec<f64>, percentile: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[((values.len() as f64 * percentile).ceil() as usize).saturating_sub(1)]
+}
+
+fn report_809(rows: usize, step: &str, samples: &[PhaseSample809]) -> f64 {
+    let root = percentile_809(samples.iter().map(|s| s.phases["step"]).collect(), 0.5);
+    println!("\n### {rows} rows — {step} (n={})", samples.len());
+    println!(
+        "clones per step: {:?}",
+        samples.iter().map(|s| s.clones).collect::<Vec<_>>()
+    );
+    println!(
+        "| phase (inclusive; rest excludes direct children) | p50 ms | p95 ms | max ms | share of step |\n|---|---:|---:|---:|---:|"
+    );
+    let keys = samples
+        .iter()
+        .flat_map(|s| s.phases.keys().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    for name in keys {
+        let values = samples
+            .iter()
+            .map(|s| s.phases.get(&name).copied().unwrap_or(0.0))
+            .collect::<Vec<_>>();
+        let p50 = percentile_809(values.clone(), 0.5);
+        println!(
+            "| {} | {:.3} | {:.3} | {:.3} | {:.2}% |",
+            name,
+            p50,
+            percentile_809(values.clone(), 0.95),
+            percentile_809(values, 1.0),
+            p50 / root * 100.0
+        );
+    }
+    root
+}
+
+const OCCURRENCE_809: &str = "00000000-0000-4000-8000-000000000809";
+
+fn open_809(bytes: &[u8], rows: usize) -> DesignerRuntime {
+    let mut runtime = None;
+    let opened =
+        open_project_working_size(&mut runtime, bytes, OCCURRENCE_809).expect("open fixture");
+    assert_eq!(opened.window.total_rows, rows);
+    runtime.unwrap()
+}
+
+fn window_809(runtime: &mut DesignerRuntime) -> PhaseSample809 {
+    let request = DesignerRequest::QueryTableWindow {
+        expected_revision: runtime.current_revision().to_owned(),
+        collection: "grid".to_owned(),
+        view: TableView::default(),
+        start: 0,
+        count: 0,
+        display: true,
+    };
+    let (reply, sample) = measure_809(|| runtime.handle(request));
+    let reply = reply.expect("zero-row window");
+    assert!(matches!(reply, DesignerResponse::TableWindow(_)));
+    sample
+}
+
+#[test]
+#[ignore = "scratch #809 native phase measurement"]
+fn capacity_809_formula_table() {
+    let mut growth: BTreeMap<(usize, String), f64> = BTreeMap::new();
+    let sizes: &[usize] = if std::env::var_os("CAPACITY_809_ALL_SIZES").is_some() {
+        &[2_500, 5_000, 7_500, 10_000]
+    } else {
+        &[10_000]
+    };
+    for &rows in sizes {
+        let size_started = Instant::now();
+        let reduced = || rows == 10_000 && size_started.elapsed().as_secs() > 15 * 60;
+        let document = formula_table_809(rows);
+        assert!(document.keyed_grouped_sum_definitions.is_empty());
+        let tree = encode_roproj_v3(&document).expect("v3 fixture encode");
+        let mut bytes = b"TWDPROJ1".to_vec();
+        bytes.extend(u32::try_from(tree.files().len()).unwrap().to_le_bytes());
+        for file in tree.files() {
+            bytes.extend(u16::try_from(file.path().len()).unwrap().to_le_bytes());
+            bytes.extend(u32::try_from(file.bytes().len()).unwrap().to_le_bytes());
+            bytes.extend(file.path().as_bytes());
+            bytes.extend(file.bytes());
+        }
+        if let Ok(temp) = std::env::var("RUNNER_TEMP") {
+            std::fs::write(format!("{temp}/809-{rows}.twd"), &bytes).unwrap();
+        }
+        drop(tree);
+        drop(document);
+        let mut opens = Vec::new();
+        let mut runtime = None;
+        for i in 0..3 {
+            if i > 0 && reduced() {
+                break;
+            }
+            let (opened, sample) = measure_809(|| {
+                open_project_working_size(&mut runtime, &bytes, OCCURRENCE_809)
+                    .expect("open fixture")
+            });
+            assert_eq!(opened.window.total_rows, rows);
+            report_809(
+                rows,
+                &format!("open {}", i + 1),
+                std::slice::from_ref(&sample),
+            );
+            opens.push(sample);
+        }
+        growth.insert(
+            (rows, "open".into()),
+            report_809(rows, "open combined", &opens),
+        );
+        let mut runtime = runtime.unwrap();
+        let mut edits = Vec::new();
+        let mut windows = Vec::new();
+        let edit_count = if reduced() { 10 } else { 30 };
+        for i in 0..edit_count {
+            if i >= 10 && reduced() {
+                break;
+            }
+            let row = (i * (rows - 1) + (edit_count - 1) / 2) / (edit_count - 1);
+            let value = 20_001 + i;
+            let request = DesignerRequest::EditScalar {
+                expected_revision: runtime.current_revision().to_owned(),
+                target: FieldTarget {
+                    entity: entity_id(row).to_string(),
+                    field: "column_1".into(),
+                },
+                input: ScalarEditInput::Number {
+                    input: value.to_string(),
+                },
+            };
+            let (reply, sample) = measure_809(|| runtime.handle(request));
+            assert!(matches!(
+                reply.expect("scalar edit"),
+                DesignerResponse::Published(_)
+            ));
+            edits.push(sample);
+            windows.push(window_809(&mut runtime));
+            if i == 0 {
+                let facts = runtime
+                    .session
+                    .query_fields(&[FieldRef::new(entity_id(row), "column_7")])
+                    .unwrap();
+                assert_eq!(
+                    facts.value()[0].calculated_value,
+                    Some(tachiko_workspace_engine::formula_operations::FormulaCalculationOutcome::Value(
+                        Number::new(2.0 * value as f64).unwrap()
+                    ))
+                );
+            }
+        }
+        for (step, samples) in [("edit", &edits), ("edit zero-row window", &windows)] {
+            growth.insert((rows, step.into()), report_809(rows, step, samples));
+        }
+        let mut saves = Vec::new();
+        let mut reopens = Vec::new();
+        for i in 0..3 {
+            if i > 0 && reduced() {
+                break;
+            }
+            let revision = runtime.current_revision().to_owned();
+            let (export, sample) = measure_809(|| runtime.export_project_v3(&revision));
+            let export = export.expect("save copy via export_project_v3");
+            saves.push(sample);
+            let (reopened, sample) = measure_809(|| open_809(&export.bytes, rows));
+            reopens.push(sample);
+            drop(reopened);
+        }
+        for (step, samples) in [("save export_project_v3", &saves), ("reopen", &reopens)] {
+            growth.insert((rows, step.into()), report_809(rows, step, samples));
+        }
+        drop(runtime);
+        for columns in [1, 7] {
+            let mut clears = Vec::new();
+            let mut windows = Vec::new();
+            for repeat in 0..3 {
+                if repeat > 0 && reduced() {
+                    break;
+                }
+                // Rebuild/open outside the measured interval, so repeats clear populated cells.
+                let mut runtime = open_809(&bytes, rows);
+                let edits = (0..rows)
+                    .flat_map(|row| {
+                        (0..columns).map(move |column| CellEdit {
+                            target: FieldTarget {
+                                entity: entity_id(row).to_string(),
+                                field: format!("column_{column}"),
+                            },
+                            input: ScalarEditInput::Clear,
+                        })
+                    })
+                    .collect();
+                let request = DesignerRequest::EditCells {
+                    expected_revision: runtime.current_revision().to_owned(),
+                    edits,
+                };
+                let (reply, sample) = measure_809(|| runtime.handle(request));
+                assert!(matches!(
+                    reply.expect("clear cells"),
+                    DesignerResponse::Published(_)
+                ));
+                clears.push(sample);
+                windows.push(window_809(&mut runtime));
+                for row in [0, rows - 1] {
+                    for c in 0..columns {
+                        assert!(
+                            !runtime.session.document().entities[&entity_id(row)]
+                                .fields
+                                .contains_key(&FieldId::from(format!("column_{c}")))
+                        );
+                    }
+                }
+            }
+            for (step, samples) in [
+                (format!("clear {columns}"), &clears),
+                (format!("clear {columns} zero-row window"), &windows),
+            ] {
+                growth.insert((rows, step.clone()), report_809(rows, &step, samples));
+            }
+        }
+        println!(
+            "809_COUNTS rows={rows} opens={} edits={} saves={} reduced={}",
+            opens.len(),
+            edits.len(),
+            saves.len(),
+            reduced()
+        );
+    }
+    println!("\n### Native growth 5,000 → 10,000 rows (ratio of step p50)");
+    for ((rows, step), ms) in &growth {
+        if *rows == 10_000 && growth.contains_key(&(5_000, step.clone())) {
+            println!("| {step} | {:.3}× |", ms / growth[&(5_000, step.clone())]);
+        }
+    }
+    println!(
+        "809_FACTS: 3 cell formulas per row; no formula definitions. Timer values are inclusive. [rest] is per-sample parent minus direct children. Shares use the whole step. Zero-row requests use display=true, default view. export_project_v3 includes a full admission preflight. No fixes applied."
+    );
+}
