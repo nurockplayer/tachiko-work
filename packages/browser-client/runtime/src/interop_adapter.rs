@@ -1521,13 +1521,33 @@ const LEDGER_FINDINGS_PER_KEY: usize = 100;
 // Summaries use the existing wire fields. Only the exact module-generated
 // message at a sheet/workbook location is interpreted as an accumulated count.
 fn ledger_summary_total(finding: &FidelityFinding) -> Option<usize> {
-    if finding.location.contains('!') {
+    if ledger_key_location(&finding.location) != finding.location {
         return None;
     }
     let (total, location) = finding.message.split_once(" findings of this kind on ")?;
     let location = location.strip_suffix("; the first 100 are listed")?;
     let total = total.parse::<usize>().ok()?;
     (location == finding.location && total > LEDGER_FINDINGS_PER_KEY).then_some(total)
+}
+
+// Worksheet names may contain `!`, so only a trailing `!<cell>…` is cut off.
+fn ledger_key_location(location: &str) -> &str {
+    location
+        .rsplit_once('!')
+        .filter(|(_, address)| starts_with_a1_cell(address))
+        .map_or(location, |(sheet, _)| sheet)
+}
+
+fn starts_with_a1_cell(address: &str) -> bool {
+    let address = address.strip_prefix('$').unwrap_or(address);
+    let letters = address.bytes().take_while(u8::is_ascii_uppercase).count();
+    let rest = &address[letters..];
+    let rest = rest.strip_prefix('$').unwrap_or(rest);
+    (1..=3).contains(&letters)
+        && rest
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_digit())
 }
 
 struct LedgerTally {
@@ -1542,10 +1562,7 @@ struct LedgerTally {
 pub(crate) fn cap_ledger(ledger: &mut Vec<FidelityFinding>) {
     let mut tallies = BTreeMap::new();
     for finding in ledger.iter() {
-        let sheet = finding
-            .location
-            .split_once('!')
-            .map_or(finding.location.as_str(), |(sheet, _)| sheet);
+        let sheet = ledger_key_location(&finding.location);
         let tally = tallies
             .entry((finding.code.clone(), sheet.to_owned()))
             .or_insert_with(|| LedgerTally {
@@ -1574,10 +1591,7 @@ pub(crate) fn cap_ledger(ledger: &mut Vec<FidelityFinding>) {
         if ledger_summary_total(&finding).is_some() {
             continue;
         }
-        let sheet = finding
-            .location
-            .split_once('!')
-            .map_or(finding.location.as_str(), |(sheet, _)| sheet);
+        let sheet = ledger_key_location(&finding.location);
         let key = (finding.code.clone(), sheet.to_owned());
         let tally = tallies.get_mut(&key).expect("every finding was counted");
         if tally.listed == LEDGER_FINDINGS_PER_KEY {
@@ -7693,6 +7707,28 @@ mod ledger_cap_tests {
             assert_eq!(ledger_summary_total(summary), Some(150));
         }
         assert_eq!(&ledger[404..], uncapped);
+    }
+
+    #[test]
+    fn worksheet_names_with_exclamation_marks_keep_their_own_cap() {
+        let mut ledger = findings("Sales!East", "conversion", 150);
+        ledger.extend(findings("Sales!West", "conversion", 150));
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 202);
+        for (start, sheet) in [(0, "Sales!East"), (101, "Sales!West")] {
+            assert_eq!(
+                &ledger[start..start + 100],
+                findings(sheet, "conversion", 100)
+            );
+            let summary = &ledger[start + 100];
+            assert_eq!(summary.location, sheet);
+            assert_eq!(ledger_summary_total(summary), Some(150));
+        }
+        // A re-read summary keeps its key, and appended findings join it.
+        ledger.extend(findings("Sales!West", "conversion", 10));
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 202);
+        assert_eq!(ledger_summary_total(&ledger[201]), Some(160));
     }
 
     #[test]
