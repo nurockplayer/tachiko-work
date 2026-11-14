@@ -2538,7 +2538,9 @@ pub(crate) fn finalize_edit_with_validation(
             ));
         }
     };
-    preflight_formula_projections(&edited)?;
+    if !prepared.is_some_and(PreparedEvaluation::candidate_preflight_succeeded) {
+        preflight_formula_projections(&edited)?;
+    }
     tachiko_diff_engine::require_diff_supported(document, &edited)?;
     let calculated_base;
     let base_calculation =
