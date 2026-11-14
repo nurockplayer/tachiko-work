@@ -4135,7 +4135,10 @@ fn resident_v1_evidence_and_formula_causes_match_full_diff() {
                 vec![FieldRef::new("e1", "g")]
             );
         } else {
-            assert!(evaluated.formula_impacts.is_empty());
+            assert_eq!(
+                evaluated.formula_impacts,
+                [] as [super::FormulaImpactEvidence; 0]
+            );
         }
     }
 }
