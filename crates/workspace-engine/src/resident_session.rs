@@ -1973,9 +1973,8 @@ mod tests {
                     calls += 1;
                     if case == 1 { None } else { Some(()) }
                 });
-            let error = match result {
-                Ok(_) => panic!("case {case} unexpectedly published"),
-                Err(error) => error,
+            let Err(error) = result else {
+                panic!("case {case} unexpectedly published");
             };
             let expected = match case {
                 0 => SemanticPublicationError::DocumentScopeMismatch,

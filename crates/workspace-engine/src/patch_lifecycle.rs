@@ -4206,6 +4206,11 @@ impl PatchLifecycle {
     ///
     /// # Errors
     /// Returns the same name admission and command planning errors as proposal.
+    ///
+    /// # Panics
+    ///
+    /// In test builds, panics if the old planner disagrees with the resident
+    /// candidate or its associated writes.
     pub fn plan_resident_commands<'session>(
         &self,
         session: &'session ResidentWorkspaceSession,
@@ -4968,7 +4973,7 @@ impl PatchLifecycle {
                     (Err(new), Err(old)) => assert_eq!(format!("{new:?}"), format!("{old:?}")),
                     _ => panic!("resident evaluation differs from old planning"),
                 }
-            })
+            });
         });
         self.evaluations.set(evaluations);
     }

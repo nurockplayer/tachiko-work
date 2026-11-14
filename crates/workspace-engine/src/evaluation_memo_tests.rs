@@ -4259,7 +4259,7 @@ fn assert_consumed_matches_borrowed(document: Document, body: SemanticPatchBody,
     assert_eq!(preview, old_preview);
     let installation = old_prepared.into_installable();
     if stale {
-        let mut advanced = document.clone();
+        let mut advanced = document;
         advanced.title = "advanced".to_owned();
         publish_chain_step(&mut owned_session, &advanced, None).unwrap();
         publish_chain_step(&mut old_session, &advanced, None).unwrap();
