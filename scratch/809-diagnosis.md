@@ -130,7 +130,7 @@ The existing bench now defaults to 10,000 rows only. Set
 needs no extra environment variable for this diagnostic rerun:
 
 ```sh
-job-run --id 809-diagnose-rust -- orb-test --image rust:1.99.0 -- bash -c 'rustup component add rustfmt && cargo fmt --all -- --check && cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml -- --check && cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture'
+job-run --id 809-diagnose-formatted -- orb-test --image rust:1.99.0 -- bash -c 'rustup component add rustfmt && cargo fmt --all -- --check && cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml -- --check && cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture'
 ```
 
 Repetitions, fixture, assertions and native typed-call boundaries are unchanged.
@@ -148,6 +148,12 @@ The single infrastructure retry above explicitly uses a Rust image and a
 non-login shell to preserve that image's toolchain PATH. Its native timings,
 if collected, run on the Mac's OrbStack VM and are a different environment from
 the hosted-runner diagnosis; they must not be treated as optimization deltas.
+
+The Rust-image attempt `809-diagnose-rust`, **2026-11-14
+18:12:22–18:13:54 JST**, reached rustfmt and exited 1 on the repeated-open call's
+line wrapping at `capacity_bench.rs:1950`. The benchmark did not run. The exact
+rustfmt change is applied; the same checks and benchmark above are pending at
+that corrected source.
 
 ## Instrumentation assumptions
 

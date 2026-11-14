@@ -1950,7 +1950,8 @@ fn capacity_809_formula_table() {
                 break;
             }
             let (opened, sample) = measure_809(|| {
-                open_project_working_size(&mut runtime, &bytes, OCCURRENCE_809).expect("open fixture")
+                open_project_working_size(&mut runtime, &bytes, OCCURRENCE_809)
+                    .expect("open fixture")
             });
             assert_eq!(opened.window.total_rows, rows);
             report_809(
