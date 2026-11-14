@@ -4870,17 +4870,41 @@ fn formula_replacements_reproject_sources() {
         DesignerRuntime::from_document_working_size(number_grid(1, 2), OCCURRENCE).unwrap();
     let field = FieldRef::new("r00000", "c1");
     let formula = Value::Formula(Expression::SameRowReference(FieldId::from("c0")));
-    for value in [formula, Value::Number(Number::new(3.0).unwrap())] {
-        let is_formula = matches!(value, Value::Formula(_));
-        runtime
-            .publish_commands(
-                &revision(&runtime),
-                vec![SemanticCommand::set_field_value(field.clone(), value)],
-            )
-            .unwrap();
-        assert_eq!(runtime.formula_sources.contains_key(&field), is_formula);
-        assert_clear_totals_and_sources(&runtime);
-    }
+    runtime
+        .publish_commands(
+            &revision(&runtime),
+            vec![SemanticCommand::set_field_value(field.clone(), formula)],
+        )
+        .unwrap();
+    assert!(runtime.formula_sources.contains_key(&field));
+    assert_clear_totals_and_sources(&runtime);
+
+    // Main refuses a scalar over a formula; rejection must retain its source.
+    let current = revision(&runtime);
+    let document = runtime.session.document().clone();
+    let totals = runtime.retained_working_totals();
+    let sources = runtime.formula_sources.clone();
+    let error = runtime
+        .publish_commands(
+            &current,
+            vec![SemanticCommand::set_field_value(
+                field.clone(),
+                Value::Number(Number::new(3.0).unwrap()),
+            )],
+        )
+        .unwrap_err();
+    let DesignerError::Lifecycle(super::PatchLifecycleError::CommandRejected { source }) = error
+    else {
+        panic!("expected the existing formula-edit refusal, got {error:?}");
+    };
+    assert!(
+        matches!(*source, tachiko_workspace_engine::WorkspaceError::FormulaEdit { field: rejected } if rejected == field)
+    );
+    assert_eq!(revision(&runtime), current);
+    assert_eq!(runtime.session.document(), &document);
+    assert_eq!(runtime.retained_working_totals(), totals);
+    assert_eq!(runtime.formula_sources, sources);
+    assert_clear_totals_and_sources(&runtime);
 }
 
 #[test]
