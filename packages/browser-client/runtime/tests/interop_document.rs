@@ -2400,7 +2400,12 @@ fn import_binds_the_same_document_as_per_formula_updates() {
     let imported_bytes = runtime.export_project_v3("resident/0").unwrap().bytes;
     let row = &imported.metadata.sheets[0].rows[0];
     let mut sources = Vec::new();
-    for (column, metadata) in imported.metadata.sheets[0].columns.iter().enumerate().take(8) {
+    for (column, metadata) in imported.metadata.sheets[0]
+        .columns
+        .iter()
+        .enumerate()
+        .take(8)
+    {
         let DesignerResponse::FieldExplanation(explanation) = runtime
             .handle(DesignerRequest::ExplainField {
                 expected_revision: "resident/0".into(),
