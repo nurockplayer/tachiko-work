@@ -2624,7 +2624,8 @@ fn first_resident_v2_unset_batch_reuses_the_open_preflight() {
 
 #[test]
 fn a_prepared_candidate_with_a_projection_failure_keeps_the_exact_error() {
-    let mut document = unprojectable_document();
+    let candidate = unprojectable_document();
+    let mut document = candidate.clone();
     document
         .entities
         .get_mut("e1")
@@ -2632,8 +2633,6 @@ fn a_prepared_candidate_with_a_projection_failure_keeps_the_exact_error() {
         .fields
         .insert("h".into(), Value::Formula(reference_g()));
     let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
-    let body = set_h(Expression::Reference(FieldRef::new("target", "input")));
-    let candidate = chain_candidate(&document, &body, "unprojectable candidate");
     let prepared = session.prepare_evaluation(candidate.clone());
     assert!(prepared.base_preflight_succeeded());
     assert!(!prepared.candidate_preflight_succeeded());
