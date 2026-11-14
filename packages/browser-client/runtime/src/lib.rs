@@ -445,6 +445,11 @@ pub enum DesignerRequest {
         collection: String,
         entities: Vec<String>,
     },
+    /// Statistics over distinct stable cells, using retained formula results.
+    QuerySelectionStatistics {
+        expected_revision: String,
+        targets: Vec<FieldTarget>,
+    },
     /// Number totals over the rows a stateless view shows, summed in
     /// collection order. `keep_entities` rows count even when filtered out,
     /// so the view's sort never changes a total.
@@ -524,6 +529,7 @@ pub enum DesignerResponse {
     DistinctValues(DistinctValuesProjection),
     FoundInView(FindInViewProjection),
     ColumnTotals(ColumnTotalsProjection),
+    SelectionStatistics(SelectionStatisticsProjection),
     GroupTotals(GroupTotalsProjection),
     Fields(FieldBatchProjection),
     FieldExplanation(FieldExplanationProjection),
@@ -718,6 +724,19 @@ pub struct ColumnTotalsProjection {
     /// `TableWindowProjection::column_totals`.
     #[serde(deserialize_with = "deserialize_column_totals")]
     pub column_totals: BTreeMap<String, Option<f64>>,
+}
+
+/// Selection statistics at one resident revision. Errors null all aggregates.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SelectionStatisticsProjection {
+    pub revision: String,
+    pub count: usize,
+    pub numerical_count: usize,
+    pub sum: Option<f64>,
+    pub average: Option<f64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub error_count: usize,
 }
 
 /// Number totals grouped by one or two keys over the rows of one scope, at
@@ -4007,6 +4026,12 @@ impl DesignerRuntime {
                 &collection,
                 &entities,
             )?)),
+            DesignerRequest::QuerySelectionStatistics {
+                expected_revision,
+                targets,
+            } => Ok(DesignerResponse::SelectionStatistics(
+                self.query_selection_statistics(&expected_revision, &targets)?,
+            )),
             DesignerRequest::QueryViewTotals {
                 expected_revision,
                 collection,
@@ -5190,6 +5215,52 @@ impl DesignerRuntime {
             revision,
             rows: members.len(),
             column_totals,
+        })
+    }
+
+    fn query_selection_statistics(
+        &self,
+        expected_revision: &str,
+        targets: &[FieldTarget],
+    ) -> Result<SelectionStatisticsProjection, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let document = self.session.document();
+        let mut requested = BTreeSet::new();
+        for target in targets {
+            let invalid = |reason| DesignerError::InvalidView {
+                message: format!(
+                    "selection target {}.{} {reason}",
+                    target.entity, target.field
+                ),
+            };
+            let entity = document
+                .entities
+                .get(target.entity.as_str())
+                .ok_or_else(|| invalid("names an unknown entity"))?;
+            if !document
+                .schemas
+                .get(&entity.schema)
+                .is_some_and(|schema| schema.fields.contains_key(target.field.as_str()))
+            {
+                return Err(invalid("is not declared by its collection"));
+            }
+            if !requested.insert(target.as_field_ref()) {
+                return Err(invalid("is listed more than once"));
+            }
+        }
+        let result = self
+            .session
+            .query_selection_statistics(&requested.into_iter().collect::<Vec<_>>())?;
+        let stats = result.value();
+        Ok(SelectionStatisticsProjection {
+            revision: self.current_revision().to_owned(),
+            count: stats.count,
+            numerical_count: stats.numerical_count,
+            sum: stats.sum,
+            average: stats.average,
+            min: stats.min,
+            max: stats.max,
+            error_count: stats.error_count,
         })
     }
 

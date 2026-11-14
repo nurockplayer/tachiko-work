@@ -143,6 +143,23 @@ describe("Designer Worker request lifecycle", () => {
     await expect(malformed).rejects.toThrow("Invalid Worker located-in-view result.");
   });
 
+  it("forwards selection-statistics requests and validates their replies", async () => {
+    const worker = transport();
+    const targets = [{entity: "row-1", field: "amount"}, {entity: "row-9", field: "name"}];
+    const pending = worker.client.querySelectionStatistics("resident/7", targets);
+    expect(worker.request(0)).toMatchObject({
+      kind: "command",
+      request: {type: "query_selection_statistics", expected_revision: "resident/7", targets},
+    });
+    const stats = {revision: "resident/7", count: 2, numerical_count: 1, sum: 4.5, average: 4.5, min: 4.5, max: 4.5, error_count: 0};
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "selection_statistics", payload: stats}});
+    await expect(pending).resolves.toEqual(stats);
+
+    const malformed = worker.client.querySelectionStatistics("resident/7", targets);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "selection_statistics", payload: {...stats, average: Number.NaN}}});
+    await expect(malformed).rejects.toThrow("Invalid Worker selection statistic.");
+  });
+
   it("forwards column-total requests and validates their replies", async () => {
     const worker = transport();
     const pending = worker.client.queryColumnTotals("resident/7", "items", ["row-1", "row-9"]);

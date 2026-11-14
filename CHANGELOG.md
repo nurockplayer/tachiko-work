@@ -6,6 +6,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Add revision-bound selection statistics over resident cells for status bars (#811).
+
 - Working-size XLSX and CSV export supports 10,000 rows for imported
   workbooks and native Tracker, Budget and tables, with typed capacity refusals.
 

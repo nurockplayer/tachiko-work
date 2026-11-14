@@ -1069,7 +1069,10 @@ fn round_decimal(value: f64, digits: usize, directed: Option<bool>) -> f64 {
 /// remainder. A sum beyond f64 is taken again in two parts: values that scale
 /// exactly are summed at 2^-64 (the count stays below 2^64, so this part
 /// cannot overflow), and the rest unscaled, so tiny values are not lost.
-fn average(values: &[f64]) -> f64 {
+///
+/// Callers supply a nonempty slice of finite values.
+#[must_use]
+pub fn average(values: &[f64]) -> f64 {
     let count = value_count(values.len());
     let sum = exact_sum(values.iter().copied());
     if sum.is_finite() {
@@ -1102,8 +1105,9 @@ fn value_count(len: usize) -> f64 {
 /// Shewchuk's exact summation with a correctly rounded result (the algorithm
 /// of Python's `math.fsum`): non-overlapping partials hold the sum exactly.
 /// A non-finite result means the sum left f64.
+#[must_use]
 #[allow(clippy::float_cmp)] // exactness tests on error terms are the algorithm
-fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
+pub fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
     let mut partials: Vec<f64> = Vec::new();
     for mut value in values {
         let mut kept = 0;

@@ -197,6 +197,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "explainField",
     "createKeyedGroupedSum",
     "queryKeyedGroupedSum",
+    "querySelectionStatistics",
     "editNumber",
     "editText",
     "clearField",

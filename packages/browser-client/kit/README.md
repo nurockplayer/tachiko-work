@@ -208,6 +208,35 @@ Ordinary `exportProject` refuses an occurrence successfully opened from v3;
 continue saving it with the explicit method. Retain a compatible v3 reader
 after emitting these artifacts, including during producer rollback.
 
+### Selection statistics
+
+`querySelectionStatistics(expectedRevision, targets)` reads distinct
+`{ entity, field }` targets across collections and returns
+`{ revision, count, numerical_count, sum, average, min, max, error_count }`.
+It reads retained formula results without changing revision or history or
+creating cell projections. Unknown entities, undeclared fields, duplicates and
+stale revisions refuse before aggregation. Target order does not affect results.
+
+The request counts against the session's advertised request limit (64 KiB for
+ordinary and text-capacity sessions, 64 MiB for working-size sessions), oversized
+selections receive `request_too_large`, and clients can compare the encoded
+request size against that advertised limit before sending.
+
+| Selected cell | count | Numeric contribution |
+| --- | --- | --- |
+| Absent optional field | 0 | Skip |
+| Text `""` | 0 | Skip |
+| Other Text (including `"123"`), Boolean (including false), Date, Reference | 1 | Skip; never coerce |
+| Number or formula with retained Number result | 1 | Include; numerical_count +1 |
+| Formula Failure or Unavailable | 1 | Skip; error_count +1 |
+
+Any error makes all four aggregates null. Without numbers or errors, sum is 0
+and average/min/max are null; an empty selection also has all counts 0.
+Currency and percent use raw Numbers without conversion or rounding. An
+overflowing sum is null; average uses the formula reducer's overflow-safe
+arithmetic, and min/max still cover the numeric members.
+
+
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is
