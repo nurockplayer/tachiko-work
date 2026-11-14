@@ -1124,6 +1124,11 @@ pub fn exact_sum(values: impl Iterator<Item = f64>) -> f64 {
             }
             value = high;
         }
+        if !value.is_finite() {
+            // The sum left f64. Its NaN error terms would otherwise be kept
+            // and grow the partials with every later value.
+            return value;
+        }
         partials.truncate(kept);
         partials.push(value);
     }
