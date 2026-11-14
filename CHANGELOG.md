@@ -137,6 +137,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- XLSX row capacity counts data after skipping title/header offsets and an
+  excluded trailing summary row, while still refusing distant rows before allocation.
+
 - Imported binary MIN/MAX formulas skip blank optional Number references as
   Excel does, including after cell edits (#633). Native XLSX exports report
   formulas written only for collections that actually export a formula.
