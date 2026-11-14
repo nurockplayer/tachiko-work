@@ -137,6 +137,7 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Import fidelity ledgers retain the first 100 findings per code and sheet with exact summaries, keeping working-size imports within the reply budget (#678).
 - XLSX row capacity counts data after skipping title/header offsets and an
   excluded trailing summary row, while still refusing distant rows before allocation.
 

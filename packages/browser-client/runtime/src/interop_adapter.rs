@@ -1516,6 +1516,91 @@ pub struct FidelityFinding {
     /// Sole admission decision: any blocking finding prevents semantic import/export.
     pub blocking: bool,
 }
+const LEDGER_FINDINGS_PER_KEY: usize = 100;
+
+// Summaries use the existing wire fields. Only the exact module-generated
+// message at a sheet/workbook location is interpreted as an accumulated count.
+fn ledger_summary_total(finding: &FidelityFinding) -> Option<usize> {
+    if finding.location.contains('!') {
+        return None;
+    }
+    let (total, location) = finding.message.split_once(" findings of this kind on ")?;
+    let location = location.strip_suffix("; the first 100 are listed")?;
+    let total = total.parse::<usize>().ok()?;
+    (location == finding.location && total > LEDGER_FINDINGS_PER_KEY).then_some(total)
+}
+
+struct LedgerTally {
+    total: usize,
+    listed: usize,
+    omitted_blocking: bool,
+    category: FidelityCategory,
+}
+
+/// Keep the first 100 findings per code and sheet, followed by one exact summary.
+/// Re-read our summaries so a later import phase can append findings and recap.
+pub(crate) fn cap_ledger(ledger: &mut Vec<FidelityFinding>) {
+    let mut tallies = BTreeMap::new();
+    for finding in ledger.iter() {
+        let sheet = finding
+            .location
+            .split_once('!')
+            .map_or(finding.location.as_str(), |(sheet, _)| sheet);
+        let tally = tallies
+            .entry((finding.code.clone(), sheet.to_owned()))
+            .or_insert_with(|| LedgerTally {
+                total: 0,
+                listed: 0,
+                omitted_blocking: false,
+                category: finding.category.clone(),
+            });
+        if let Some(total) = ledger_summary_total(finding) {
+            tally.total += total - LEDGER_FINDINGS_PER_KEY;
+            tally.omitted_blocking |= finding.blocking;
+        } else {
+            tally.total += 1;
+            if tally.listed < LEDGER_FINDINGS_PER_KEY {
+                tally.listed += 1;
+            } else {
+                tally.omitted_blocking |= finding.blocking;
+            }
+        }
+    }
+    for tally in tallies.values_mut() {
+        tally.listed = 0;
+    }
+    let mut capped = Vec::new();
+    for finding in std::mem::take(ledger) {
+        if ledger_summary_total(&finding).is_some() {
+            continue;
+        }
+        let sheet = finding
+            .location
+            .split_once('!')
+            .map_or(finding.location.as_str(), |(sheet, _)| sheet);
+        let key = (finding.code.clone(), sheet.to_owned());
+        let tally = tallies.get_mut(&key).expect("every finding was counted");
+        if tally.listed == LEDGER_FINDINGS_PER_KEY {
+            continue;
+        }
+        tally.listed += 1;
+        capped.push(finding);
+        if tally.listed == LEDGER_FINDINGS_PER_KEY && tally.total > LEDGER_FINDINGS_PER_KEY {
+            capped.push(FidelityFinding {
+                category: tally.category.clone(),
+                code: key.0,
+                location: key.1.clone(),
+                message: format!(
+                    "{} findings of this kind on {}; the first 100 are listed",
+                    tally.total, key.1
+                ),
+                blocking: tally.omitted_blocking,
+            });
+        }
+    }
+    *ledger = capped;
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ImportOptions {
     pub delimiter: char,
@@ -1847,7 +1932,7 @@ pub(crate) fn import_csv_profile(
                 .collect()
         })
         .collect();
-    let workbook = SourceWorkbook {
+    let mut workbook = SourceWorkbook {
         sheets: vec![SourceSheet {
             name: "Imported table".into(),
             has_header: options.header,
@@ -1872,6 +1957,7 @@ pub(crate) fn import_csv_profile(
             ),
         ],
     };
+    cap_ledger(&mut workbook.ledger);
     if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate an isolated typed feasibility copy, retaining the lexical
         // source values for explicit user selection.
@@ -3910,7 +3996,8 @@ pub(crate) fn import_xlsx_profile(
     // Parser-derived classification replaces the existing record with a shorter
     // code. Nonplain generic source ledgers and their wire width stay unchanged.
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
-    let workbook = SourceWorkbook { sheets, ledger };
+    let mut workbook = SourceWorkbook { sheets, ledger };
+    cap_ledger(&mut workbook.ledger);
     if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate isolated Number-feasibility hypotheses without changing
         // the typed values the user sees and explicitly selects.
@@ -7536,5 +7623,135 @@ mod future_ooxml_tests {
             future_ooxml_formula("_xlfn.OTHER(A1)", false),
             "_xlfn.OTHER(A1)"
         );
+    }
+}
+
+#[cfg(test)]
+mod ledger_cap_tests {
+    use super::{FidelityCategory, FidelityFinding, cap_ledger, ledger_summary_total};
+
+    fn findings(location: &str, code: &str, count: usize) -> Vec<FidelityFinding> {
+        (1..=count)
+            .map(|row| FidelityFinding {
+                category: FidelityCategory::Converted,
+                code: code.into(),
+                location: format!("{location}!A{row}"),
+                message: format!("finding {row}"),
+                blocking: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn first_hundred_keep_their_order_and_summary_has_exact_total() {
+        let original = findings("Sheet1", "conversion", 250);
+        let mut ledger = original.clone();
+        // Another key between the 100th and first omitted entry stays after
+        // the summary; its position relative to every retained finding is kept.
+        let other = findings("Other", "conversion", 1).remove(0);
+        ledger.insert(100, other.clone());
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 102);
+        assert_eq!(&ledger[..100], &original[..100]);
+        assert_eq!(ledger[100].code, "conversion");
+        assert_eq!(ledger[100].category, FidelityCategory::Converted);
+        assert_eq!(ledger[100].location, "Sheet1");
+        assert_eq!(
+            ledger[100].message,
+            "250 findings of this kind on Sheet1; the first 100 are listed"
+        );
+        assert!(!ledger[100].blocking);
+        assert_eq!(ledger[101], other);
+    }
+
+    #[test]
+    fn each_sheet_and_code_has_its_own_cap_and_hundred_is_untouched() {
+        let mut ledger = Vec::new();
+        for sheet in ["Sheet1", "Sheet2"] {
+            for code in ["date", "conversion"] {
+                ledger.extend(findings(sheet, code, 150));
+            }
+        }
+        let uncapped = findings("Sheet3", "date", 100);
+        ledger.extend(uncapped.clone());
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 504);
+        for (index, (sheet, code)) in [
+            ("Sheet1", "date"),
+            ("Sheet1", "conversion"),
+            ("Sheet2", "date"),
+            ("Sheet2", "conversion"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let start = index * 101;
+            assert_eq!(&ledger[start..start + 100], findings(sheet, code, 100));
+            let summary = &ledger[start + 100];
+            assert_eq!(summary.location, sheet);
+            assert_eq!(summary.code, code);
+            assert_eq!(ledger_summary_total(summary), Some(150));
+        }
+        assert_eq!(&ledger[404..], uncapped);
+    }
+
+    #[test]
+    fn summary_blocking_is_exactly_the_omitted_findings_blocking() {
+        for omitted_blocking in [false, true] {
+            let mut ledger = findings("Sheet1", "conversion", 250);
+            ledger[179].blocking = omitted_blocking;
+            cap_ledger(&mut ledger);
+            assert_eq!(ledger[100].blocking, omitted_blocking);
+            assert!(ledger[..100].iter().all(|finding| !finding.blocking));
+        }
+        let mut ledger = findings("Sheet1", "conversion", 250);
+        ledger[0].blocking = true;
+        cap_ledger(&mut ledger);
+        assert!(ledger[0].blocking);
+        assert!(!ledger[100].blocking);
+    }
+
+    #[test]
+    fn repeated_capping_and_appends_keep_one_exact_summary() {
+        let mut ledger = findings("Sheet1", "conversion", 250);
+        cap_ledger(&mut ledger);
+        let capped = ledger.clone();
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger, capped);
+        // Recognition survives serialization using the unchanged wire fields.
+        ledger = serde_json::from_slice(&serde_json::to_vec(&ledger).unwrap()).unwrap();
+        let mut appended = findings("Sheet1", "conversion", 50);
+        appended[49].blocking = true;
+        ledger.extend(appended);
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 101);
+        assert_eq!(&ledger[..100], &capped[..100]);
+        assert_eq!(ledger_summary_total(&ledger[100]), Some(300));
+        assert!(ledger[100].blocking);
+        let capped = ledger.clone();
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger, capped);
+    }
+
+    #[test]
+    fn workbook_locations_without_bang_are_independent_keys() {
+        let mut ledger = findings("unused", "inventory", 150);
+        for finding in &mut ledger {
+            finding.location = "workbook".into();
+        }
+        let mut source = findings("unused", "inventory", 100);
+        for finding in &mut source {
+            finding.location = "source".into();
+        }
+        ledger.extend(source.clone());
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 201);
+        assert!(
+            ledger[..101]
+                .iter()
+                .all(|finding| finding.location == "workbook")
+        );
+        assert_eq!(ledger_summary_total(&ledger[100]), Some(150));
+        assert_eq!(&ledger[101..], source);
     }
 }
