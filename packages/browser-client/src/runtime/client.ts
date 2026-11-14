@@ -29,6 +29,7 @@ import type {
   FindInViewProjection,
   FindPosition,
   ColumnTotalsProjection,
+  SelectionStatisticsProjection,
   GroupDimension,
   GroupScope,
   GroupTotalsProjection,
@@ -145,6 +146,11 @@ export interface DesignerClient {
     from: FindPosition | undefined,
     direction: FindDirection,
   ): Promise<FindInViewProjection>;
+  /** Revision-bound statistics over distinct selected cells; formulas use retained results. */
+  querySelectionStatistics(
+    expectedRevision: string,
+    targets: FieldTarget[],
+  ): Promise<SelectionStatisticsProjection>;
   /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
   queryColumnTotals(
     expectedRevision: string,

@@ -43,6 +43,7 @@ import type {
   FindInViewProjection,
   FindPosition,
   ColumnTotalsProjection,
+  SelectionStatisticsProjection,
   GroupDimension,
   GroupKey,
   GroupScope,
@@ -600,6 +601,20 @@ export class WorkerDesignerClient implements DesignerClient {
     );
   }
 
+  async querySelectionStatistics(
+    expectedRevision: string,
+    targets: FieldTarget[],
+  ): Promise<SelectionStatisticsProjection> {
+    return expectResponse(
+      "selection_statistics",
+      await this.#command({
+        type: "query_selection_statistics",
+        expected_revision: expectedRevision,
+        targets,
+      }),
+    );
+  }
+
   async queryColumnTotals(
     expectedRevision: string,
     collection: string,
@@ -850,6 +865,10 @@ function expectResponse(
   response: DesignerResponse,
 ): FindInViewProjection;
 function expectResponse(
+  type: "selection_statistics",
+  response: DesignerResponse,
+): SelectionStatisticsProjection;
+function expectResponse(
   type: "column_totals",
   response: DesignerResponse,
 ): ColumnTotalsProjection;
@@ -892,6 +911,7 @@ function expectResponse(
     case "table": validateTablePresence(response.payload); break;
     case "table_window": validateTablePresence(response.payload); break;
     case "located_in_view": validateLocatedInView(response.payload); break;
+    case "selection_statistics": validateSelectionStatistics(response.payload); break;
     case "column_totals": validateColumnTotals(response.payload); break;
     case "group_totals": validateGroupTotals(response.payload); break;
     case "opened": validateTablePresence(response.payload.table); break;
@@ -1022,6 +1042,19 @@ function validateColumnNumberFormat(column: ColumnProjection): void {
       !Number.isInteger(format.decimals) ||
       format.decimals < 0 || format.decimals > 10 || typeof format.thousands_separator !== "boolean" || !validKind) {
     throw new Error("Invalid Worker column number format.");
+  }
+}
+
+function validateSelectionStatistics(stats: SelectionStatisticsProjection): void {
+  for (const count of [stats.count, stats.numerical_count, stats.error_count]) {
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error("Invalid Worker selection statistics count.");
+    }
+  }
+  for (const value of [stats.sum, stats.average, stats.min, stats.max]) {
+    if (value !== null && !Number.isFinite(value)) {
+      throw new Error("Invalid Worker selection statistic.");
+    }
   }
 }
 

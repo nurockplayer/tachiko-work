@@ -304,6 +304,18 @@ export type ColumnTotalsProjection = {
   column_totals: Record<string, number | null>;
 };
 
+/** Statistics over distinct selected cells, with no scalar coercion. */
+export type SelectionStatisticsProjection = {
+  revision: string;
+  count: number;
+  numerical_count: number;
+  sum: number | null;
+  average: number | null;
+  min: number | null;
+  max: number | null;
+  error_count: number;
+};
+
 /** How a Date grouping dimension is bucketed; any non-Date column always groups by exact value. */
 export type GroupBucket = "value" | "month" | "year";
 
@@ -671,6 +683,11 @@ export type DesignerRequest =
       direction: FindDirection;
     }
   | {
+      type: "query_selection_statistics";
+      expected_revision: string;
+      targets: FieldTarget[];
+    }
+  | {
       type: "query_column_totals";
       expected_revision: string;
       collection: string;
@@ -731,6 +748,7 @@ export type DesignerResponse =
   | { type: "located_in_view"; payload: LocatedInViewProjection }
   | { type: "distinct_values"; payload: DistinctValuesProjection }
   | { type: "found_in_view"; payload: FindInViewProjection }
+  | { type: "selection_statistics"; payload: SelectionStatisticsProjection }
   | { type: "column_totals"; payload: ColumnTotalsProjection }
   | { type: "group_totals"; payload: GroupTotalsProjection }
   | { type: "fields"; payload: FieldBatchProjection }

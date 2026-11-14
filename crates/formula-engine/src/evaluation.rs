@@ -1069,7 +1069,10 @@ fn round_decimal(value: f64, digits: usize, directed: Option<bool>) -> f64 {
 /// remainder. A sum beyond f64 is taken again in two parts: values that scale
 /// exactly are summed at 2^-64 (the count stays below 2^64, so this part
 /// cannot overflow), and the rest unscaled, so tiny values are not lost.
-fn average(values: &[f64]) -> f64 {
+///
+/// Callers supply a nonempty slice of finite values.
+#[must_use]
+pub fn average(values: &[f64]) -> f64 {
     let count = value_count(values.len());
     let sum = exact_sum(values.iter().copied());
     if sum.is_finite() {

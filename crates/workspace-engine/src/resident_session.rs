@@ -422,6 +422,81 @@ impl ResidentWorkspaceSession {
         })
     }
 
+    /// Read selection statistics from stored values and retained calculations.
+    /// Targets fold in stable entity/field order, independent of selection order.
+    /// The host validates declared fields and duplicate targets before calling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError::MissingEntityId`] for an unknown target entity.
+    pub fn query_selection_statistics(
+        &self,
+        targets: &[FieldRef],
+    ) -> Result<ResidentQueryResult<ResidentSelectionStatistics>, WorkspaceError> {
+        let mut targets = targets.iter().collect::<Vec<_>>();
+        targets.sort_unstable();
+        let cells = targets
+            .iter()
+            .map(|target| {
+                self.document
+                    .entities
+                    .get(&target.entity)
+                    .map(|entity| (*target, entity.fields.get(&target.field)))
+                    .ok_or_else(|| WorkspaceError::MissingEntityId {
+                        entity: target.entity.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut count = 0;
+        let mut error_count = 0;
+        let mut numbers = Vec::new();
+        for (target, value) in cells {
+            let Some(value) = value else {
+                continue;
+            };
+            if matches!(value, Value::Text(text) if text.is_empty()) {
+                continue;
+            }
+            count += 1;
+            match value {
+                Value::Number(number) => numbers.push(number.get()),
+                Value::Formula(_) => {
+                    match retained_calculation_for(&self.retained.calculation_state, target) {
+                        FormulaCalculationOutcome::Value(number) => numbers.push(number.get()),
+                        FormulaCalculationOutcome::Failure(_)
+                        | FormulaCalculationOutcome::Unavailable => error_count += 1,
+                    }
+                }
+                Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_) => {}
+            }
+        }
+        let complete = error_count == 0;
+        let sum = numbers.iter().fold(0.0, |sum, value| sum + value);
+        let average =
+            (!numbers.is_empty()).then(|| tachiko_formula_engine::numeric_average(&numbers));
+        Ok(ResidentQueryResult {
+            document_scope: self.document_scope.clone(),
+            revision: self.revision.clone(),
+            value: ResidentSelectionStatistics {
+                count,
+                numerical_count: numbers.len(),
+                sum: complete.then_some(sum).filter(|sum| sum.is_finite()),
+                average: average.filter(|_| complete),
+                min: numbers
+                    .iter()
+                    .copied()
+                    .reduce(f64::min)
+                    .filter(|_| complete),
+                max: numbers
+                    .iter()
+                    .copied()
+                    .reduce(f64::max)
+                    .filter(|_| complete),
+                error_count,
+            },
+        })
+    }
+
     /// Clone the full semantic state at an explicit host snapshot boundary.
     #[must_use]
     pub fn export_snapshot(&self) -> ResidentSnapshot {
@@ -907,6 +982,18 @@ pub struct ResidentQueryResult<T> {
 pub struct ResidentColumnTotal {
     pub field: FieldId,
     pub total: Option<f64>,
+}
+
+/// Aggregate facts over one selection, without materializing cell projections.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResidentSelectionStatistics {
+    pub count: usize,
+    pub numerical_count: usize,
+    pub sum: Option<f64>,
+    pub average: Option<f64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub error_count: usize,
 }
 
 /// Bounded facts for one stable field at one resident revision.
@@ -1629,6 +1716,10 @@ mod incremental_preparation_tests;
 #[cfg(test)]
 #[path = "local_validation_tests.rs"]
 mod local_validation_tests;
+
+#[cfg(test)]
+#[path = "selection_statistics_tests.rs"]
+mod selection_statistics_tests;
 
 #[cfg(test)]
 mod tests {
