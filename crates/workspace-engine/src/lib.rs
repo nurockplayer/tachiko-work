@@ -2514,7 +2514,72 @@ pub(crate) fn finalize_edit_with_validation(
     edited: Document,
     prepared: Option<&PreparedEvaluation<'_>>,
 ) -> Result<(EditPreview, ValidationReport), WorkspaceError> {
-    let prepared = prepared.filter(|prepared| prepared.document() == &edited);
+    let (semantic_diff, report) = with_edit_calculations(
+        document,
+        &edited,
+        prepared,
+        |base, candidate, before, after, _prepared| {
+            Ok(diff_with_calculations(base, candidate, before, after)?)
+        },
+    )?;
+    Ok((
+        EditPreview {
+            document: edited,
+            diff: semantic_diff,
+        },
+        report,
+    ))
+}
+
+/// Finalize V1 lifecycle evidence without retaining rendering snapshots.
+pub(crate) fn finalize_edit_changes_with_validation(
+    document: &Document,
+    edited: Document,
+    prepared: Option<&PreparedEvaluation<'_>>,
+) -> Result<(Document, Vec<SemanticChange>, ValidationReport), WorkspaceError> {
+    let (changes, report) = with_edit_calculations(
+        document,
+        &edited,
+        prepared,
+        |base, candidate, before, after, prepared| {
+            let Some(prepared) = prepared else {
+                return Ok(diff_with_calculations(base, candidate, before, after)?.into_changes());
+            };
+            // The shared helper has already required a supported V1 pair.
+            let changes = diff_changes_scoped(
+                base,
+                candidate,
+                before,
+                after,
+                &prepared.projection_changes().diff_scope(),
+            );
+            #[cfg(test)]
+            assert_eq!(
+                diff_with_calculations(base, candidate, before, after)?.changes(),
+                changes.as_slice(),
+                "prepared V1 scope must preserve every change and its order",
+            );
+            Ok(changes)
+        },
+    )?;
+    Ok((edited, changes, report))
+}
+
+/// Keep both finalizers' failure order: validation, projection preflight,
+/// supported diff vocabulary, then the base calculation.
+fn with_edit_calculations<T>(
+    document: &Document,
+    edited: &Document,
+    prepared: Option<&PreparedEvaluation<'_>>,
+    build: impl FnOnce(
+        &Document,
+        &Document,
+        &Calculation,
+        &Calculation,
+        Option<&PreparedEvaluation<'_>>,
+    ) -> Result<T, WorkspaceError>,
+) -> Result<(T, ValidationReport), WorkspaceError> {
+    let prepared = prepared.filter(|prepared| prepared.document() == edited);
     let fallback;
     let (report, calculation) = if let Some(prepared) = prepared {
         // The prepared calculation is `None` exactly when the candidate's
@@ -2528,7 +2593,7 @@ pub(crate) fn finalize_edit_with_validation(
             ));
         }
     } else {
-        fallback = semantic_validation(&edited);
+        fallback = semantic_validation(edited);
         if let Some(calculation) = fallback.1.as_ref() {
             (&fallback.0, calculation)
         } else {
@@ -2539,9 +2604,9 @@ pub(crate) fn finalize_edit_with_validation(
         }
     };
     if !prepared.is_some_and(PreparedEvaluation::candidate_preflight_succeeded) {
-        preflight_formula_projections(&edited)?;
+        preflight_formula_projections(edited)?;
     }
-    tachiko_diff_engine::require_diff_supported(document, &edited)?;
+    tachiko_diff_engine::require_diff_supported(document, edited)?;
     let calculated_base;
     let base_calculation =
         if let Some(calculation) = prepared.and_then(PreparedEvaluation::base_calculation) {
@@ -2557,12 +2622,8 @@ pub(crate) fn finalize_edit_with_validation(
             evaluation_counters::record_base_calculation();
             &calculated_base
         };
-    let semantic_diff = diff_with_calculations(document, &edited, base_calculation, calculation)?;
     Ok((
-        EditPreview {
-            document: edited,
-            diff: semantic_diff,
-        },
+        build(document, edited, base_calculation, calculation, prepared)?,
         report.clone(),
     ))
 }
