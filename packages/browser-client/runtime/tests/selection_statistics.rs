@@ -329,24 +329,16 @@ fn selection_statistics_wire_request_limit_depends_on_session_profile() {
 
     let mut working = Some(working);
     let reply = process_wire_request(&mut working, &input);
-    let DesignerWireReply::Ok {
-        response: DesignerResponse::SelectionStatistics(stats),
-    } = serde_json::from_slice(&reply).unwrap()
-    else {
-        panic!("expected working-size selection statistics");
-    };
-    assert_eq!(
-        stats,
-        SelectionStatisticsProjection {
-            revision: before.revision.clone(),
-            count: 1,
-            numerical_count: 1,
-            sum: Some(2.0),
-            average: Some(2.0),
-            min: Some(2.0),
-            max: Some(2.0),
-            error_count: 0,
-        }
-    );
+    let reply: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(reply["response"]["type"], "selection_statistics", "{reply}");
+    let mut expected: serde_json::Value = serde_json::from_str(
+        r#"{
+        "revision": "", "count": 1, "numerical_count": 1,
+        "sum": 2.0, "average": 2.0, "min": 2.0, "max": 2.0, "error_count": 0
+    }"#,
+    )
+    .unwrap();
+    expected["revision"] = serde_json::to_value(&before.revision).unwrap();
+    assert_eq!(reply["response"]["payload"], expected);
     assert_eq!(working.as_ref().unwrap().observe_occurrence(), before);
 }
