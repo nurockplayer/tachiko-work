@@ -1949,14 +1949,16 @@ fn capacity_809_formula_table() {
             if i > 0 && reduced() {
                 break;
             }
-            let (opened, sample) = measure_809(|| open_809(&bytes, rows));
+            let (opened, sample) = measure_809(|| {
+                open_project_working_size(&mut runtime, &bytes, OCCURRENCE_809).expect("open fixture")
+            });
+            assert_eq!(opened.window.total_rows, rows);
             report_809(
                 rows,
                 &format!("open {}", i + 1),
                 std::slice::from_ref(&sample),
             );
             opens.push(sample);
-            runtime = Some(opened);
         }
         growth.insert(
             (rows, "open".into()),

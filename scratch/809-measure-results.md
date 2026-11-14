@@ -2,6 +2,12 @@
 
 **Scratch only — never merge.** Measured code: `748ee11f` (the results commit only adds this report).
 
+Measurement correction: repeated native opens here exclude destruction of the
+previous resident; `open_809` used a fresh slot and the caller replaced its slot
+after timing. Reopen also measures admission into a fresh slot. The step-2
+diagnosis records this limitation; the corrected benchmark measures repeated
+opens through the retained slot. Historical timings below are unchanged.
+
 Run: **2026-11-14 17:15:06–17:35:02 JST**. [Successful hosted run](https://github.com/nurockplayer/tachiko-work/actions/runs/43574909805), GitHub-hosted Ubuntu 24.04, Rust 1.99.0, Node 24, pnpm 12.11.2. Native ignored bench: 80.20 s. Entire remote command: 1,185 s (includes builds/install and WASM).
 
 All four sizes completed 3 opens, 30 edits, 3 clears of each kind and 3 save/reopen pairs. **No repeat reduction.** Clears start from fresh opens, outside the measured interval. The first edit's column_7 result was asserted to equal twice the edited value; clear publications and the absence of cleared fields were asserted. The WASM path checks successful real ABI responses, row count and zero-row replies.

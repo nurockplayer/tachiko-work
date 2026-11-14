@@ -43,7 +43,7 @@ No product behavior or capacity gates have been changed and no fixes are in scop
 Run remotely (no host cargo builds):
 
 ```sh
-job-run --id 809-measure -- remote-test -- 'cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture && pnpm --dir packages/browser-client install --frozen-lockfile && pnpm --dir packages/browser-client build && node packages/browser-client/runtime/tests/capacity_809_wire.mjs packages/browser-client/.build/designer_runtime.wasm'
+job-run --id 809-measure -- orb-test -- bash -lc 'CAPACITY_809_ALL_SIZES=1 cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture && pnpm --dir packages/browser-client install --frozen-lockfile && pnpm --dir packages/browser-client build && node packages/browser-client/runtime/tests/capacity_809_wire.mjs packages/browser-client/.build/designer_runtime.wasm'
 ```
 
 The full remote command-step log contains all tables. Do not merge this branch,
