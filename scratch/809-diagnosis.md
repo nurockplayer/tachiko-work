@@ -130,7 +130,7 @@ The existing bench now defaults to 10,000 rows only. Set
 needs no extra environment variable for this diagnostic rerun:
 
 ```sh
-job-run --id 809-diagnose-corrected -- orb-test -- bash -lc 'cargo fmt --all -- --check && cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml -- --check && cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture'
+job-run --id 809-diagnose-rust -- orb-test --image rust:1.99.0 -- bash -c 'rustup component add rustfmt && cargo fmt --all -- --check && cargo fmt --manifest-path packages/browser-client/runtime/Cargo.toml -- --check && cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture'
 ```
 
 Repetitions, fixture, assertions and native typed-call boundaries are unchanged.
@@ -138,6 +138,16 @@ There is no WASM run in step 2. Step-1 results remain in `809-measure-results.md
 The completed run above used the previously handed-off `remote-test` command;
 the correction runs through `orb-test`. Its measurement does not retroactively
 validate the later benchmark correction.
+
+Correction validation attempt `809-diagnose-corrected`, **2026-11-14
+18:06:34–18:10:28 JST**, exited 127 before formatting or tests. Dot reported
+`dot-ci: dot-run exited 5 without a result`; orb-test then fell back to
+`orb-test-node:24`, where the command failed with
+`bash: line 1: cargo: command not found`. No correction measurement was collected.
+The single infrastructure retry above explicitly uses a Rust image and a
+non-login shell to preserve that image's toolchain PATH. Its native timings,
+if collected, run on the Mac's OrbStack VM and are a different environment from
+the hosted-runner diagnosis; they must not be treated as optimization deltas.
 
 ## Instrumentation assumptions
 
