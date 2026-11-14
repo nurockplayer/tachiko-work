@@ -1521,33 +1521,40 @@ const LEDGER_FINDINGS_PER_KEY: usize = 100;
 // Summaries use the existing wire fields. Only the exact module-generated
 // message at a sheet/workbook location is interpreted as an accumulated count.
 fn ledger_summary_total(finding: &FidelityFinding) -> Option<usize> {
-    if ledger_key_location(&finding.location) != finding.location {
-        return None;
-    }
     let (total, location) = finding.message.split_once(" findings of this kind on ")?;
     let location = location.strip_suffix("; the first 100 are listed")?;
     let total = total.parse::<usize>().ok()?;
     (location == finding.location && total > LEDGER_FINDINGS_PER_KEY).then_some(total)
 }
 
-// Worksheet names may contain `!`, so only a trailing `!<cell>…` is cut off.
-fn ledger_key_location(location: &str) -> &str {
+// A summary is keyed by the location it names. Worksheet names may contain
+// `!`, so for other findings only a trailing `!<A1 cell or range>` (optionally
+// followed by `/detail`) is cut off.
+fn ledger_key(finding: &FidelityFinding) -> &str {
+    let location = finding.location.as_str();
+    if ledger_summary_total(finding).is_some() {
+        return location;
+    }
     location
         .rsplit_once('!')
-        .filter(|(_, address)| starts_with_a1_cell(address))
+        .filter(|(_, address)| {
+            is_a1_reference(address.split_once('/').map_or(address, |(cell, _)| cell))
+        })
         .map_or(location, |(sheet, _)| sheet)
 }
 
-fn starts_with_a1_cell(address: &str) -> bool {
-    let address = address.strip_prefix('$').unwrap_or(address);
-    let letters = address.bytes().take_while(u8::is_ascii_uppercase).count();
-    let rest = &address[letters..];
-    let rest = rest.strip_prefix('$').unwrap_or(rest);
-    (1..=3).contains(&letters)
-        && rest
-            .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_digit())
+fn is_a1_reference(address: &str) -> bool {
+    let mut cells = address.split(':');
+    let first = cells.next().is_some_and(is_a1_cell);
+    first && cells.next().is_none_or(is_a1_cell) && cells.next().is_none()
+}
+
+fn is_a1_cell(cell: &str) -> bool {
+    let cell = cell.strip_prefix('$').unwrap_or(cell);
+    let letters = cell.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let row = &cell[letters..];
+    let row = row.strip_prefix('$').unwrap_or(row);
+    (1..=3).contains(&letters) && !row.is_empty() && row.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 struct LedgerTally {
@@ -1562,7 +1569,7 @@ struct LedgerTally {
 pub(crate) fn cap_ledger(ledger: &mut Vec<FidelityFinding>) {
     let mut tallies = BTreeMap::new();
     for finding in ledger.iter() {
-        let sheet = ledger_key_location(&finding.location);
+        let sheet = ledger_key(finding);
         let tally = tallies
             .entry((finding.code.clone(), sheet.to_owned()))
             .or_insert_with(|| LedgerTally {
@@ -1591,8 +1598,7 @@ pub(crate) fn cap_ledger(ledger: &mut Vec<FidelityFinding>) {
         if ledger_summary_total(&finding).is_some() {
             continue;
         }
-        let sheet = ledger_key_location(&finding.location);
-        let key = (finding.code.clone(), sheet.to_owned());
+        let key = (finding.code.clone(), ledger_key(&finding).to_owned());
         let tally = tallies.get_mut(&key).expect("every finding was counted");
         if tally.listed == LEDGER_FINDINGS_PER_KEY {
             continue;
@@ -7729,6 +7735,46 @@ mod ledger_cap_tests {
         cap_ledger(&mut ledger);
         assert_eq!(ledger.len(), 202);
         assert_eq!(ledger_summary_total(&ledger[201]), Some(160));
+    }
+
+    #[test]
+    fn sheet_names_ending_like_a_cell_keep_their_summary_on_recap() {
+        let mut ledger = findings("Sales!Q1", "conversion", 150);
+        ledger.extend(findings("Sales", "conversion", 150));
+        cap_ledger(&mut ledger);
+        ledger.extend(findings("Sales!Q1", "conversion", 10));
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 202);
+        assert_eq!(ledger[100].location, "Sales!Q1");
+        assert_eq!(ledger_summary_total(&ledger[100]), Some(160));
+        assert_eq!(ledger[201].location, "Sales");
+        assert_eq!(ledger_summary_total(&ledger[201]), Some(150));
+    }
+
+    #[test]
+    fn lowercase_ranges_and_detail_suffixes_share_the_sheet_cap() {
+        let mut ledger: Vec<_> = (1..=150)
+            .map(|row| FidelityFinding {
+                category: FidelityCategory::Converted,
+                code: "conversion".into(),
+                location: match row % 3 {
+                    0 => format!("Sheet1!a{row}"),
+                    1 => format!("Sheet1!$B${row}:C{row}"),
+                    _ => format!("Sheet1!D{row}/number-format"),
+                },
+                message: format!("finding {row}"),
+                blocking: false,
+            })
+            .collect();
+        ledger.push(FidelityFinding {
+            location: "Sheet1!Q1:column 3".into(),
+            ..ledger[0].clone()
+        });
+        cap_ledger(&mut ledger);
+        assert_eq!(ledger.len(), 102);
+        assert_eq!(ledger[100].location, "Sheet1");
+        assert_eq!(ledger_summary_total(&ledger[100]), Some(150));
+        assert_eq!(ledger[101].location, "Sheet1!Q1:column 3");
     }
 
     #[test]
