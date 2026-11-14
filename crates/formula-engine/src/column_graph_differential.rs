@@ -669,11 +669,11 @@ fn retained_scalar_edit_reports_only_the_changed_formula_projection() {
         retained.value(&field_ref("r", "output")),
         Number::new(2.0).ok()
     );
-    assert!(
+    assert_eq!(
         retained
             .update(&document, &roots)
-            .changed_calculation_projections
-            .is_empty()
+            .changed_calculation_projections,
+        Vec::<FieldRef>::new()
     );
 }
 
@@ -727,11 +727,11 @@ fn retained_constant_formula_root_changes_report_by_membership() {
             .unwrap()
             .fields
             .insert(FieldId::from("constant"), value);
-        assert!(
+        assert_eq!(
             retained
                 .update(&document, &roots)
-                .changed_calculation_projections
-                .is_empty()
+                .changed_calculation_projections,
+            Vec::<FieldRef>::new()
         );
     }
 }
