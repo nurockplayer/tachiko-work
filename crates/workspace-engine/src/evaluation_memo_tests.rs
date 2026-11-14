@@ -4231,6 +4231,7 @@ fn assert_consumed_matches_borrowed(document: Document, body: SemanticPatchBody,
         super::EvaluatedDocument::Installation(_)
     ));
     let candidate = old.plan_commands(&document, &body).unwrap().0;
+    let nochange = candidate == document;
     let old_prepared = old_session.prepare_evaluation(candidate);
     let old_proposal =
         propose_with(&mut old, &document, revision.as_str(), body, &old_prepared).unwrap();
@@ -4287,6 +4288,8 @@ fn assert_consumed_matches_borrowed(document: Document, body: SemanticPatchBody,
     }
     if stale {
         assert!(matches!(actual, Err(PatchLifecycleError::Stale)));
+    } else if nochange {
+        assert!(matches!(actual, Err(PatchLifecycleError::NoChange)));
     }
     assert_eq!(
         owned_session.export_snapshot(),
@@ -4299,7 +4302,9 @@ fn assert_consumed_matches_borrowed(document: Document, body: SemanticPatchBody,
 #[test]
 fn consumed_scalar_and_nochange_match_borrowed_execution() {
     assert_consumed_matches_borrowed(formula_document(), set_g_number(2.0), false);
-    assert_consumed_matches_borrowed(formula_document(), set_g_number(1.0), false);
+    let round_trip =
+        SemanticPatchBody::atomic_batch(vec![set_number("g", 2.0), set_number("g", 1.0)]).unwrap();
+    assert_consumed_matches_borrowed(formula_document(), round_trip, false);
 }
 
 #[test]
@@ -4313,11 +4318,7 @@ fn consumed_structural_batch_and_column_clear_match_borrowed_execution() {
         SemanticCommand::AppendSchemaField {
             schema: "s".into(),
             field: optional_number_field("added"),
-            values: BTreeMap::new(),
-        },
-        SemanticCommand::SetFieldValue {
-            field: FieldRef::new("e1", "added"),
-            value: Value::Number(Number::new(4.0).unwrap()),
+            values: BTreeMap::from([("e1".into(), Value::Number(Number::new(4.0).unwrap()))]),
         },
         set_number("g", 3.0),
     ])
@@ -4424,4 +4425,19 @@ fn owned_publication_default_keeps_full_candidate_verification() {
         .publish_owned_if_current(&"scope".into(), &"r1".into(), installation, |_| Some(()))
         .unwrap();
     assert!(!published.proof.unwrap().candidate_matches);
+}
+
+#[test]
+fn consumed_same_value_planning_keeps_the_existing_refusal() {
+    let document = formula_document();
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let lifecycle = v2_lifecycle();
+    let body = set_g_number(1.0);
+    let actual = lifecycle
+        .plan_resident_commands(&session, &body)
+        .unwrap_err();
+    let expected = lifecycle.plan_commands(&document, &body).unwrap_err();
+    assert!(matches!(actual, WorkspaceError::NoChange { .. }));
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert_eq!(session.document(), &document);
 }
