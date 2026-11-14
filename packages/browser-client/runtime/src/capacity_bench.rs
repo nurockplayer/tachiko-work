@@ -1919,7 +1919,12 @@ fn window_809(runtime: &mut DesignerRuntime) -> PhaseSample809 {
 #[ignore = "scratch #809 native phase measurement"]
 fn capacity_809_formula_table() {
     let mut growth: BTreeMap<(usize, String), f64> = BTreeMap::new();
-    for rows in [2_500, 5_000, 7_500, 10_000] {
+    let sizes: &[usize] = if std::env::var_os("CAPACITY_809_ALL_SIZES").is_some() {
+        &[2_500, 5_000, 7_500, 10_000]
+    } else {
+        &[10_000]
+    };
+    for &rows in sizes {
         let size_started = Instant::now();
         let reduced = || rows == 10_000 && size_started.elapsed().as_secs() > 15 * 60;
         let document = formula_table_809(rows);
@@ -2076,7 +2081,7 @@ fn capacity_809_formula_table() {
     }
     println!("\n### Native growth 5,000 → 10,000 rows (ratio of step p50)");
     for ((rows, step), ms) in &growth {
-        if *rows == 10_000 {
+        if *rows == 10_000 && growth.contains_key(&(5_000, step.clone())) {
             println!("| {step} | {:.3}× |", ms / growth[&(5_000, step.clone())]);
         }
     }

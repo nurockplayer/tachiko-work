@@ -198,3 +198,9 @@ mod enabled {
 
     pub(super) const fn record_json_bytes(_count: u64) {}
 }
+
+// Scratch diagnosis: expression timer, including the expression's own temporaries.
+pub fn timed<R>(name: &'static str, action: impl FnOnce() -> R) -> R {
+    let _phase = PhaseTimer::new(name);
+    action()
+}

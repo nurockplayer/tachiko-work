@@ -1944,6 +1944,8 @@ impl PatchLifecycle {
         prepared: Option<&PreparedEvaluation<'_>>,
         witness: Option<&DocumentWitness<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
+        let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("propose_inner");
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("proposal_context");
         let prepared = prepared.filter(|prepared| match witness {
             // The witness names the occurrence and revision this evaluation was
             // prepared against, so its base document is this exact document.
@@ -2005,6 +2007,8 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::DuplicateFieldConstraintWrite { schema, field });
         }
 
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("plan_commands");
         let (candidate, writes) = match self.plan_commands(document, patch.exact_change.body()) {
             Ok(planned) => planned,
             Err(source) => {
@@ -2020,6 +2024,10 @@ impl PatchLifecycle {
                 });
             }
         };
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "authorize_mutation_and_record",
+        );
         let provisional_footprint = AuthorizationFootprint {
             disclosure_requirements: BTreeSet::new(),
             associated_write_requirements: writes,
@@ -2044,6 +2052,9 @@ impl PatchLifecycle {
 
         // A failed evaluation must not leave an earlier evaluation reusable.
         self.evaluation_memo = None;
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("finalize_evaluation");
         let evaluated = match self.finalize_evaluation(
             document,
             candidate,
@@ -2071,6 +2082,9 @@ impl PatchLifecycle {
                 return Err(error);
             }
         };
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("store_evaluation_memo");
         record.footprint = Some(evaluated.footprint.clone());
         self.proposals.insert(patch.id.clone(), record);
         let base = if let Some(witness) = witness {
@@ -2543,9 +2557,11 @@ impl PatchLifecycle {
         now: TrustedInstant,
         expected_profile: EvidenceProfile,
     ) -> Result<ProfiledReceipt, PatchLifecycleError> {
+        let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("execute_profile");
         // Taking the slot up front makes the memo unusable after this
         // execution whatever its outcome, so no base document outlives it and
         // a retried execute evaluates again.
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("execute_context");
         let retained = self.evaluation_memo.take();
         let (current_document_scope, document, current_revision) = publication.current_snapshot();
         let witness = publication.current_snapshot_witness();
@@ -2586,6 +2602,8 @@ impl PatchLifecycle {
             now,
         )?;
 
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("reuse_evaluation");
         let evaluated = match retained {
             Some(memo)
                 if memo.patch == proposal.patch
@@ -2595,6 +2613,9 @@ impl PatchLifecycle {
             }
             _ => self.evaluate_patch(document, &proposal.patch)?,
         };
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("authorize_and_publish");
         if evaluated.footprint != footprint {
             return Err(PatchLifecycleError::ApprovalBindingMismatch);
         }
@@ -2619,6 +2640,8 @@ impl PatchLifecycle {
                 candidate: &evaluated.document,
             },
         )?;
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("receipt_building");
         let can_disclose = published.authorization.can_disclose;
         let mut receipt = match evaluated.evidence {
             PatchEvidence::V1(semantic_changes) => {
@@ -2664,6 +2687,8 @@ impl PatchLifecycle {
                 ProfiledReceipt::V2(receipt)
             }
         };
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("verification");
         let verification_report = match self.verify_publication(
             proposal_id,
             &current_revision,
@@ -2676,6 +2701,9 @@ impl PatchLifecycle {
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
         };
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("receipt_store_and_redact");
         self.append_state(proposal_id, PatchLifecycleState::Verified);
         match &mut receipt {
             ProfiledReceipt::V1(receipt) => {
@@ -2705,6 +2733,13 @@ impl PatchLifecycle {
                 }
             }
         }
+        drop(part809);
+        tachiko_semantic_core::instrumentation::timed("drop_evaluated_document", || {
+            drop(evaluated.document)
+        });
+        tachiko_semantic_core::instrumentation::timed("drop_evaluated_footprint", || {
+            drop(evaluated.footprint)
+        });
         Ok(receipt)
     }
 
@@ -2978,6 +3013,8 @@ impl PatchLifecycle {
         publication: &'authority mut impl SemanticPublicationAuthority,
         attempt: PublicationAttempt<'_>,
     ) -> Result<PublishedCandidate<'authority>, PatchLifecycleError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("publish_candidate");
         let PublicationAttempt {
             proposal_id,
             proposal,
@@ -3134,6 +3171,8 @@ impl PatchLifecycle {
         installed_document_scope: &DocumentScopeId,
         installed_document: &Document,
     ) -> Result<ValidationReport, PatchLifecycleError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("verify_publication");
         let (candidate, evaluated_report) = evaluated;
         if installed_document_scope != &self.document_scope {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
@@ -3177,6 +3216,8 @@ impl PatchLifecycle {
     /// Nothing reads the stored records during a request: callers use the
     /// receipt returned by execution.
     pub fn discard_settled_records(&mut self, keep: usize) {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("discard_settled_records");
         if self.execution_receipts.len() > keep {
             let excess = self.execution_receipts.len() - keep;
             self.execution_receipts.drain(..excess);
@@ -3945,10 +3986,15 @@ impl PatchLifecycle {
         admit_command_names(body)?;
         #[cfg(test)]
         super::planning_counters::record_document_clone();
-        let mut candidate = document.clone();
+        let mut candidate =
+            tachiko_semantic_core::instrumentation::timed("planner_document_clone", || {
+                document.clone()
+            });
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
         let mut append_entities = EntityAppendPlanning::default();
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("apply_and_derive_writes");
         for command in body.commands() {
             // Only the cell edits keep the batch state; every other command
             // may change the structures and keys it rests on.
@@ -4398,6 +4444,7 @@ impl PatchLifecycle {
                 }
             }
         }
+        drop(part809);
         Ok((candidate, writes))
     }
 
@@ -4444,6 +4491,8 @@ impl PatchLifecycle {
                 prepared,
             );
         }
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("v1_compatibility_checks");
         reject_legacy_number_formats(base, &candidate, body)?;
         reject_legacy_field_orders(base, &candidate, body)?;
         if contains_constraint_command(body)
@@ -4494,6 +4543,10 @@ impl PatchLifecycle {
                 },
             });
         }
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "finalize_edit_with_validation",
+        );
         let (edit, validation_report) =
             match finalize_edit_with_validation(base, candidate, prepared) {
                 Ok(result) => result,
@@ -4506,11 +4559,16 @@ impl PatchLifecycle {
                     });
                 }
             };
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+            "evidence_impact_and_disclosures",
+        );
         let semantic_changes = edit.diff.changes().to_vec();
         let formula_impacts = formula_impacts(&semantic_changes);
         let disclosure_requirements =
             self.derive_disclosures(base, &edit.document, body, &semantic_changes)?;
-        Ok(EvaluatedPatch {
+        drop(part809);
+        let result = EvaluatedPatch {
             document: edit.document,
             evidence: PatchEvidence::V1(semantic_changes),
             formula_impacts,
@@ -4519,7 +4577,9 @@ impl PatchLifecycle {
                 disclosure_requirements,
                 associated_write_requirements,
             },
-        })
+        };
+        tachiko_semantic_core::instrumentation::timed("drop_v1_diff_snapshots", || drop(edit.diff));
+        Ok(result)
     }
 
     fn finalize_evaluation_v2(
@@ -4530,13 +4590,17 @@ impl PatchLifecycle {
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
         prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("finalize_evaluation_v2");
         // Only a successful evaluation of this exact candidate against a base
         // that today's path would accept can replace today's validation,
         // calculation and evidence work; every other case keeps it unchanged.
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("v2_reuse_check");
         let reusable = prepared
             .filter(|prepared| {
-                prepared.document() == &candidate
-                    && matches!(prepared.verdict(), PreparedVerdict::Valid)
+                tachiko_semantic_core::instrumentation::timed("candidate_matches_prepared", || {
+                    prepared.document() == &candidate
+                }) && matches!(prepared.verdict(), PreparedVerdict::Valid)
                     && prepared.base_report_valid()
                     && super::validate_keyed_grouped_sum_definitions(base).is_ok()
             })
@@ -4553,6 +4617,8 @@ impl PatchLifecycle {
         // projection over snapshots without names, constraints, or saved definitions.
         // Formulas cannot read definitions; both real snapshots passed complete
         // validation above. Direct v2 evidence is always produced separately.
+        drop(part809);
+        let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("v2_evidence");
         let (validation_report, delta, formula_changes) =
             if let Some((prepared, report, base_calculation, candidate_calculation, changes)) =
                 reusable
@@ -4624,6 +4690,9 @@ impl PatchLifecycle {
                 })?;
                 (report, delta, formula_projection.changes().to_vec())
             };
+        drop(part809);
+        let part809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("v2_impacts_and_disclosures");
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
             self.derive_disclosures(base, &candidate, body, &formula_changes)?;
@@ -4736,6 +4805,8 @@ impl PatchLifecycle {
         body: &SemanticPatchBody,
         changes: &[SemanticChange],
     ) -> Result<BTreeSet<DisclosureRequirement>, PatchLifecycleError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("derive_disclosures");
         let mut derivation = DisclosureDerivation::new(self, before, after, body);
         for command in body.commands() {
             derivation.insert_command_disclosures(command)?;
@@ -4949,6 +5020,8 @@ impl PatchLifecycle {
         requirements: &BTreeSet<AssociatedWriteRequirement>,
         now: TrustedInstant,
     ) -> Result<BTreeSet<GrantId>, PatchLifecycleError> {
+        let _phase809b =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("authorize_mutation");
         self.require_active_principal(subject)?;
         let mut used = BTreeSet::new();
         for required in requirements {
@@ -6070,6 +6143,8 @@ fn formula_projection_document(document: &Document) -> Document {
 /// and entities, nothing else, so it reports the same changes on this as on
 /// [`formula_projection_document`] without copying the rest of the document.
 fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) -> Document {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("scoped_formula_projection");
     let mut projection = Document::empty(document.id.clone(), document.title.clone());
     for schema_id in &scope.schemas {
         if let Some(schema) = document.schemas.get(schema_id) {

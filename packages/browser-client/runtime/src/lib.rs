@@ -5117,6 +5117,8 @@ impl DesignerRuntime {
         spec: &CollectionSpec,
         members: &[EntityId],
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let _phase809b =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("totals_for_entities");
         let fields = spec
             .columns
             .iter()
@@ -7797,8 +7799,15 @@ impl DesignerRuntime {
                 }
                 None => self.refresh_structure(),
             }
-            if let Ok(sources) = self.session.formula_source_projections() {
-                self.formula_sources = sources;
+            if let Ok(sources) =
+                tachiko_workspace_engine::instrumentation::timed("formula_source_refresh", || {
+                    self.session.formula_source_projections()
+                })
+            {
+                tachiko_workspace_engine::instrumentation::timed(
+                    "replace_and_drop_formula_sources",
+                    || self.formula_sources = sources,
+                );
             }
         }
         // Only the resident registry accumulates one receipt and settled
@@ -7849,6 +7858,8 @@ impl DesignerRuntime {
     }
 
     fn refresh_structure(&mut self) {
+        let _phase809b =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("refresh_structure");
         self.capacity_usage = CapacityUsage::measure_for(self.session.document(), self.profile);
         self.collection_specs = collection_specs(self.session.document());
         self.collections = self
@@ -10907,6 +10918,8 @@ fn map_duplicate_column(
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
+    let _phase809b =
+        tachiko_workspace_engine::instrumentation::PhaseTimer::new("collection_specs_scan");
     document
         .schemas
         .values()

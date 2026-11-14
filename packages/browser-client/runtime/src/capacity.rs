@@ -227,6 +227,8 @@ impl CapacityUsage {
     }
 
     pub(crate) fn measure_for(document: &Document, profile: SessionProfile) -> Self {
+        let _phase809b =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("measure_document_capacity");
         let mut usage = Self {
             collections: document.schemas.len(),
             total_entities: document.entities.len(),

@@ -394,6 +394,8 @@ pub fn canonical_delta_scoped(
     _after_calculation: &Calculation,
     scope: &DiffScope,
 ) -> Result<CanonicalSemanticDelta, CanonicalDeltaError> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("canonical_delta_scoped");
     admit_delta_selector(contract, before, after)?;
     let mut facts = Vec::new();
     compare_title(before, after, &mut facts);

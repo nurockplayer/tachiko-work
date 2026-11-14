@@ -50,3 +50,5 @@ The full remote command-step log contains all tables. Do not merge this branch,
 change production behavior, or recommend fixes from this measurement.
 
 Completed measurements and all phase tables: [809-measure-results.md](809-measure-results.md).
+
+Step 2 defaults the bench to 10,000 rows only; use `CAPACITY_809_ALL_SIZES=1` for the original four-size run. See [809-diagnosis.md](809-diagnosis.md).

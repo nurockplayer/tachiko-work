@@ -294,6 +294,8 @@ pub fn diff_with_calculations(
     before_calculation: &Calculation,
     after_calculation: &Calculation,
 ) -> Result<SemanticDiff, DiffError> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("v1_diff_with_calculations");
     require_diff_supported(before, after)?;
     let mut changes = Vec::new();
     let mut changed_fields = BTreeSet::new();
@@ -302,12 +304,17 @@ pub fn diff_with_calculations(
     compare_document(before, after, &mut changes);
     compare_schemas(before, after, &mut changes);
 
+    let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("union_all_entity_ids");
     let entity_ids: BTreeSet<_> = before
         .entities
         .keys()
         .chain(after.entities.keys())
         .cloned()
         .collect();
+    drop(part809);
+    let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+        "compare_all_entities_and_descriptors",
+    );
     compare_entities(
         before,
         after,
@@ -317,6 +324,9 @@ pub fn diff_with_calculations(
         Some(&mut descriptors),
     );
 
+    drop(part809);
+    let part809 =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("formula_impacts_all_formulas");
     push_formula_impacts(
         formula_fields(before)
             .union(&formula_fields(after))
@@ -328,11 +338,16 @@ pub fn diff_with_calculations(
         &mut changes,
     );
 
+    drop(part809);
     Ok(SemanticDiff {
         changes,
         descriptors,
-        before: before.clone(),
-        after: after.clone(),
+        before: tachiko_semantic_core::instrumentation::timed("diff_before_document_clone", || {
+            before.clone()
+        }),
+        after: tachiko_semantic_core::instrumentation::timed("diff_after_document_clone", || {
+            after.clone()
+        }),
     })
 }
 
@@ -370,6 +385,7 @@ pub fn diff_changes_scoped(
     after_calculation: &Calculation,
     scope: &DiffScope,
 ) -> Vec<SemanticChange> {
+    let _phase809b = tachiko_semantic_core::instrumentation::PhaseTimer::new("scoped_formula_diff");
     let mut changes = Vec::new();
     let mut changed_fields = BTreeSet::new();
 
@@ -388,11 +404,17 @@ pub fn diff_changes_scoped(
     // when an added row moves a column average, so the candidate set is the
     // formula keys of the two calculations themselves. They are the same keys
     // a document walk would collect, without the walk.
+    let part809 =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("enumerate_all_formula_candidates");
     let formulas = before_calculation
         .formulas()
         .chain(after_calculation.formulas())
         .cloned()
         .collect::<BTreeSet<_>>();
+    drop(part809);
+    let part809 = tachiko_semantic_core::instrumentation::PhaseTimer::new(
+        "compare_formula_outcomes_and_causes",
+    );
     push_formula_impacts(
         formulas,
         before_calculation,
@@ -401,6 +423,7 @@ pub fn diff_changes_scoped(
         &mut changes,
     );
 
+    drop(part809);
     changes
 }
 
@@ -413,6 +436,10 @@ fn push_formula_impacts(
     changed_fields: &BTreeSet<FieldRef>,
     changes: &mut Vec<SemanticChange>,
 ) {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("push_formula_impacts");
+    let part809 =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("compare_all_formula_values");
     let impacted = formulas
         .into_iter()
         .filter_map(|formula| {
@@ -422,6 +449,7 @@ fn push_formula_impacts(
         })
         .collect::<Vec<_>>();
 
+    drop(part809);
     // Only the formulas with a changed value need causes, and an edit reaching
     // none of them never pays for the walks.
     if impacted.is_empty() {
@@ -431,8 +459,14 @@ fn push_formula_impacts(
         .iter()
         .map(|(formula, _, _)| formula.clone())
         .collect::<BTreeSet<_>>();
-    let before_reaching = before_calculation.reaching_fields(changed_fields, &targets);
-    let after_reaching = after_calculation.reaching_fields(changed_fields, &targets);
+    let before_reaching =
+        tachiko_semantic_core::instrumentation::timed("before_reaching_fields", || {
+            before_calculation.reaching_fields(changed_fields, &targets)
+        });
+    let after_reaching =
+        tachiko_semantic_core::instrumentation::timed("after_reaching_fields", || {
+            after_calculation.reaching_fields(changed_fields, &targets)
+        });
     for (formula, before_value, after_value) in impacted {
         let mut causes = BTreeSet::new();
         if changed_fields.contains(&formula) {
@@ -716,6 +750,8 @@ fn compare_entity(
 }
 
 fn formula_fields(document: &Document) -> BTreeSet<FieldRef> {
+    let _phase809b =
+        tachiko_semantic_core::instrumentation::PhaseTimer::new("scan_all_formula_fields");
     document
         .entities
         .iter()
