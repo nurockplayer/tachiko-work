@@ -39,6 +39,12 @@ Start here when building a Tachiko UI outside the main repository:
 The current client kit is deliberately experimental. It is not an npm package,
 stable SDK, stable wire protocol, or compatibility promise.
 
+## Proposed designs
+
+- [#809: shared storage for the in-memory Document and retained state](809-shared-document-storage-design.md)
+  — proposed set B representation, ownership and migration plan; implementation
+  waits for work-lead's approval.
+
 ## Historical implementation planning
 
 - [MVP implementation plan](mvp-implementation-plan.md)
