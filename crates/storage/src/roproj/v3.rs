@@ -166,9 +166,6 @@ impl CanonicalRoProjectV3 {
         }
         let mut canonical_files = Vec::with_capacity(files.len());
         for (index, (path, bytes)) in files.into_iter().enumerate() {
-            drop(phase809);
-            let phase809 =
-                tachiko_semantic_core::instrumentation::PhaseTimer::new("canonical_encode_compare");
             let expected = ROPROJ_V3_PATHS
                 .get(index)
                 .copied()
@@ -208,6 +205,9 @@ impl CanonicalRoProjectV3 {
                 .map_err(|error| presentation_error(&error))
                 .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         }
+        drop(phase809);
+        let phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("canonical_encode_compare");
         let expected =
             encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         // `decode_presentation` already proved the optional member canonical, so
