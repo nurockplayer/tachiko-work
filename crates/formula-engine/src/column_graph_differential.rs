@@ -620,6 +620,181 @@ fn generated_column_documents_match_the_expanded_reference() {
     }
 }
 
+fn projection_update_document() -> Document {
+    fixed_document(
+        vec![fixed_schema(
+            "r",
+            &[
+                ("input", FieldType::Number),
+                ("output", FieldType::Number),
+                ("constant", FieldType::Number),
+                ("added", FieldType::Number),
+                ("stable", FieldType::Number),
+            ],
+        )],
+        vec![fixed_row(
+            "r",
+            "r",
+            &[
+                ("input", fixed_number(2.0)),
+                (
+                    "output",
+                    Value::Formula(divide(literal(8.0), same_row("input"))),
+                ),
+                ("constant", Value::Formula(literal(7.0))),
+                ("added", fixed_number(1.0)),
+                ("stable", Value::Formula(literal(9.0))),
+            ],
+        )],
+    )
+}
+
+#[test]
+fn retained_scalar_edit_reports_only_the_changed_formula_projection() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    document
+        .entities
+        .get_mut("r")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("input"), fixed_number(4.0));
+    let roots = BTreeSet::from([field_ref("r", "input")]);
+    let transition = retained.update(&document, &roots);
+    assert_eq!(
+        transition.changed_calculation_projections,
+        vec![field_ref("r", "output")]
+    );
+    assert_eq!(
+        retained.value(&field_ref("r", "output")),
+        Number::new(2.0).ok()
+    );
+    assert!(
+        retained
+            .update(&document, &roots)
+            .changed_calculation_projections
+            .is_empty()
+    );
+}
+
+#[test]
+fn retained_formula_root_removal_and_installation_report_changed_projections() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = BTreeSet::from([field_ref("r", "output")]);
+    for value in [
+        fixed_number(6.0),
+        Value::Formula(divide(literal(8.0), same_row("input"))),
+    ] {
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from("output"), value);
+        assert_eq!(
+            retained
+                .update(&document, &roots)
+                .changed_calculation_projections,
+            vec![field_ref("r", "output")]
+        );
+    }
+}
+
+#[test]
+fn retained_constant_formula_root_changes_report_by_membership() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = BTreeSet::from([field_ref("r", "constant")]);
+    for value in [fixed_number(3.0), Value::Formula(literal(7.0))] {
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from("constant"), value);
+        assert_eq!(
+            retained
+                .update(&document, &roots)
+                .changed_calculation_projections,
+            vec![field_ref("r", "constant")]
+        );
+    }
+    for value in [fixed_number(7.0), Value::Formula(literal(7.0))] {
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from("constant"), value);
+        assert!(
+            retained
+                .update(&document, &roots)
+                .changed_calculation_projections
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn retained_failure_flips_report_the_whole_before_and_after_formula_union() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = BTreeSet::from([
+        field_ref("r", "input"),
+        field_ref("r", "constant"),
+        field_ref("r", "added"),
+    ]);
+    for (input, constant, added, failed) in [
+        (0.0, fixed_number(7.0), Value::Formula(literal(1.0)), true),
+        (2.0, Value::Formula(literal(7.0)), fixed_number(1.0), false),
+    ] {
+        document.entities.get_mut("r").unwrap().fields.extend([
+            (FieldId::from("input"), fixed_number(input)),
+            (FieldId::from("constant"), constant),
+            (FieldId::from("added"), added),
+        ]);
+        let transition = retained.update(&document, &roots);
+        assert_eq!(retained.is_failed(), failed);
+        assert_eq!(
+            transition.changed_calculation_projections,
+            vec![
+                field_ref("r", "added"),
+                field_ref("r", "constant"),
+                field_ref("r", "output"),
+                field_ref("r", "stable"),
+            ]
+        );
+    }
+}
+
+#[test]
+fn retained_promoted_column_total_root_reports_changes_and_removal() {
+    let mut document = direct_and_column_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    let roots = change_direct_cell(&mut document);
+    let total = field_ref("r-both", "x0");
+    assert!(!roots.contains(&total));
+    assert_eq!(
+        retained
+            .update(&document, &roots)
+            .changed_calculation_projections,
+        vec![field_ref("calc-1", "a"), total.clone()]
+    );
+    document
+        .entities
+        .get_mut("r-both")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("x0"), fixed_number(10.0));
+    assert_eq!(
+        retained
+            .update(&document, &roots)
+            .changed_calculation_projections,
+        vec![total]
+    );
+}
+
 #[test]
 fn retained_update_matches_the_expanded_reference_after_row_edits() {
     for seed in 0..16_u64 {
