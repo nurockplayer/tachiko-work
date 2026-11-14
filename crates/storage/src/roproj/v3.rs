@@ -152,6 +152,7 @@ impl CanonicalRoProjectV3 {
         profile: impl FnOnce(&Document) -> Result<(), E>,
         definition_error: impl FnOnce(KeyedGroupedSumDefinitionError) -> FormatError,
     ) -> Result<(Self, Document), CanonicalRoProjectV3AdmissionError<E>> {
+        let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("storage_admit");
         if files.len() != ROPROJ_V3_PATHS.len() && files.len() != ROPROJ_V3_PATHS.len() + 1 {
             return Err(CanonicalRoProjectV3AdmissionError::Format(
                 FormatError::InvalidRoProjectRepresentation {
@@ -165,6 +166,9 @@ impl CanonicalRoProjectV3 {
         }
         let mut canonical_files = Vec::with_capacity(files.len());
         for (index, (path, bytes)) in files.into_iter().enumerate() {
+            drop(phase809);
+            let phase809 =
+                tachiko_semantic_core::instrumentation::PhaseTimer::new("canonical_encode_compare");
             let expected = ROPROJ_V3_PATHS
                 .get(index)
                 .copied()
@@ -183,9 +187,15 @@ impl CanonicalRoProjectV3 {
         let tree = CanonicalRoProjectV3 {
             files: canonical_files,
         };
+        let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("storage_decode");
         let document =
             decode_unvalidated(&tree).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+        drop(phase809);
+        let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("profile_callback");
         profile(&document).map_err(CanonicalRoProjectV3AdmissionError::Profile)?;
+        drop(phase809);
+        let phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("storage_after_decode");
         check_v3_document(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         validate_semantic_expression_limits(&document)
             .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
@@ -209,6 +219,7 @@ impl CanonicalRoProjectV3 {
                 },
             ));
         }
+        drop(phase809);
         Ok((tree, document))
     }
 }

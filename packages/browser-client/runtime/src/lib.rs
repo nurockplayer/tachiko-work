@@ -3178,6 +3178,9 @@ impl DesignerRuntime {
         document: Document,
         occurrence_id: &str,
     ) -> Result<Self, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new(
+            "from_document_working_size",
+        );
         Self::from_document_profile_baseline(document, occurrence_id, SessionProfile::WorkingSize)
     }
 
@@ -3201,6 +3204,9 @@ impl DesignerRuntime {
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("baseline");
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("capacity_checks");
         let (capacity_usage, working_admission) = match profile {
             // The same three checks `ensure_document_profile` runs for this
             // profile, in the same order, keeping the totals the first and
@@ -3226,7 +3232,12 @@ impl DesignerRuntime {
             SessionProfile::TextCapacity => ensure_capacity_document_encoding(&document)?,
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("validate");
         validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("collection_and_static");
         let collection_specs = collection_specs(&document);
         let default_collection = select_default_collection(&collection_specs)?;
         let collections = collection_specs
@@ -3242,9 +3253,15 @@ impl DesignerRuntime {
             &collection_specs,
             profile,
         )?;
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("formula_sources");
         let formula_sources = formula_sources(&document)?;
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("lifecycle");
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
+        drop(phase809);
         let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
         let runtime = Self {
             profile,
@@ -3279,6 +3296,8 @@ impl DesignerRuntime {
     /// Replace the open-time presentation and record its encoded length for
     /// the working-size saved-size bound.
     fn set_presentation(&mut self, presentation: PresentationStore) -> Result<(), DesignerError> {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("set_presentation");
         // Only a working-size session bounds its saved size, so only it pays
         // for encoding the presentation here.
         self.presentation_saved_bytes = match self.profile {
@@ -3486,6 +3505,7 @@ impl DesignerRuntime {
     ///
     /// Returns a revision or bounded-window failure.
     pub(crate) fn opened_window(&mut self) -> Result<OpenedWindowProjection, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("opened_window");
         self.opened_window_within(MAX_TEXT_CAPACITY_PROJECTION_BYTES - REPLY_ENVELOPE_RESERVE)
     }
 
@@ -3541,7 +3561,12 @@ impl DesignerRuntime {
     ///
     /// Returns a typed adapter or workspace failure.
     pub fn handle(&mut self, request: DesignerRequest) -> Result<DesignerResponse, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("handle");
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("dispatch");
         let response = self.dispatch(request)?;
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("response_building");
         Ok(match self.profile {
             SessionProfile::WorkingSize => self.with_changed_cells(response),
             SessionProfile::Ordinary | SessionProfile::TextCapacity => response,
@@ -4109,6 +4134,8 @@ impl DesignerRuntime {
     }
 
     fn bootstrap_projection(&self) -> BootstrapProjection {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("bootstrap_projection");
         BootstrapProjection {
             title: self.title.clone(),
             revision: self.session.revision().as_str().to_owned(),
@@ -4350,6 +4377,8 @@ impl DesignerRuntime {
         &self,
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("export_project_v3");
         let snapshot = self.exact_snapshot(expected_revision)?;
         // The same profile decision as v3 open, so the preflight below admits
         // exactly what this writes.
@@ -4642,6 +4671,8 @@ impl DesignerRuntime {
         count: usize,
         display: bool,
     ) -> Result<TableWindowProjection, DesignerError> {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("query_table_window");
         if count > MAX_TABLE_WINDOW_ROWS {
             return Err(DesignerError::InvalidView {
                 message: format!(
@@ -4931,6 +4962,7 @@ impl DesignerRuntime {
         collection: &str,
         view: &TableView,
     ) -> Result<Arc<[usize]>, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("view_order");
         let revision = self.current_revision().to_owned();
         let key = view_cache_key(view)?;
         self.view_index.retain_revision(&revision);
@@ -5023,6 +5055,8 @@ impl DesignerRuntime {
         &mut self,
         collection: &str,
     ) -> Result<BTreeMap<String, Option<f64>>, DesignerError> {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("window_column_totals");
         if let Some(totals) = self.cached_totals(collection) {
             return Ok(totals);
         }
@@ -7259,6 +7293,8 @@ impl DesignerRuntime {
         &self,
         invalidation: &ResidentProjectionInvalidation,
     ) -> PublicationProjection {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("published_projection");
         let publication = PublicationProjection::from(invalidation);
         match self.profile {
             SessionProfile::WorkingSize => bound_publication_targets(publication),
@@ -7272,9 +7308,14 @@ impl DesignerRuntime {
         expected_revision: &str,
         commands: Vec<SemanticCommand>,
     ) -> Result<PublicationProjection, DesignerError> {
+        let _phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("publish_commands");
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("snapshot_clone");
         self.check_revision(expected_revision)?;
         let document_scope = self.session.document_scope().clone();
         let mut candidate = self.session.document().clone();
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("apply_commands");
         for command in &commands {
             match command {
                 SemanticCommand::AppendCollection { schema, entities } => {
@@ -7465,6 +7506,9 @@ impl DesignerRuntime {
         }
         // A batch that only replaces stored values on entities the base holds
         // derives the candidate's totals from the base's instead of walking it.
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("capacity_checks");
         let working_edit = match self.profile {
             SessionProfile::WorkingSize => {
                 let totals = self.working_value_edit_totals(&commands, &candidate);
@@ -7501,6 +7545,7 @@ impl DesignerRuntime {
             }
             SessionProfile::Ordinary | SessionProfile::TextCapacity => None,
         };
+        drop(phase809);
         let constraint_targets = commands
             .iter()
             .filter_map(|command| match command {
@@ -7511,6 +7556,7 @@ impl DesignerRuntime {
             })
             .collect::<BTreeSet<_>>();
         let prepared = self.session.prepare_evaluation(candidate);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("preflight");
         let mut working_strings: Option<WorkingStringBudget> = None;
         match prepared.verdict() {
             PreparedVerdict::Valid => {
@@ -7582,6 +7628,8 @@ impl DesignerRuntime {
             }
             PreparedVerdict::InvalidDefinitions => {}
         }
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("proposal_setup");
         let capacity_text_edit = match self.profile {
             SessionProfile::TextCapacity => {
                 !commands.is_empty()
@@ -7667,6 +7715,9 @@ impl DesignerRuntime {
         // or comparing the whole document.
         let witness = self.session.witness();
         let lifecycle = local_lifecycle.as_mut().unwrap_or(&mut self.lifecycle);
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("lifecycle_propose");
         lifecycle.propose_prepared_witnessed(
             &document_scope,
             &witness,
@@ -7679,6 +7730,8 @@ impl DesignerRuntime {
             self.clock.tick(),
             Some(&prepared),
         )?;
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("preview");
         designer_preview_witnessed(
             lifecycle,
             &document_scope,
@@ -7687,6 +7740,8 @@ impl DesignerRuntime {
             &self.principal,
             self.clock.tick(),
         )?;
+        drop(phase809);
+        let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("execute");
         let execute_now = self.clock.tick();
         // Hand publication the state this request already derived, so an
         // accepted edit doesn't derive it a second time.
@@ -7712,6 +7767,9 @@ impl DesignerRuntime {
                 .ok_or(DesignerError::MissingInvalidation)?
                 .clone()
         };
+        drop(phase809);
+        let phase809 =
+            tachiko_workspace_engine::instrumentation::PhaseTimer::new("post_publication");
         self.capacity_usage = capacity_usage;
         // The Valid arm above always fills both for a working-size publish;
         // any other published path measures again on its next full walk.
@@ -7751,6 +7809,7 @@ impl DesignerRuntime {
                 SessionProfile::WorkingSize => self.lifecycle.discard_settled_records(1),
             }
         }
+        drop(phase809);
         Ok(self.published_projection(&invalidation))
     }
 
@@ -8175,6 +8234,7 @@ impl DesignerRuntime {
         expected: &str,
         edits: &[CellEdit],
     ) -> Result<PublicationProjection, DesignerError> {
+        let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("edit_cells");
         self.check_revision(expected)?;
         if edits.is_empty() || edits.len() > self.max_batch_targets() {
             return Err(tracker_error("the edit range is empty or too large"));
@@ -9296,6 +9356,7 @@ pub fn open_project_working_size(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<OpenedWindowProjection, DesignerError> {
+    let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("open");
     let (candidate, opened) = admit_project_working_size(input, occurrence_id)?;
     *runtime = Some(candidate);
     Ok(opened)
@@ -9517,15 +9578,18 @@ fn admit_project_working_size(
     input: &[u8],
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, OpenedWindowProjection), DesignerError> {
+    let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("admit");
     let DecodedProject {
         document,
         opened_from_v3,
         presentation,
     } = decode_project_bundle_working_size(input)?;
+    let phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("saved_bytes");
     capacity::check_working_saved_bytes(
         &document,
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
+    drop(phase809);
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
@@ -10080,6 +10144,7 @@ fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> 
 }
 
 fn decode_project_bundle_working_size(input: &[u8]) -> Result<DecodedProject, DesignerError> {
+    let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("decode_bundle");
     decode_project_bundle_for(input, DecodeProfile::WorkingSize)
 }
 
@@ -10087,6 +10152,7 @@ fn decode_project_bundle_for(
     input: &[u8],
     profile: DecodeProfile,
 ) -> Result<DecodedProject, DesignerError> {
+    let _phase809 = tachiko_workspace_engine::instrumentation::PhaseTimer::new("unframe");
     enforce_project_transfer_limit(input.len())?;
     if input.starts_with(PROJECT_RECORD_V2_MAGIC) {
         return decode_project_record_v2(&input[PROJECT_RECORD_V2_MAGIC.len()..]);
@@ -11331,6 +11397,8 @@ impl ProfileBudget {
 /// The working-size string walk, returning the totals it accumulated once the
 /// document passes.
 fn ensure_working_size_strings(document: &Document) -> Result<WorkingStringBudget, DesignerError> {
+    let _phase809 =
+        tachiko_workspace_engine::instrumentation::PhaseTimer::new("working_strings_check");
     let mut budget = ProfileBudget::working_size();
     ensure_document_strings(document, &mut budget)?;
     Ok(WorkingStringBudget {

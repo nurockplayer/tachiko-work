@@ -113,6 +113,8 @@ impl ResidentWorkspaceSession {
     /// Start a resident occurrence at its initial internal revision.
     #[must_use]
     pub fn new(document_scope: DocumentScopeId, document: Document) -> Self {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_session_new");
         let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
         Self {
             document_scope,
@@ -446,8 +448,11 @@ impl ResidentWorkspaceSession {
     /// them to publication as a [`PreparedInstallation`].
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("prepare_evaluation");
         let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
+        let phase809 = instrumentation::PhaseTimer::new("projection_changes");
         let mut changes = projection_changes(&self.document, &candidate);
         // The prepared path evaluates the candidate exactly once, as it did
         // through `semantic_validation`; the update is that one evaluation. It
@@ -455,7 +460,10 @@ impl ResidentWorkspaceSession {
         // change.
         #[cfg(test)]
         super::evaluation_counters::record_candidate_calculation();
+        drop(phase809);
+        let phase809 = instrumentation::PhaseTimer::new("retained_clone");
         let mut retained = self.retained.clone();
+        drop(phase809);
         let before_diagnostics = std::mem::take(&mut retained.diagnostics_by_field);
         let transition = retained.update(&self.document, &candidate, &changes);
         // Publication folds the diagnostics projection changes into the same
@@ -467,12 +475,14 @@ impl ResidentWorkspaceSession {
             &retained.diagnostics_by_field,
             &mut changes,
         );
+        let phase809 = instrumentation::PhaseTimer::new("formula_preflight");
         let candidate_preflight_succeeded = candidate_preflight_succeeded(
             &self.document,
             &candidate,
             &changes,
             self.preflight_succeeded,
         );
+        drop(phase809);
         PreparedEvaluation::new(
             PreparedInstallation {
                 base_occurrence: self.occurrence.0,
@@ -556,6 +566,7 @@ pub(crate) struct ResidentDerivedState {
 
 impl ResidentDerivedState {
     fn rebuild(document: &Document) -> (Self, IncrementalCalculationWork) {
+        let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("resident_rebuild");
         let (calculation_state, calculation_work) = RetainedCalculationState::rebuild(document);
         (
             Self::from_calculation(document, calculation_state, AddressIndex::build(document)),
@@ -569,6 +580,7 @@ impl ResidentDerivedState {
         document: &Document,
         changes: &ProjectionChanges,
     ) -> DerivedStateTransition {
+        let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("retained_update");
         let previous_address_index_valid = self.address_index.is_ok();
         if changes.address_index_changed {
             self.address_index = AddressIndex::build(document);
@@ -578,6 +590,7 @@ impl ResidentDerivedState {
         // state equal to a full rebuild by taking that branch. It isn't an
         // address-index fallback, so it isn't counted as one.
         let incremental_safe = address_index_safe && !changes.unaddressable_calculation_change;
+        let phase809 = instrumentation::PhaseTimer::new("calculation_update");
         let calculation = if incremental_safe {
             self.calculation_state
                 .update(document, &changes.calculation_roots)
@@ -601,6 +614,7 @@ impl ResidentDerivedState {
                 changed_calculation_projections: changed_calculation_outcomes(&before, &after),
             }
         };
+        drop(phase809);
         self.validation_report = self.validation_report_for_update(
             before,
             document,
@@ -630,6 +644,8 @@ impl ResidentDerivedState {
         incremental_safe: bool,
         calculation: &IncrementalCalculationTransition,
     ) -> ValidationReport {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("validation_report");
         let local = locally_validated_report(
             self.validation_report.is_valid(),
             before,
@@ -655,6 +671,8 @@ impl ResidentDerivedState {
         calculation_state: RetainedCalculationState,
         address_index: Result<AddressIndex, AddressIndexError>,
     ) -> Self {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("initial_validation");
         let validation_report =
             validation_report_for_retained_calculation(document, &calculation_state);
         let diagnostics_by_field = index_field_diagnostics(&validation_report);
@@ -1109,6 +1127,8 @@ where
         (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     > {
+        let _phase809 =
+            tachiko_semantic_core::instrumentation::PhaseTimer::new("publish_if_current");
         // Any installation belongs to this one attempt: it is used or dropped,
         // and never carried into a later compare-and-publish call.
         let prepared = self.prepared.take();

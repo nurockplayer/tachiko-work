@@ -1903,11 +1903,20 @@ type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
+    let _phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("full_calculation");
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("collect_nodes_graph");
     let (nodes, formulas, graph) = collect_calculation_nodes(document);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("pregraph_cycle_checks");
     let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &graph, &mut failures);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("initial_values");
     let mut values = initial_values(&nodes, &failures);
+    drop(phase809);
+    let phase809 = tachiko_semantic_core::instrumentation::PhaseTimer::new("evaluate_formulas");
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
+    drop(phase809);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values,
