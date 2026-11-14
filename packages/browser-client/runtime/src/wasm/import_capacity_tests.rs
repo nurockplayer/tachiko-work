@@ -1214,8 +1214,7 @@ fn working_size_skipped_title_findings_are_excluded_before_capping() {
     let source = ledger_xlsx(150, 1, true);
     let mut request: Value = serde_json::from_slice(&working_request("xlsx", 1)).unwrap();
     request["csv_options"]["header_rows"] = Value::Array(vec![2.into()]);
-    request["selection"]["column_types"] =
-        Value::Array(vec![Value::Array(vec!["boolean".into()])]);
+    request["selection"]["column_types"] = Value::Array(vec![Value::Array(vec!["boolean".into()])]);
     let mut host = DesignerHost::new();
     let inspect = serde_json::to_vec(&object(vec![
         ("type", "inspect".into()),
@@ -1244,7 +1243,11 @@ fn working_size_skipped_title_findings_are_excluded_before_capping() {
             .iter()
             .any(|finding| finding["code"] == "rows_above_header_skipped")
     );
-    assert!(!ledger.iter().any(|finding| finding["location"] == "Sales1!A1"));
+    assert!(
+        !ledger
+            .iter()
+            .any(|finding| finding["location"] == "Sales1!A1")
+    );
 }
 
 #[test]
