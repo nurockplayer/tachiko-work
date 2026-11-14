@@ -137,6 +137,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Import fidelity ledgers retain the first 100 findings per code and sheet with exact summaries, keeping working-size imports within the reply budget (#678).
+
 - Imported binary MIN/MAX formulas skip blank optional Number references as
   Excel does, including after cell edits (#633). Native XLSX exports report
   formulas written only for collections that actually export a formula.

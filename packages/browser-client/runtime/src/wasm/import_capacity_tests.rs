@@ -1118,6 +1118,135 @@ fn working_size_budget_exports_more_than_128_rows() {
     }
 }
 
+// Real OOXML inputs: either Text cells selected as Number, or Boolean
+// constant formulas whose parser findings include one discarded title cell.
+fn ledger_xlsx(rows: usize, columns: usize, title: bool) -> Vec<u8> {
+    use std::fmt::Write;
+
+    let header = if title { 2 } else { 1 };
+    let mut xml = String::from(
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>",
+    );
+    if title {
+        xml.push_str("<row r=\"1\"><c r=\"A1\"><f>TRUE()</f><v>1</v></c></row>");
+    }
+    write!(xml, "<row r=\"{header}\">").unwrap();
+    for col in 0..columns {
+        write!(
+            xml,
+            "<c r=\"{}{header}\" t=\"inlineStr\"><is><t>C{col}</t></is></c>",
+            column(col)
+        )
+        .unwrap();
+    }
+    xml.push_str("</row>");
+    for row in header + 1..=header + rows {
+        write!(xml, "<row r=\"{row}\">").unwrap();
+        for col in 0..columns {
+            let address = format!("{}{row}", column(col));
+            if title {
+                write!(xml, "<c r=\"{address}\"><f>TRUE()</f><v>1</v></c>").unwrap();
+            } else {
+                write!(
+                    xml,
+                    "<c r=\"{address}\" t=\"inlineStr\"><is><t>123</t></is></c>"
+                )
+                .unwrap();
+            }
+        }
+        xml.push_str("</row>");
+    }
+    xml.push_str("</sheetData></worksheet>");
+    let template = source_xlsx(1, 1, 1, false, false);
+    let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            bytes.clear();
+            bytes.extend_from_slice(xml.as_bytes());
+        }
+        output.start_file(name, options).unwrap();
+        std::io::Write::write_all(&mut output, &bytes).unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+fn assert_ledger_summary(ledger: &Value, code: &str, total: usize) {
+    let findings = ledger
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["code"] == code)
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 101);
+    for finding in &findings[..100] {
+        assert!(finding["location"].as_str().unwrap().starts_with("Sales1!"));
+        assert_eq!(finding["blocking"], false);
+    }
+    assert_eq!(findings[100]["location"], "Sales1");
+    assert_eq!(
+        findings[100]["message"],
+        format!("{total} findings of this kind on Sales1; the first 100 are listed")
+    );
+    assert_eq!(findings[100]["blocking"], false);
+}
+
+#[test]
+fn working_size_hundred_thousand_explicit_conversions_fit_complete_reply() {
+    let source = ledger_xlsx(10_000, 10, false);
+    let mut host = DesignerHost::new();
+    let imported = host.spreadsheet(&working_request("xlsx", 10), &source);
+    assert!(imported.reply.len() <= 16 * 1024 * 1024);
+    let response: Value = serde_json::from_slice(&imported.reply).unwrap();
+    assert_eq!(response["status"], "ok", "{response}");
+    let payload = &response["response"]["payload"];
+    assert_eq!(payload["opened"]["window"]["total_rows"], 10_000);
+    assert_ledger_summary(&payload["ledger"], "explicit_column_type", 100_000);
+}
+
+#[test]
+fn working_size_skipped_title_findings_are_excluded_before_capping() {
+    let source = ledger_xlsx(150, 1, true);
+    let mut request: Value = serde_json::from_slice(&working_request("xlsx", 1)).unwrap();
+    request["csv_options"]["header_rows"] = Value::Array(vec![2.into()]);
+    request["selection"]["column_types"] =
+        Value::Array(vec![Value::Array(vec!["boolean".into()])]);
+    let mut host = DesignerHost::new();
+    let inspect = serde_json::to_vec(&object(vec![
+        ("type", "inspect".into()),
+        ("format", "xlsx".into()),
+        ("csv_options", request["csv_options"].clone()),
+        ("profile", "working_size".into()),
+    ]))
+    .unwrap();
+    let inspected = host.spreadsheet(&inspect, &source);
+    let preview: Value = serde_json::from_slice(&inspected.reply).unwrap();
+    assert_eq!(preview["status"], "ok", "{preview}");
+    assert_ledger_summary(
+        &preview["response"]["payload"]["ledger"],
+        "boolean_constant_formula",
+        150,
+    );
+    let imported = host.spreadsheet(&serde_json::to_vec(&request).unwrap(), &source);
+    let response: Value = serde_json::from_slice(&imported.reply).unwrap();
+    assert_eq!(response["status"], "ok", "{response}");
+    let payload = &response["response"]["payload"];
+    assert_eq!(payload["opened"]["window"]["total_rows"], 150);
+    assert_ledger_summary(&payload["ledger"], "boolean_constant_formula", 150);
+    let ledger = payload["ledger"].as_array().unwrap();
+    assert!(
+        ledger
+            .iter()
+            .any(|finding| finding["code"] == "rows_above_header_skipped")
+    );
+    assert!(!ledger.iter().any(|finding| finding["location"] == "Sales1!A1"));
+}
+
 #[test]
 fn working_size_sparse_xlsx_ten_thousand_rows() {
     let source = working_xlsx(10_000, 30, 40_000, false);
