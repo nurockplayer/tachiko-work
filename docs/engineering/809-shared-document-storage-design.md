@@ -302,6 +302,20 @@ Serialize hotspot changes with set A; rebase onto its accepted result first.
 | 11 | Activate chunk-backed EntityMap in semantic-core; only necessary adapter/export updates | #816 runtime snapshot-copy and old-Document-drop leaves shrink; ≤128 entities detached for a scalar edit; byte/equality contracts pass |
 | 12 | Partition retained values, nodes, failures and graph in formula-engine; share index/report and partition diagnostics in workspace-engine | #816 retained-copy/old-retained-drop leaves shrink; unchanged partitions survive; full-calculation oracle agrees on success/failure, membership and dependency changes |
 
+**Order of delivery (engine lead, 2026-11-14 19:05 JST).** The rows are
+numbered by dependency, not by delivery order. Deliver by measured saving per
+change, with a stop check after each stage:
+
+1. Row 1 (one consumed candidate): needs no `EntityMap` change; targets the
+   planner copy and the separate evaluated-Document drop (~12.8 ms).
+2. Row 12 (retained-state partitions), with the formula-engine calculation-read
+   API part of row 2 that it needs: targets the retained clone and old-retained
+   drop (~26.3 ms), the largest B leaf, and does not depend on rows 3–11.
+3. Re-measure edit plus window after A and these two stages. Only if it still
+   exceeds 50 ms do rows 2–11 (the `EntityMap` migration and activation, ~14.4 ms
+   of runtime snapshot copy and old-Document drop) start, and they go back to
+   work-lead with that measurement first.
+
 Use `capacity_809_formula_table` from #816 on an isolated measurement checkout
 of each candidate; do not merge the scratch branch or its entire instrumentation.
 Its recorded native invocation is `cargo test --release --manifest-path
@@ -330,8 +344,10 @@ the lead approves the public Rust representation/API direction before code.
 The document exceeds 300 lines to cover the required alternatives, ownership
 seam, migration boundaries and measurement decisions in one reviewable place.
 
-Open for work-lead: approve this direction and the EntityMap/calculation-read/
-resident ownership API changes, or select a persistent ordered tree instead.
+Open for work-lead: approve this direction and the resident ownership and
+calculation-read API changes now (delivery stages 1–2), and the `EntityMap`
+public field type change in principle, to start only after the stage-3
+measurement; or select a persistent ordered tree instead.
 Reconcile the implementation PR scopes/order with set A. If measured A+B still
 exceeds 50 ms, return remaining leaf evidence to #809; do not change the budget,
 wire/storage formats or semantics to claim success.
