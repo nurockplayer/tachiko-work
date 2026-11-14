@@ -23,8 +23,8 @@ use super::{
     formula_operations::{FormulaCalculationOutcome, calculation_for, calculation_formula_keys},
     formula_source_projections_with_index, instrumentation, invalid_document,
     patch_lifecycle::{
-        DocumentScopeId, SemanticPublicationAuthority, SemanticPublicationError, SemanticRevision,
-        TrustedInstant,
+        CandidateProvenance, DocumentScopeId, PublicationProvenance, SemanticPublicationAuthority,
+        SemanticPublicationError, SemanticRevision, TrustedInstant,
     },
     validate_entity_field_core, validate_formula_value_constraint,
     validation_report_for_retained_calculation,
@@ -483,6 +483,7 @@ impl ResidentWorkspaceSession {
                 changes,
                 transition,
                 candidate_preflight_succeeded,
+                publication_binding: None,
             },
             &self.document,
             base_calculation,
@@ -1098,6 +1099,79 @@ where
 
     fn current_snapshot_witness(&self) -> Option<DocumentWitness<'_>> {
         Some(self.session.witness())
+    }
+
+    fn publish_owned_if_current<Authorization>(
+        &mut self,
+        expected_document_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        installation: PreparedInstallation,
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<PublicationProvenance<'_, Authorization>, SemanticPublicationError> {
+        let proof = CandidateProvenance::new(&installation);
+        // Unmatched installations retain the borrowed method's full checks.
+        if installation.base_occurrence != self.session.occurrence.0
+            || installation.base_revision != *expected_revision
+        {
+            let snapshot = self.publish_if_current(
+                expected_document_scope,
+                expected_revision,
+                &installation.candidate,
+                authorize,
+            )?;
+            let matches = snapshot.1 == &installation.candidate;
+            return Ok(proof.installed(snapshot, matches));
+        }
+        self.prepared = None;
+        self.projection_invalidation = None;
+        if expected_document_scope != &self.session.document_scope {
+            return Err(SemanticPublicationError::DocumentScopeMismatch);
+        }
+        let authorization =
+            authorize(self.time.now()).ok_or(SemanticPublicationError::AuthorizationDenied)?;
+        if expected_revision != &self.session.revision {
+            return Err(SemanticPublicationError::Stale);
+        }
+        if installation.candidate.id != self.session.document.id {
+            return Err(SemanticPublicationError::Conflict);
+        }
+        instrumentation::record_publication_document_comparison();
+        if installation.candidate == self.session.document {
+            return Err(SemanticPublicationError::NoChange);
+        }
+        let next_generation = self
+            .session
+            .generation
+            .checked_add(1)
+            .ok_or(SemanticPublicationError::Conflict)?;
+        let resulting_revision = revision_for(next_generation);
+        let (invalidation, transition_work) = invalidation_from_transition(
+            installation.changes,
+            installation.transition,
+            self.session.document_scope.clone(),
+            expected_revision.clone(),
+            resulting_revision.clone(),
+        );
+        self.session.retained = installation.retained;
+        self.session.document = installation.candidate;
+        self.session.preflight_succeeded = installation.candidate_preflight_succeeded;
+        self.session.generation = next_generation;
+        self.session.revision = resulting_revision.clone();
+        self.session.measurements.record_transition(transition_work);
+        self.projection_invalidation = Some(invalidation);
+        #[cfg(test)]
+        installation_counters::record_prepared_installation();
+        // The exact owned candidate has just been moved into this protected
+        // occurrence; the opaque result pins its immutable installed snapshot.
+        Ok(proof.installed(
+            (
+                self.session.document_scope.clone(),
+                &self.session.document,
+                resulting_revision,
+                authorization,
+            ),
+            true,
+        ))
     }
 
     fn publish_if_current<Authorization>(
@@ -1859,5 +1933,60 @@ mod tests {
 
         assert_eq!(error, SemanticPublicationError::Conflict);
         assert_eq!(session.export_snapshot(), before);
+    }
+
+    #[test]
+    fn owned_publication_preserves_guard_refusals_and_callback_order() {
+        for case in 0..6 {
+            let mut session = ResidentWorkspaceSession::new(
+                "occurrence".into(),
+                Document::empty("document", "Before"),
+            );
+            if case == 5 {
+                session.generation = u64::MAX;
+                session.revision = revision_for(u64::MAX);
+            }
+            let before = session.export_snapshot();
+            let mut candidate = before.document().clone();
+            if case != 4 {
+                candidate.title = "After".to_owned();
+            }
+            if case == 3 {
+                candidate.id = "other-document".into();
+            }
+            let installation = session.prepare_evaluation(candidate).into_installable();
+            let scope = if case == 0 {
+                "wrong".into()
+            } else {
+                before.document_scope().clone()
+            };
+            let revision = if case == 2 {
+                "stale".into()
+            } else {
+                before.revision().clone()
+            };
+            let mut calls = 0;
+            let mut time = FixedTime;
+            let mut publication = session.publication_authority(&mut time);
+            let result =
+                publication.publish_owned_if_current(&scope, &revision, installation, |_| {
+                    calls += 1;
+                    if case == 1 { None } else { Some(()) }
+                });
+            let error = match result {
+                Ok(_) => panic!("case {case} unexpectedly published"),
+                Err(error) => error,
+            };
+            let expected = match case {
+                0 => SemanticPublicationError::DocumentScopeMismatch,
+                1 => SemanticPublicationError::AuthorizationDenied,
+                2 => SemanticPublicationError::Stale,
+                4 => SemanticPublicationError::NoChange,
+                _ => SemanticPublicationError::Conflict,
+            };
+            assert_eq!(error, expected, "case {case}");
+            assert_eq!(calls, usize::from(case != 0));
+            assert_eq!(session.export_snapshot(), before);
+        }
     }
 }

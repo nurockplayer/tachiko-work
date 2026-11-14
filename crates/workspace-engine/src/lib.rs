@@ -735,6 +735,7 @@ pub enum PreparedVerdict<'evaluation> {
 #[derive(Debug)]
 pub struct PreparedEvaluation<'session> {
     installation: PreparedInstallation,
+    planned: Option<patch_lifecycle::PlannedCommands>,
     base_document: &'session Document,
     base_calculation: Option<&'session Calculation>,
     base_report_valid: bool,
@@ -754,12 +755,22 @@ impl<'session> PreparedEvaluation<'session> {
             validate_keyed_grouped_sum_definitions(&installation.candidate).is_err();
         Self {
             installation,
+            planned: None,
             base_document,
             base_calculation,
             base_report_valid,
             base_preflight_succeeded,
             definitions_invalid,
         }
+    }
+
+    pub(crate) fn bind_plan(mut self, planned: patch_lifecycle::PlannedCommands) -> Self {
+        self.planned = Some(planned);
+        self
+    }
+
+    pub(crate) fn planned(&self) -> Option<&patch_lifecycle::PlannedCommands> {
+        self.planned.as_ref()
     }
 
     /// The base revision this evaluation was prepared against.
@@ -886,6 +897,7 @@ pub struct PreparedInstallation {
     /// Whether the candidate passes the formula projection preflight. The
     /// session remembers it for the next edit, whose base is this candidate.
     candidate_preflight_succeeded: bool,
+    publication_binding: Option<patch_lifecycle::PublicationBinding>,
 }
 
 /// Calculate every numeric field and project it through current human keys.
@@ -2534,12 +2546,12 @@ pub(crate) fn finalize_edit_with_validation(
 /// Finalize V1 lifecycle evidence without retaining rendering snapshots.
 pub(crate) fn finalize_edit_changes_with_validation(
     document: &Document,
-    edited: Document,
+    edited: &Document,
     prepared: Option<&PreparedEvaluation<'_>>,
-) -> Result<(Document, Vec<SemanticChange>, ValidationReport), WorkspaceError> {
+) -> Result<(Vec<SemanticChange>, ValidationReport), WorkspaceError> {
     let (changes, report) = with_edit_calculations(
         document,
-        &edited,
+        edited,
         prepared,
         |base, candidate, before, after, prepared| {
             let Some(prepared) = prepared else {
@@ -2562,7 +2574,7 @@ pub(crate) fn finalize_edit_changes_with_validation(
             Ok(changes)
         },
     )?;
-    Ok((edited, changes, report))
+    Ok((changes, report))
 }
 
 /// Keep both finalizers' failure order: validation, projection preflight,
@@ -2644,6 +2656,23 @@ pub(crate) mod evaluation_counters {
         static MEMO_EQUALITIES: Cell<usize> = const { Cell::new(0) };
     }
 
+    pub(crate) fn cross_check<T>(check: impl FnOnce() -> T) -> T {
+        let saved_0 = CANDIDATE_CALCULATIONS.with(Cell::get);
+        let saved_1 = BASE_CALCULATIONS.with(Cell::get);
+        let saved_2 = PREFLIGHT_RUNS.with(Cell::get);
+        let saved_3 = PREFLIGHT_PROJECTIONS.with(Cell::get);
+        let saved_4 = MEMO_BASE_COPIES.with(Cell::get);
+        let saved_5 = MEMO_EQUALITIES.with(Cell::get);
+        let result = check();
+        CANDIDATE_CALCULATIONS.with(|count| count.set(saved_0));
+        BASE_CALCULATIONS.with(|count| count.set(saved_1));
+        PREFLIGHT_RUNS.with(|count| count.set(saved_2));
+        PREFLIGHT_PROJECTIONS.with(|count| count.set(saved_3));
+        MEMO_BASE_COPIES.with(|count| count.set(saved_4));
+        MEMO_EQUALITIES.with(|count| count.set(saved_5));
+        result
+    }
+
     pub(crate) fn reset() {
         CANDIDATE_CALCULATIONS.with(|count| count.set(0));
         BASE_CALCULATIONS.with(|count| count.set(0));
@@ -2714,6 +2743,17 @@ pub(crate) mod planning_counters {
         static DOCUMENT_CLONES: Cell<usize> = const { Cell::new(0) };
         static STRUCTURE_PREFLIGHTS: Cell<usize> = const { Cell::new(0) };
         static ADDRESS_INDEX_BUILDS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn cross_check<T>(check: impl FnOnce() -> T) -> T {
+        let saved_0 = DOCUMENT_CLONES.with(Cell::get);
+        let saved_1 = STRUCTURE_PREFLIGHTS.with(Cell::get);
+        let saved_2 = ADDRESS_INDEX_BUILDS.with(Cell::get);
+        let result = check();
+        DOCUMENT_CLONES.with(|count| count.set(saved_0));
+        STRUCTURE_PREFLIGHTS.with(|count| count.set(saved_1));
+        ADDRESS_INDEX_BUILDS.with(|count| count.set(saved_2));
+        result
     }
 
     pub(crate) fn reset() {

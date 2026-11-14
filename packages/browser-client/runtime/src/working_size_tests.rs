@@ -5004,3 +5004,36 @@ fn clear_batch_limits_and_refusal_match_full_walk() {
     assert_eq!(runtime.formula_sources, sources);
     assert_clear_totals_and_sources(&runtime);
 }
+
+#[test]
+fn working_scalar_consumed_candidate_publishes_exact_document_and_report() {
+    let document = capacity_document(FixtureSpec {
+        rows: 8,
+        columns: 4,
+        formula_cells: 8,
+        seed: 809,
+    });
+    let mut runtime =
+        DesignerRuntime::from_document_working_size(document.clone(), OCCURRENCE).unwrap();
+    let current = revision(&runtime);
+    let field = FieldRef::new(entity_id(0), "c0");
+    let value = Value::Number(Number::new(42.0).unwrap());
+    let mut expected = document;
+    expected
+        .entities
+        .get_mut(&field.entity)
+        .unwrap()
+        .fields
+        .insert(field.field.clone(), value.clone());
+    let publication = runtime
+        .publish_commands(
+            &current,
+            vec![SemanticCommand::SetFieldValue { field, value }],
+        )
+        .unwrap();
+    assert_ne!(publication.resulting_revision, current);
+    assert_eq!(runtime.session.document(), &expected);
+    assert!(tachiko_workspace_engine::validation_report(runtime.session.document()).is_valid());
+    assert_totals_match(&runtime);
+    assert_clear_totals_and_sources(&runtime);
+}

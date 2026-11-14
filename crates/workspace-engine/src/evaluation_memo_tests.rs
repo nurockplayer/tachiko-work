@@ -727,7 +727,7 @@ fn propose_with(
 fn assert_same_evaluation(left: &PatchLifecycle, right: &PatchLifecycle) {
     let left = &left.evaluation_memo.as_ref().unwrap().evaluated;
     let right = &right.evaluation_memo.as_ref().unwrap().evaluated;
-    assert_eq!(left.document, right.document);
+    assert_eq!(left.document.document(), right.document.document());
     assert_eq!(left.evidence, right.evidence);
     assert_eq!(left.formula_impacts, right.formula_impacts);
     assert_eq!(left.validation_report, right.validation_report);
@@ -2572,7 +2572,7 @@ fn first_resident_v1_scalar_edit_reuses_preflight_and_publishes_the_same_diff() 
     );
     assert_eq!(
         session.document(),
-        &plain.evaluation_memo.unwrap().evaluated.document
+        plain.evaluation_memo.unwrap().evaluated.document.document()
     );
 }
 
@@ -3607,10 +3607,10 @@ fn a_resident_value_edit_copies_no_memo_base_and_compares_no_document() {
     let mut session = ResidentWorkspaceSession::new("scope".into(), document.clone());
     let mut lifecycle = lifecycle(false);
     let body = set_f("new");
-    let candidate = lifecycle.plan_commands(&document, &body).unwrap().0;
     let revision = session.revision().clone();
 
-    let prepared = session.prepare_evaluation(candidate);
+    let prepared = lifecycle.plan_resident_commands(&session, &body).unwrap();
+    planning_counters::reset();
     evaluation_counters::reset();
     let witness = session.witness();
     let proposal = lifecycle
@@ -3619,7 +3619,7 @@ fn a_resident_value_edit_copies_no_memo_base_and_compares_no_document() {
             &witness,
             super::ProposalRequest::new("proposal".into(), revision.clone(), body, "human".into()),
             TrustedInstant::new(1),
-            Some(&prepared),
+            Some(prepared),
         )
         .unwrap();
     lifecycle
@@ -3631,11 +3631,8 @@ fn a_resident_value_edit_copies_no_memo_base_and_compares_no_document() {
             TrustedInstant::new(2),
         )
         .unwrap();
-    let installation = prepared.into_installable();
     let mut time = FixedPublicationTime;
-    let mut publication = session
-        .publication_authority(&mut time)
-        .with_prepared(installation);
+    let mut publication = session.publication_authority(&mut time);
     let receipt = lifecycle
         .execute(
             proposal.id(),
@@ -3647,6 +3644,7 @@ fn a_resident_value_edit_copies_no_memo_base_and_compares_no_document() {
         .unwrap();
 
     assert_eq!(evaluation_counters::memo_counts(), (0, 0));
+    assert_eq!(planning_counters::counts().0, 0);
     assert_eq!(lifecycle.evaluations.get(), 1);
     assert!(receipt.verified);
     assert_eq!(*session.document(), with_f_set(document, "new"));
@@ -3671,7 +3669,7 @@ fn a_witnessed_memo_is_never_used_by_another_session() {
             &witness,
             super::ProposalRequest::new("proposal".into(), revision.clone(), body, "human".into()),
             TrustedInstant::new(1),
-            Some(&prepared),
+            Some(prepared),
         )
         .unwrap();
     lifecycle
@@ -4127,7 +4125,8 @@ fn resident_v1_evidence_and_formula_causes_match_full_diff() {
             evaluated.formula_impacts,
             super::formula_impacts(expected.changes())
         );
-        if evaluated.document.entities["e1"].fields["g"] == Value::Number(Number::new(2.0).unwrap())
+        if evaluated.document.document().entities["e1"].fields["g"]
+            == Value::Number(Number::new(2.0).unwrap())
         {
             assert_eq!(evaluated.formula_impacts.len(), 1);
             assert_eq!(
@@ -4152,10 +4151,8 @@ fn unprepared_v1_finalization_preserves_full_evidence_and_report() {
     let (expected, report) =
         crate::finalize_edit_with_validation(&base, candidate.clone(), None).unwrap();
     for prepared in [None, Some(&mismatched)] {
-        let (document, changes, actual_report) =
-            crate::finalize_edit_changes_with_validation(&base, candidate.clone(), prepared)
-                .unwrap();
-        assert_eq!(document, expected.document);
+        let (changes, actual_report) =
+            crate::finalize_edit_changes_with_validation(&base, &candidate, prepared).unwrap();
         assert_eq!(changes.as_slice(), expected.diff.changes());
         assert_eq!(actual_report, report);
     }
@@ -4168,8 +4165,7 @@ fn assert_v1_finalization_error_matches(base: &Document, candidate: &Document) {
     let mismatched = session.prepare_evaluation(base.clone());
     for prepared in [None, Some(&matched), Some(&mismatched)] {
         let actual =
-            crate::finalize_edit_changes_with_validation(base, candidate.clone(), prepared)
-                .unwrap_err();
+            crate::finalize_edit_changes_with_validation(base, candidate, prepared).unwrap_err();
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
 }
@@ -4191,8 +4187,8 @@ fn v1_finalization_preserves_unsupported_pair_errors() {
             });
             crate::DiffError::UnsupportedNumberFormat
         };
-        let error = crate::finalize_edit_changes_with_validation(&base, candidate.clone(), None)
-            .unwrap_err();
+        let error =
+            crate::finalize_edit_changes_with_validation(&base, &candidate, None).unwrap_err();
         let WorkspaceError::Diff(actual) = error else {
             panic!("expected unsupported diff pair, got {error:?}");
         };
@@ -4209,4 +4205,223 @@ fn v1_finalization_preserves_validation_preflight_and_base_errors() {
     assert_v1_finalization_error_matches(&base, &invalid);
     assert_v1_finalization_error_matches(&base, &unprojectable_document());
     assert_v1_finalization_error_matches(&failing_formula_document(), &base);
+}
+
+/// Compare real resident execution with the previous prepared/borrowed route.
+fn assert_consumed_matches_borrowed(document: Document, body: SemanticPatchBody, stale: bool) {
+    let mut owned_session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut old_session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut owned = v2_lifecycle();
+    let mut old = v2_lifecycle();
+    let revision = owned_session.revision().clone();
+    planning_counters::reset();
+    let prepared = owned.plan_resident_commands(&owned_session, &body).unwrap();
+    let proposal = owned
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &owned_session.witness(),
+            request(revision.as_str(), body.clone()),
+            TrustedInstant::new(1),
+            Some(prepared),
+        )
+        .unwrap();
+    assert_eq!(planning_counters::counts().0, 0);
+    assert!(matches!(
+        owned.evaluation_memo.as_ref().unwrap().evaluated.document,
+        super::EvaluatedDocument::Installation(_)
+    ));
+    let candidate = old.plan_commands(&document, &body).unwrap().0;
+    let old_prepared = old_session.prepare_evaluation(candidate);
+    let old_proposal =
+        propose_with(&mut old, &document, revision.as_str(), body, &old_prepared).unwrap();
+    assert_eq!(proposal, old_proposal);
+    assert_same_evaluation(&owned, &old);
+    let preview = owned
+        .preview_v2_witnessed(
+            &"scope".into(),
+            &owned_session.witness(),
+            proposal.id(),
+            &"human".into(),
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    let old_preview = old
+        .preview_v2(
+            &"scope".into(),
+            &document,
+            &revision,
+            proposal.id(),
+            &"human".into(),
+            TrustedInstant::new(2),
+        )
+        .unwrap();
+    assert_eq!(preview, old_preview);
+    let installation = old_prepared.into_installable();
+    if stale {
+        let mut advanced = document.clone();
+        advanced.title = "advanced".to_owned();
+        publish_chain_step(&mut owned_session, &advanced, None).unwrap();
+        publish_chain_step(&mut old_session, &advanced, None).unwrap();
+    }
+    let mut time = FixedPublicationTime;
+    let actual = owned.execute_v2(
+        proposal.id(),
+        None,
+        &"human".into(),
+        &mut owned_session.publication_authority(&mut time),
+        TrustedInstant::new(3),
+    );
+    let expected = old.execute_v2(
+        proposal.id(),
+        None,
+        &"human".into(),
+        &mut old_session
+            .publication_authority(&mut time)
+            .with_prepared(installation),
+        TrustedInstant::new(3),
+    );
+    match (&actual, &expected) {
+        (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
+        (Err(actual), Err(expected)) => assert_eq!(format!("{actual:?}"), format!("{expected:?}")),
+        _ => panic!("owned and borrowed execution differ: {actual:?}, {expected:?}"),
+    }
+    if stale {
+        assert!(matches!(actual, Err(PatchLifecycleError::Stale)));
+    }
+    assert_eq!(
+        owned_session.export_snapshot(),
+        old_session.export_snapshot()
+    );
+    assert_eq!(owned.execution_receipts_v2(), old.execution_receipts_v2());
+    assert!(owned.evaluation_memo.is_none());
+}
+
+#[test]
+fn consumed_scalar_and_nochange_match_borrowed_execution() {
+    assert_consumed_matches_borrowed(formula_document(), set_g_number(2.0), false);
+    assert_consumed_matches_borrowed(formula_document(), set_g_number(1.0), false);
+}
+
+#[test]
+fn consumed_stale_execute_matches_borrowed_execution() {
+    assert_consumed_matches_borrowed(formula_document(), set_g_number(2.0), true);
+}
+
+#[test]
+fn consumed_structural_batch_and_column_clear_match_borrowed_execution() {
+    let body = SemanticPatchBody::atomic_batch(vec![
+        SemanticCommand::AppendSchemaField {
+            schema: "s".into(),
+            field: optional_number_field("added"),
+            values: BTreeMap::new(),
+        },
+        SemanticCommand::SetFieldValue {
+            field: FieldRef::new("e1", "added"),
+            value: Value::Number(Number::new(4.0).unwrap()),
+        },
+        set_number("g", 3.0),
+    ])
+    .unwrap();
+    assert_consumed_matches_borrowed(formula_document(), body, false);
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .required = false;
+    assert_consumed_matches_borrowed(
+        document,
+        SemanticPatchBody::command(SemanticCommand::UnsetField {
+            field: FieldRef::new("e1", "f"),
+        }),
+        false,
+    );
+}
+
+#[test]
+fn consumed_constraint_refusal_matches_borrowed_proposal() {
+    let mut document = formula_document();
+    document
+        .schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("f")
+        .unwrap()
+        .constraint = FieldConstraint::TextLiteralSet {
+        values: vec!["old".into()],
+    };
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut owned = v2_lifecycle();
+    let body = set_f_text("not allowed");
+    let prepared = owned.plan_resident_commands(&session, &body).unwrap();
+    let actual = owned
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &session.witness(),
+            request(session.revision().as_str(), body.clone()),
+            TrustedInstant::new(1),
+            Some(prepared),
+        )
+        .unwrap_err();
+    let expected = propose_plain(
+        &mut v2_lifecycle(),
+        &document,
+        session.revision().as_str(),
+        body,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        actual,
+        PatchLifecycleError::ValidationFailed { .. }
+    ));
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert_eq!(session.document(), &document);
+    assert!(owned.evaluation_memo.is_none());
+}
+
+#[test]
+fn consumed_body_binding_mismatch_replans_in_order() {
+    let document = formula_document();
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let mut owned = v2_lifecycle();
+    let planned =
+        SemanticPatchBody::atomic_batch(vec![set_number("g", 2.0), set_number("g", 3.0)]).unwrap();
+    let prepared = owned.plan_resident_commands(&session, &planned).unwrap();
+    let body =
+        SemanticPatchBody::atomic_batch(vec![set_number("g", 3.0), set_number("g", 2.0)]).unwrap();
+    planning_counters::reset();
+    owned
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &session.witness(),
+            request(session.revision().as_str(), body.clone()),
+            TrustedInstant::new(1),
+            Some(prepared),
+        )
+        .unwrap();
+    assert_eq!(planning_counters::counts().0, 1);
+    let mut control = v2_lifecycle();
+    propose_plain(&mut control, &document, session.revision().as_str(), body).unwrap();
+    assert_same_evaluation(&owned, &control);
+}
+
+#[test]
+fn owned_publication_default_keeps_full_candidate_verification() {
+    let document = document();
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    let candidate = with_f_set(document.clone(), "new");
+    let mut host = InstallingHost {
+        snapshot: document.clone(),
+        revision: "r1".into(),
+        installed: with_f_set(document, "wrong"),
+    };
+    let installation = session.prepare_evaluation(candidate).into_installable();
+    let published = host
+        .publish_owned_if_current(&"scope".into(), &"r1".into(), installation, |_| Some(()))
+        .unwrap();
+    assert!(!published.proof.unwrap().candidate_matches);
 }
