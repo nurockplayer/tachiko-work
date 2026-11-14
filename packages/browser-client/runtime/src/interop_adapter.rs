@@ -4639,6 +4639,7 @@ pub(crate) fn whole_column_argument(
     argument: &str,
     current: usize,
     sheets: &[SourceSheet],
+    numeric_columns: &[Vec<bool>],
     numeric: bool,
 ) -> Option<(usize, usize, usize, usize)> {
     let mut cursor = skip_whitespace(argument, 0);
@@ -4706,7 +4707,7 @@ pub(crate) fn whole_column_argument(
         return None;
     }
     let column = column_index(&start_column)?;
-    (column < sheet.columns.len() && (!numeric || numeric_column(&sheet.rows, column)))
+    (column < sheet.columns.len() && (!numeric || *numeric_columns.get(target)?.get(column)?))
         .then_some((target, column, start_row, end_row))
 }
 
@@ -4723,6 +4724,19 @@ fn numeric_column(rows: &[Vec<SourceCell>], column: usize) -> bool {
     })
 }
 
+/// Admission and translation each build this once after source row exclusions.
+/// No per-formula call scans the source rows again.
+pub(crate) fn numeric_columns(sheets: &[SourceSheet]) -> Vec<Vec<bool>> {
+    sheets
+        .iter()
+        .map(|sheet| {
+            (0..sheet.columns.len())
+                .map(|column| numeric_column(&sheet.rows, column))
+                .collect()
+        })
+        .collect()
+}
+
 /// Whether Tachiko can calculate one source formula, and why not when it
 /// cannot.
 enum FormulaAdmission {
@@ -4734,7 +4748,12 @@ enum FormulaAdmission {
 /// every MIN/MAX call whose argument holds a range, must stay inside the
 /// translated profile.
 #[allow(clippy::too_many_lines)] // Scan each admitted function family without evaluating formulas.
-fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> FormulaAdmission {
+fn formula_admission(
+    formula: &str,
+    current: usize,
+    sheets: &[SourceSheet],
+    numeric_columns: &[Vec<bool>],
+) -> FormulaAdmission {
     let mut cursor = 0;
     while cursor < formula.len() {
         let Some(character) = formula[cursor..].chars().next() else {
@@ -4785,11 +4804,11 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
                     };
                     if conditional || date || lookup {
                         let admission = if lookup {
-                            lookup_admission(&name, argument, current, sheets)
+                            lookup_admission(&name, argument, current, sheets, numeric_columns)
                         } else if date {
                             date_admission(&name, argument, current, sheets)
                         } else {
-                            conditional_admission(&name, argument, current, sheets)
+                            conditional_admission(&name, argument, current, sheets, numeric_columns)
                         };
                         match admission {
                             FormulaAdmission::Admitted => {}
@@ -4806,7 +4825,9 @@ fn formula_admission(formula: &str, current: usize, sheets: &[SourceSheet]) -> F
                         }
                         continue;
                     }
-                    if whole_column_argument(argument, current, sheets, true).is_none() {
+                    if whole_column_argument(argument, current, sheets, numeric_columns, true)
+                        .is_none()
+                    {
                         return FormulaAdmission::Refused(None);
                     }
                     cursor = call + consumed;
@@ -4837,13 +4858,15 @@ fn lookup_admission(
     argument: &str,
     current: usize,
     sheets: &[SourceSheet],
+    numeric_columns: &[Vec<bool>],
 ) -> FormulaAdmission {
     const REASON: &str = "lookup requires exact-match arguments, whole data columns of one table, numeric results, a filled key of the key column's type, and no unescaped VLOOKUP/MATCH wildcards";
     let admitted = || -> Option<()> {
         let call = lookup_call(name, argument)?;
-        let (sheet, keys, first, last) = whole_column_argument(&call.keys, current, sheets, false)?;
+        let (sheet, keys, first, last) =
+            whole_column_argument(&call.keys, current, sheets, numeric_columns, false)?;
         let (result_sheet, _, result_first, result_last) =
-            whole_column_argument(&call.results, current, sheets, true)?;
+            whole_column_argument(&call.results, current, sheets, numeric_columns, true)?;
         if (sheet, first, last) != (result_sheet, result_first, result_last)
             || last + 1 - first != sheets[sheet].rows.len()
         {
@@ -4851,7 +4874,7 @@ fn lookup_admission(
         }
         if let Some(end) = &call.range_end {
             let (end_sheet, _, end_first, end_last) =
-                whole_column_argument(end, current, sheets, false)?;
+                whole_column_argument(end, current, sheets, numeric_columns, false)?;
             if (end_sheet, end_first, end_last) != (sheet, first, last) {
                 return None;
             }
@@ -4893,7 +4916,7 @@ fn lookup_admission(
             if criterion_literal(key)
                 || key.is_empty()
                 || !matches!(
-                    formula_admission(key, current, sheets),
+                    formula_admission(key, current, sheets, numeric_columns),
                     FormulaAdmission::Admitted
                 )
             {
@@ -4915,7 +4938,7 @@ fn lookup_admission(
         }
         if let Some(fallback) = call.if_missing {
             if !matches!(
-                formula_admission(fallback, current, sheets),
+                formula_admission(fallback, current, sheets, numeric_columns),
                 FormulaAdmission::Admitted
             ) {
                 return None;
@@ -4981,6 +5004,7 @@ fn conditional_admission(
     argument: &str,
     current: usize,
     sheets: &[SourceSheet],
+    numeric_columns: &[Vec<bool>],
 ) -> FormulaAdmission {
     let Some(arguments) = split_arguments(argument) else {
         return FormulaAdmission::Refused(None);
@@ -4990,9 +5014,13 @@ fn conditional_admission(
     };
     let mut bounds = None;
     for &(index, numeric) in &shape.columns {
-        let Some((sheet, _, first_row, last_row)) =
-            whole_column_argument(arguments[index].1, current, sheets, numeric)
-        else {
+        let Some((sheet, _, first_row, last_row)) = whole_column_argument(
+            arguments[index].1,
+            current,
+            sheets,
+            numeric_columns,
+            numeric,
+        ) else {
             return FormulaAdmission::Refused(None);
         };
         // A range holding the header could match the header in Excel, and the
@@ -5010,9 +5038,13 @@ fn conditional_admission(
     }
     for &(criterion_index, column_index) in &shape.criteria {
         let criterion = arguments[criterion_index].1.trim();
-        let Some((sheet, column, _, _)) =
-            whole_column_argument(arguments[column_index].1, current, sheets, false)
-        else {
+        let Some((sheet, column, _, _)) = whole_column_argument(
+            arguments[column_index].1,
+            current,
+            sheets,
+            numeric_columns,
+            false,
+        ) else {
             return FormulaAdmission::Refused(None);
         };
         let kind = if criterion_literal(criterion) {
@@ -5143,13 +5175,14 @@ fn top_level_colon(argument: &str) -> bool {
 
 /// A data-row aggregate outside the whole-column profile is refused as before.
 fn refuse_foreign_aggregates(sheets: &mut [SourceSheet], ledger: &mut Vec<FidelityFinding>) {
+    let numeric_columns = numeric_columns(sheets);
     let mut refused = Vec::new();
     for (sheet_index, sheet) in sheets.iter().enumerate() {
         for (row_index, row) in sheet.rows.iter().enumerate() {
             for (column, cell) in row.iter().enumerate() {
                 if let Some(formula) = cell.formula.as_deref() {
                     if let FormulaAdmission::Refused(reason) =
-                        formula_admission(formula, sheet_index, sheets)
+                        formula_admission(formula, sheet_index, sheets, &numeric_columns)
                     {
                         refused.push((sheet_index, row_index, column, reason));
                     }
