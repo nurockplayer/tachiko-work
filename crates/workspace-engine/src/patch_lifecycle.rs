@@ -1532,6 +1532,7 @@ impl EvaluationDetails {
 #[derive(Debug)]
 pub(crate) struct PlannedCommands {
     document_scope: DocumentScopeId,
+    document: DocumentId,
     body: SemanticPatchBody,
     writes: BTreeSet<AssociatedWriteRequirement>,
 }
@@ -2184,6 +2185,7 @@ impl PatchLifecycle {
             .filter(|planned| {
                 witness.is_some()
                     && planned.document_scope == self.document_scope
+                    && planned.document == self.document
                     && planned.body == *patch.exact_change.body()
             });
         let plan = if let Some(planned) = planned {
@@ -4227,6 +4229,7 @@ impl PatchLifecycle {
             .prepare_evaluation(candidate)
             .bind_plan(PlannedCommands {
                 document_scope: self.document_scope.clone(),
+                document: self.document.clone(),
                 body: body.clone(),
                 writes,
             }))

@@ -4411,6 +4411,38 @@ fn consumed_body_binding_mismatch_replans_in_order() {
 }
 
 #[test]
+fn a_plan_from_another_documents_lifecycle_replans() {
+    let document = formula_document();
+    let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
+    // Same scope, another document: its writes name that document, not this one.
+    let other = PatchLifecycle::new_v2(
+        "domain".into(),
+        "scope".into(),
+        "other-doc".into(),
+        "api".into(),
+        "policy".into(),
+        "meaning".into(),
+    );
+    let body = set_g_number(2.0);
+    let prepared = other.plan_resident_commands(&session, &body).unwrap();
+    let mut owned = v2_lifecycle();
+    planning_counters::reset();
+    owned
+        .propose_prepared_witnessed(
+            &"scope".into(),
+            &session.witness(),
+            request(session.revision().as_str(), body.clone()),
+            TrustedInstant::new(1),
+            Some(prepared),
+        )
+        .unwrap();
+    assert_eq!(planning_counters::counts().0, 1);
+    let mut control = v2_lifecycle();
+    propose_plain(&mut control, &document, session.revision().as_str(), body).unwrap();
+    assert_same_evaluation(&owned, &control);
+}
+
+#[test]
 fn owned_publication_default_keeps_full_candidate_verification() {
     let document = document();
     let session = ResidentWorkspaceSession::new("scope".into(), document.clone());
