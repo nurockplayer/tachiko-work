@@ -6614,7 +6614,7 @@ impl DesignerRuntime {
             entities: entities.iter().map(|entity| entity.id.clone()).collect(),
         }];
         let inverse = vec![SemanticCommand::AppendCollection { schema, entities }];
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.default_collection.clone_from(&new_default);
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::TableCommands {
@@ -6704,7 +6704,7 @@ impl DesignerRuntime {
             schema: schema.id,
             entities: Vec::new(),
         }];
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.duplicate_serial = serial;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
@@ -6900,7 +6900,7 @@ impl DesignerRuntime {
             }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
-        let publication = self.publish_commands(expected_revision, forward.clone())?;
+        let publication = self.publish_commands(expected_revision, &forward)?;
         self.duplicate_serial = ids.serial;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
@@ -7320,7 +7320,7 @@ impl DesignerRuntime {
             return Err(PatchLifecycleError::NoChange.into());
         }
         inverse.reverse();
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
             HistoryAction::Commands(inverse),
@@ -7363,205 +7363,30 @@ impl DesignerRuntime {
     fn publish_commands(
         &mut self,
         expected_revision: &str,
-        commands: Vec<SemanticCommand>,
+        commands: &[SemanticCommand],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
-        let keep_formula_sources = self.commands_preserve_formula_sources(&commands);
+        let keep_formula_sources = self.commands_preserve_formula_sources(commands);
         let document_scope = self.session.document_scope().clone();
-        let mut candidate = self.session.document().clone();
-        for command in &commands {
-            match command {
-                SemanticCommand::AppendCollection { schema, entities } => {
-                    candidate.schemas.insert(schema.id.clone(), schema.clone());
-                    for entity in entities {
-                        candidate.entities.insert(entity.id.clone(), entity.clone());
-                    }
-                }
-                SemanticCommand::RemoveCollection { schema, entities } => {
-                    for entity in entities {
-                        candidate.entities.remove(entity);
-                    }
-                    candidate.schemas.remove(schema);
-                }
-                SemanticCommand::SetFieldValue { field, value } => {
-                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
-                        entity.fields.insert(field.field.clone(), value.clone());
-                    }
-                }
-                SemanticCommand::AppendEntity { entity } => {
-                    candidate.entities.insert(entity.id.clone(), entity.clone());
-                }
-                SemanticCommand::RemoveEntity { entity } => {
-                    candidate.entities.remove(entity);
-                }
-                SemanticCommand::AppendSchemaField {
-                    schema,
-                    field,
-                    values,
-                } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.insert_field(field.clone());
-                    for (entity, value) in values {
-                        candidate
-                            .entities
-                            .get_mut(entity)
-                            .ok_or_else(|| table_error("native row is unavailable"))?
-                            .fields
-                            .insert(field.id.clone(), value.clone());
-                    }
-                }
-                SemanticCommand::RemoveSchemaField {
-                    schema,
-                    field,
-                    values,
-                } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?;
-                    definition.fields.remove(&field.id);
-                    definition.normalize_field_order();
-                    for entity in values.keys() {
-                        candidate
-                            .entities
-                            .get_mut(entity)
-                            .ok_or_else(|| table_error("native row is unavailable"))?
-                            .fields
-                            .remove(&field.id);
-                    }
-                }
-                SemanticCommand::RenameSchemaField { schema, field, key } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .key = key.clone();
-                }
-                SemanticCommand::SetSchemaDisplayName {
-                    schema,
-                    display_name,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("native table schema is unavailable"))?
-                        .display_name
-                        .clone_from(display_name);
-                }
-                SemanticCommand::SetSchemaFieldDisplayName {
-                    schema,
-                    field,
-                    display_name,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .display_name
-                        .clone_from(display_name);
-                }
-                SemanticCommand::SetSchemaFieldRequiredness {
-                    schema,
-                    field,
-                    required,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .required = *required;
-                }
-                SemanticCommand::UnsetField { field } => {
-                    if let Some(entity) = candidate.entities.get_mut(&field.entity) {
-                        entity.fields.remove(&field.field);
-                    }
-                }
-                SemanticCommand::FormulaInverseRestore(command) => {
-                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
-                        entity.fields.insert(
-                            command.target().field.clone(),
-                            Value::Number(command.value()),
-                        );
-                    }
-                }
-                SemanticCommand::SetSchemaFieldOrder { schema, order } => {
-                    let definition = candidate
-                        .schemas
-                        .get_mut(schema)
-                        .ok_or_else(|| table_error("column is unavailable"))?;
-                    definition.field_order.clone_from(order);
-                    definition.normalize_field_order();
-                }
-                SemanticCommand::SetFieldNumberFormat {
-                    schema,
-                    field,
-                    number_format,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .number_format
-                        .clone_from(number_format);
-                }
-                SemanticCommand::SetFieldDateFormat {
-                    schema,
-                    field,
-                    date_format,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .date_format = *date_format;
-                }
-                SemanticCommand::FormulaRestore(command) => {
-                    if let Some(entity) = candidate.entities.get_mut(&command.target().entity) {
-                        entity.fields.insert(
-                            command.target().field.clone(),
-                            Value::Formula(command.expression().clone()),
-                        );
-                    }
-                }
-                SemanticCommand::SetFieldConstraint {
-                    schema,
-                    field,
-                    constraint,
-                } => {
-                    candidate
-                        .schemas
-                        .get_mut(schema)
-                        .and_then(|schema| schema.fields.get_mut(field))
-                        .ok_or_else(|| table_error("column is unavailable"))?
-                        .constraint
-                        .clone_from(constraint);
-                }
-                SemanticCommand::FormulaUpdate(_) => {
-                    return Err(tracker_error("unsupported history command"));
-                }
-                SemanticCommand::UpsertKeyedGroupedSumDefinition { definition } => {
-                    candidate
-                        .keyed_grouped_sum_definitions
-                        .insert(definition.id.clone(), definition.clone());
-                }
-                SemanticCommand::RemoveKeyedGroupedSumDefinition { definition } => {
-                    candidate.keyed_grouped_sum_definitions.remove(definition);
-                }
-            }
+        if commands
+            .iter()
+            .any(|command| matches!(command, SemanticCommand::FormulaUpdate(_)))
+        {
+            return Err(tracker_error("unsupported history command"));
         }
+        let body = SemanticPatchBody::atomic_batch(commands.to_vec())?;
+        let prepared = self
+            .lifecycle
+            .plan_resident_commands(&self.session, &body)
+            .map_err(|source| PatchLifecycleError::CommandRejected {
+                source: Box::new(source),
+            })?;
+        let candidate = prepared.document();
         // A batch that only replaces stored values on entities the base holds
         // derives the candidate's totals from the base's instead of walking it.
         let working_edit = match self.profile {
             SessionProfile::WorkingSize => {
-                let totals = self.working_value_edit_totals(&commands, &candidate);
+                let totals = self.working_value_edit_totals(commands, candidate);
                 #[cfg(test)]
                 match &totals {
                     Some(_) => admission_counters::record_value_delta(),
@@ -7578,13 +7403,13 @@ impl DesignerRuntime {
                     .check(capacity::limits_for_profile(self.profile))?;
                 totals.capacity.clone()
             }
-            None => capacity::check_document_for(&candidate, self.profile)?,
+            None => capacity::check_document_for(candidate, self.profile)?,
         };
         // A working-size edit must be saveable before it publishes.
         let working_saved_bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let document_bytes = working_edit.as_ref().map_or_else(
-                    || save_size::saved_bytes_upper_bound(&candidate),
+                    || save_size::saved_bytes_upper_bound(candidate),
                     |totals| totals.saved_bytes,
                 );
                 capacity::check_working_saved_bytes_bound(
@@ -7604,7 +7429,6 @@ impl DesignerRuntime {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
-        let prepared = self.session.prepare_evaluation(candidate);
         let mut working_strings: Option<WorkingStringBudget> = None;
         match prepared.verdict() {
             PreparedVerdict::Valid => {
@@ -7629,7 +7453,7 @@ impl DesignerRuntime {
                             SessionProfile::Ordinary,
                         )?;
                     }
-                    (_, SessionProfile::TextCapacity) => match commands.as_slice() {
+                    (_, SessionProfile::TextCapacity) => match commands {
                         [
                             SemanticCommand::SetFieldValue {
                                 field,
@@ -7755,7 +7579,6 @@ impl DesignerRuntime {
         };
         // `prepared` borrows the resident session until the proposal below.
         let proposal_id = next_proposal_id(&mut self.proposal_serial, &self.row_namespace)?;
-        let body = SemanticPatchBody::atomic_batch(commands)?;
         // The session witnesses its base by occurrence and revision, so the
         // proposal, preview and execution reuse one evaluation without copying
         // or comparing the whole document.
@@ -7771,7 +7594,7 @@ impl DesignerRuntime {
                 self.principal.clone(),
             ),
             self.clock.tick(),
-            Some(&prepared),
+            Some(prepared),
         )?;
         designer_preview_witnessed(
             lifecycle,
@@ -7782,14 +7605,8 @@ impl DesignerRuntime {
             self.clock.tick(),
         )?;
         let execute_now = self.clock.tick();
-        // Hand publication the state this request already derived, so an
-        // accepted edit doesn't derive it a second time.
-        let installation = prepared.into_installable();
         let invalidation = {
-            let mut publication = self
-                .session
-                .publication_authority(&mut self.clock)
-                .with_prepared(installation);
+            let mut publication = self.session.publication_authority(&mut self.clock);
             let receipt = designer_execute(
                 lifecycle,
                 &proposal_id,
@@ -8264,7 +8081,7 @@ impl DesignerRuntime {
         if forward.is_empty() {
             return Err(PatchLifecycleError::NoChange.into());
         }
-        let publication = self.publish_commands(expected, forward.clone())?;
+        let publication = self.publish_commands(expected, &forward)?;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
             HistoryAction::Commands(inverse),
@@ -8373,12 +8190,12 @@ impl DesignerRuntime {
         .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
         let action = if redo { &entry.forward } else { &entry.inverse };
         let result = match action {
-            HistoryAction::Commands(commands) => self.publish_commands(expected, commands.clone()),
+            HistoryAction::Commands(commands) => self.publish_commands(expected, commands),
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
-                let result = self.publish_commands(expected, commands.clone())?;
+                let result = self.publish_commands(expected, commands)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
@@ -14849,7 +14666,7 @@ mod tests {
             let error = runtime
                 .publish_commands(
                     "resident/1",
-                    vec![SemanticCommand::AppendSchemaField {
+                    &[SemanticCommand::AppendSchemaField {
                         schema: schema.clone().into(),
                         field: FieldDefinition {
                             id: FieldId::from(format!("bad-{}", runtime.proposal_serial)),
@@ -15242,7 +15059,7 @@ mod tests {
                 runtime
                     .publish_commands(
                         "resident/0",
-                        vec![super::SemanticCommand::SetFieldValue {
+                        &[super::SemanticCommand::SetFieldValue {
                             field: super::FieldRef::new("utilities", "actual"),
                             value: super::Value::Number(super::Number::new(170.0).unwrap()),
                         }]

@@ -31,11 +31,13 @@ use thiserror::Error;
 use super::{
     ColumnCriterion, ColumnRef, ConditionalAggregate, Document, DocumentId, Entity, EntityId,
     EntityKey, Expression, FieldDefinition, FieldEditPlanning, FieldId, FieldKey, FieldRef,
-    FieldType, Number, PreparedEvaluation, PreparedVerdict, SchemaId, SemanticChange,
-    ValidationReport, Value, WorkspaceError, apply_field_value_candidate_with_planning,
-    finalize_edit_changes_with_validation, formula_inverse_restore_candidate_in_place,
-    formula_restore_candidate_in_place, formula_update_candidate_in_place,
-    resident_session::DocumentWitness, unset_field_candidate_in_place,
+    FieldType, Number, PreparedEvaluation, PreparedInstallation, PreparedVerdict, SchemaId,
+    SemanticChange, ValidationReport, Value, WorkspaceError,
+    apply_field_value_candidate_with_planning, finalize_edit_changes_with_validation,
+    formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
+    formula_update_candidate_in_place,
+    resident_session::{DocumentWitness, ResidentWorkspaceSession},
+    unset_field_candidate_in_place,
 };
 
 /// What a run of `AppendEntity` commands has already proved about the candidate:
@@ -1309,6 +1311,32 @@ pub trait SemanticPublicationAuthority {
         (DocumentScopeId, &Document, SemanticRevision, Authorization),
         SemanticPublicationError,
     >;
+
+    /// Publish one owned installation. The default retains the existing full
+    /// comparison against the borrowed candidate; only the resident authority
+    /// consumes the installation directly. The opaque result keeps the exact
+    /// installed snapshot together with its engine-created provenance.
+    ///
+    /// # Errors
+    /// Returns the same guarded refusals as [`Self::publish_if_current`].
+    fn publish_owned_if_current<Authorization>(
+        &mut self,
+        expected_document_scope: &DocumentScopeId,
+        expected_revision: &SemanticRevision,
+        installation: PreparedInstallation,
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<PublicationProvenance<'_, Authorization>, SemanticPublicationError> {
+        let proof = CandidateProvenance::new(&installation);
+        let snapshot = self.publish_if_current(
+            expected_document_scope,
+            expected_revision,
+            &installation.candidate,
+            authorize,
+        )?;
+        let matches = snapshot.1 == &installation.candidate;
+        drop(installation);
+        Ok(proof.installed(snapshot, matches))
+    }
 }
 
 /// Proved no-publication result from the host publication boundary.
@@ -1457,13 +1485,110 @@ struct StoredApproval {
     policy_selection: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
+enum EvaluatedDocument {
+    Copied(Document),
+    Installation(Box<PreparedInstallation>),
+}
+
+impl EvaluatedDocument {
+    fn document(&self) -> &Document {
+        match self {
+            Self::Copied(document) => document,
+            Self::Installation(installation) => &installation.candidate,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct EvaluatedPatch {
-    document: Document,
+    document: EvaluatedDocument,
     evidence: PatchEvidence,
     formula_impacts: Vec<FormulaImpactEvidence>,
     validation_report: ValidationReport,
     footprint: AuthorizationFootprint,
+}
+
+struct EvaluationDetails {
+    evidence: PatchEvidence,
+    formula_impacts: Vec<FormulaImpactEvidence>,
+    validation_report: ValidationReport,
+    footprint: AuthorizationFootprint,
+}
+
+impl EvaluationDetails {
+    fn with_document(self, document: EvaluatedDocument) -> EvaluatedPatch {
+        EvaluatedPatch {
+            document,
+            evidence: self.evidence,
+            formula_impacts: self.formula_impacts,
+            validation_report: self.validation_report,
+            footprint: self.footprint,
+        }
+    }
+}
+
+/// Private proof that planning admitted these commands, in this exact order.
+#[derive(Debug)]
+pub(crate) struct PlannedCommands {
+    document_scope: DocumentScopeId,
+    document: DocumentId,
+    body: SemanticPatchBody,
+    writes: BTreeSet<AssociatedWriteRequirement>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PublicationBinding {
+    patch: SemanticPatch,
+    evidence: PatchEvidence,
+    report: ValidationReport,
+}
+
+/// Opaque guarded publication result. Its snapshot and provenance cannot be
+/// separated or replaced by a host implementation. Only the engine creates it.
+pub struct PublicationProvenance<'authority, Authorization> {
+    document_scope: DocumentScopeId,
+    document: &'authority Document,
+    revision: SemanticRevision,
+    authorization: Authorization,
+    proof: Option<CandidateProvenance>,
+}
+
+pub(crate) struct CandidateProvenance {
+    occurrence: u64,
+    base_revision: SemanticRevision,
+    resulting_revision: Option<SemanticRevision>,
+    binding: Option<PublicationBinding>,
+    candidate_matches: bool,
+}
+
+impl CandidateProvenance {
+    pub(crate) fn new(installation: &PreparedInstallation) -> Self {
+        Self {
+            occurrence: installation.base_occurrence,
+            base_revision: installation.base_revision.clone(),
+            resulting_revision: None,
+            binding: installation.publication_binding.clone(),
+            candidate_matches: false,
+        }
+    }
+
+    pub(crate) fn installed<Authorization>(
+        mut self,
+        snapshot: (DocumentScopeId, &Document, SemanticRevision, Authorization),
+        candidate_matches: bool,
+    ) -> PublicationProvenance<'_, Authorization> {
+        let (document_scope, document, revision, authorization) = snapshot;
+        self.resulting_revision = Some(revision.clone());
+        self.candidate_matches = candidate_matches;
+        PublicationProvenance {
+            document_scope,
+            document,
+            revision,
+            authorization,
+            proof: Some(self),
+        }
+    }
 }
 
 /// The base an [`EvaluationMemo`] is pinned to.
@@ -1536,6 +1661,47 @@ struct PublicationAuthorization {
     can_disclose: bool,
 }
 
+enum PublicationCandidate<'candidate> {
+    Borrowed(&'candidate Document),
+    Owned(Box<PreparedInstallation>),
+}
+
+impl PublicationCandidate<'_> {
+    fn publish<'authority, Authorization>(
+        self,
+        publication: &'authority mut impl SemanticPublicationAuthority,
+        scope: &DocumentScopeId,
+        revision: &SemanticRevision,
+        authorize: impl FnOnce(TrustedInstant) -> Option<Authorization>,
+    ) -> Result<PublicationProvenance<'authority, Authorization>, SemanticPublicationError> {
+        match self {
+            Self::Borrowed(candidate) => {
+                let (document_scope, document, revision, authorization) =
+                    publication.publish_if_current(scope, revision, candidate, authorize)?;
+                Ok(PublicationProvenance {
+                    document_scope,
+                    document,
+                    revision,
+                    authorization,
+                    proof: None,
+                })
+            }
+            Self::Owned(installation) => {
+                publication.publish_owned_if_current(scope, revision, *installation, authorize)
+            }
+        }
+    }
+}
+
+enum VerificationCandidate<'candidate> {
+    Borrowed(&'candidate Document),
+    Owned {
+        proof: &'candidate CandidateProvenance,
+        binding: &'candidate PublicationBinding,
+        occurrence: Option<u64>,
+    },
+}
+
 struct PublicationAttempt<'a> {
     proposal_id: &'a ProposalId,
     proposal: &'a ProposalRecord,
@@ -1544,7 +1710,7 @@ struct PublicationAttempt<'a> {
     footprint: &'a AuthorizationFootprint,
     current_document_scope: &'a DocumentScopeId,
     current_revision: &'a SemanticRevision,
-    candidate: &'a Document,
+    candidate: PublicationCandidate<'a>,
 }
 
 struct PublishedCandidate<'authority> {
@@ -1553,6 +1719,7 @@ struct PublishedCandidate<'authority> {
     revision: SemanticRevision,
     approval: Option<ApprovalExecutionEvidence>,
     authorization: PublicationAuthorization,
+    provenance: Option<CandidateProvenance>,
 }
 
 /// Provisional trusted in-process proposal and Approval lifecycle registry.
@@ -1871,6 +2038,7 @@ impl PatchLifecycle {
             now,
             None,
             None,
+            None,
         )
     }
 
@@ -1901,6 +2069,7 @@ impl PatchLifecycle {
             now,
             prepared,
             None,
+            None,
         )
     }
 
@@ -1919,7 +2088,7 @@ impl PatchLifecycle {
         witness: &DocumentWitness<'_>,
         request: ProposalRequest,
         now: TrustedInstant,
-        prepared: Option<&PreparedEvaluation<'_>>,
+        prepared: Option<PreparedEvaluation<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
         self.propose_inner(
             document_scope,
@@ -1927,8 +2096,9 @@ impl PatchLifecycle {
             witness.revision(),
             request,
             now,
-            prepared,
+            None,
             Some(witness),
+            prepared,
         )
     }
 
@@ -1943,18 +2113,23 @@ impl PatchLifecycle {
         now: TrustedInstant,
         prepared: Option<&PreparedEvaluation<'_>>,
         witness: Option<&DocumentWitness<'_>>,
+        owned_prepared: Option<PreparedEvaluation<'_>>,
     ) -> Result<SemanticPatch, PatchLifecycleError> {
-        let prepared = prepared.filter(|prepared| match witness {
-            // The witness names the occurrence and revision this evaluation was
-            // prepared against, so its base document is this exact document.
-            Some(witness) => {
-                prepared.base_occurrence() == witness.occurrence_id()
-                    && prepared.base_revision() == witness.revision()
-            }
-            None => {
-                prepared.base_revision() == current_revision && prepared.base_document() == document
-            }
-        });
+        let prepared = owned_prepared
+            .as_ref()
+            .or(prepared)
+            .filter(|prepared| match witness {
+                // The witness names the occurrence and revision this evaluation was
+                // prepared against, so its base document is this exact document.
+                Some(witness) => {
+                    prepared.base_occurrence() == witness.occurrence_id()
+                        && prepared.base_revision() == witness.revision()
+                }
+                None => {
+                    prepared.base_revision() == current_revision
+                        && prepared.base_document() == document
+                }
+            });
         self.require_document(document_scope, document)?;
         if self.proposals.contains_key(&request.id) {
             return Err(PatchLifecycleError::ProposalIdAlreadyExists);
@@ -2005,7 +2180,21 @@ impl PatchLifecycle {
             return Err(PatchLifecycleError::DuplicateFieldConstraintWrite { schema, field });
         }
 
-        let (candidate, writes) = match self.plan_commands(document, patch.exact_change.body()) {
+        let planned = prepared
+            .and_then(|prepared| prepared.planned())
+            .filter(|planned| {
+                witness.is_some()
+                    && planned.document_scope == self.document_scope
+                    && planned.document == self.document
+                    && planned.body == *patch.exact_change.body()
+            });
+        let plan = if let Some(planned) = planned {
+            Ok((None, planned.writes.clone()))
+        } else {
+            self.plan_commands(document, patch.exact_change.body())
+                .map(|(candidate, writes)| (Some(candidate), writes))
+        };
+        let (candidate, writes) = match plan {
             Ok(planned) => planned,
             Err(source) => {
                 let originator = record.originator.clone();
@@ -2044,13 +2233,38 @@ impl PatchLifecycle {
 
         // A failed evaluation must not leave an earlier evaluation reusable.
         self.evaluation_memo = None;
-        let evaluated = match self.finalize_evaluation(
-            document,
-            candidate,
-            patch.exact_change.body(),
-            provisional_footprint.associated_write_requirements.clone(),
-            prepared,
-        ) {
+        let evaluation = if let Some(candidate) = candidate {
+            self.finalize_evaluation(
+                document,
+                candidate,
+                patch.exact_change.body(),
+                provisional_footprint.associated_write_requirements.clone(),
+                prepared,
+            )
+        } else {
+            let prepared = prepared.expect("a bound plan has its evaluation");
+            let details = self.evaluate_candidate(
+                document,
+                prepared.document(),
+                patch.exact_change.body(),
+                provisional_footprint.associated_write_requirements.clone(),
+                Some(prepared),
+            );
+            #[cfg(test)]
+            self.cross_check_resident(document, &patch, &details);
+            details.map(|details| {
+                let mut installation = owned_prepared
+                    .expect("only owned evaluations bind plans")
+                    .into_installable();
+                installation.publication_binding = Some(PublicationBinding {
+                    patch: patch.clone(),
+                    evidence: details.evidence.clone(),
+                    report: details.validation_report.clone(),
+                });
+                details.with_document(EvaluatedDocument::Installation(Box::new(installation)))
+            })
+        };
+        let evaluated = match evaluation {
             Ok(evaluated) => evaluated,
             Err(error) => {
                 let originator = record.originator.clone();
@@ -2322,7 +2536,7 @@ impl PatchLifecycle {
             let constraint_reviews = if matches!(&evaluated.evidence, PatchEvidence::V2(_)) {
                 constraint_review_evidence(
                     document,
-                    &evaluated.document,
+                    evaluated.document.document(),
                     patch.exact_change.body(),
                 )?
             } else {
@@ -2549,6 +2763,7 @@ impl PatchLifecycle {
         let retained = self.evaluation_memo.take();
         let (current_document_scope, document, current_revision) = publication.current_snapshot();
         let witness = publication.current_snapshot_witness();
+        let occurrence = witness.as_ref().map(DocumentWitness::occurrence_id);
         if self
             .require_document(&current_document_scope, document)
             .is_err()
@@ -2605,6 +2820,23 @@ impl PatchLifecycle {
             &footprint,
             now,
         )?;
+        let verification_binding = PublicationBinding {
+            patch: proposal.patch.clone(),
+            evidence: evaluated.evidence.clone(),
+            report: evaluated.validation_report.clone(),
+        };
+        #[cfg(test)]
+        let legacy_candidate = evaluated.document.document().clone();
+        let (installation, borrowed_candidate) = match evaluated.document {
+            EvaluatedDocument::Copied(document) => (None, Some(document)),
+            EvaluatedDocument::Installation(installation) => (Some(installation), None),
+        };
+        let publication_candidate = match installation {
+            Some(installation) => PublicationCandidate::Owned(installation),
+            None => PublicationCandidate::Borrowed(
+                borrowed_candidate.as_ref().expect("copied candidate"),
+            ),
+        };
         let evaluated_report = evaluated.validation_report.clone();
         let published = self.publish_candidate(
             publication,
@@ -2616,7 +2848,7 @@ impl PatchLifecycle {
                 footprint: &footprint,
                 current_document_scope: &current_document_scope,
                 current_revision: &current_revision,
-                candidate: &evaluated.document,
+                candidate: publication_candidate,
             },
         )?;
         let can_disclose = published.authorization.can_disclose;
@@ -2664,14 +2896,44 @@ impl PatchLifecycle {
                 ProfiledReceipt::V2(receipt)
             }
         };
-        let verification_report = match self.verify_publication(
+        let verification_candidate = match published.provenance.as_ref() {
+            Some(proof) => VerificationCandidate::Owned {
+                proof,
+                binding: &verification_binding,
+                occurrence,
+            },
+            None => VerificationCandidate::Borrowed(
+                borrowed_candidate.as_ref().expect("borrowed publication"),
+            ),
+        };
+        let verification = self.verify_publication(
             proposal_id,
             &current_revision,
             &published.revision,
-            (&evaluated.document, &evaluated_report),
+            (verification_candidate, &evaluated_report),
             &published.document_scope,
             published.document,
-        ) {
+        );
+        #[cfg(test)]
+        {
+            let legacy = self.verify_publication(
+                proposal_id,
+                &current_revision,
+                &published.revision,
+                (
+                    VerificationCandidate::Borrowed(&legacy_candidate),
+                    &evaluated_report,
+                ),
+                &published.document_scope,
+                published.document,
+            );
+            assert_eq!(
+                format!("{verification:?}"),
+                format!("{legacy:?}"),
+                "owned verification must equal borrowed verification"
+            );
+        }
+        let verification_report = match verification {
             Ok(report) => report,
             Err(error) if can_disclose => return Err(error),
             Err(_) => return Err(PatchLifecycleError::AuthorizationDenied),
@@ -3000,40 +3262,35 @@ impl PatchLifecycle {
 
         let mut boundary_error = None;
         let mut boundary_disclosure = None;
-        let publication_result = publication.publish_if_current(
+        let authorize = |boundary_now| match self.authorize_publication_boundary(
+            proposal,
+            reserved.as_ref(),
+            executor,
+            footprint,
+            boundary_now,
+        ) {
+            Ok((approve_grants, execute_grants)) => {
+                let can_disclose = self
+                    .authorize_query(executor, &footprint.disclosure_requirements, boundary_now)
+                    .is_ok();
+                boundary_disclosure = Some(can_disclose);
+                Some(PublicationAuthorization {
+                    approve_grants,
+                    execute_grants,
+                    can_disclose,
+                })
+            }
+            Err(error) => {
+                boundary_error = Some(error);
+                None
+            }
+        };
+        let published = match candidate.publish(
+            publication,
             current_document_scope,
             current_revision,
-            candidate,
-            |boundary_now| match self.authorize_publication_boundary(
-                proposal,
-                reserved.as_ref(),
-                executor,
-                footprint,
-                boundary_now,
-            ) {
-                Ok((approve_grants, execute_grants)) => {
-                    let can_disclose = self
-                        .authorize_query(executor, &footprint.disclosure_requirements, boundary_now)
-                        .is_ok();
-                    boundary_disclosure = Some(can_disclose);
-                    Some(PublicationAuthorization {
-                        approve_grants,
-                        execute_grants,
-                        can_disclose,
-                    })
-                }
-                Err(error) => {
-                    boundary_error = Some(error);
-                    None
-                }
-            },
-        );
-        let (
-            installed_document_scope,
-            installed_document,
-            resulting_revision,
-            publication_authorization,
-        ) = match publication_result {
+            authorize,
+        ) {
             Ok(success) => success,
             Err(error) => {
                 return Err(self.restore_after_publication_failure(
@@ -3045,7 +3302,6 @@ impl PatchLifecycle {
                 ));
             }
         };
-
         let approval_evidence = reserved.as_mut().map(|stored| {
             stored.status = ApprovalStatus::Consumed;
             ApprovalExecutionEvidence {
@@ -3060,11 +3316,12 @@ impl PatchLifecycle {
         }
         self.append_state(proposal_id, PatchLifecycleState::Applied);
         Ok(PublishedCandidate {
-            document_scope: installed_document_scope,
-            document: installed_document,
-            revision: resulting_revision,
+            document_scope: published.document_scope,
+            document: published.document,
+            revision: published.revision,
             approval: approval_evidence,
-            authorization: publication_authorization,
+            authorization: published.authorization,
+            provenance: published.proof,
         })
     }
 
@@ -3130,7 +3387,7 @@ impl PatchLifecycle {
         proposal_id: &ProposalId,
         base_revision: &SemanticRevision,
         resulting_revision: &SemanticRevision,
-        evaluated: (&Document, &ValidationReport),
+        evaluated: (VerificationCandidate<'_>, &ValidationReport),
         installed_document_scope: &DocumentScopeId,
         installed_document: &Document,
     ) -> Result<ValidationReport, PatchLifecycleError> {
@@ -3139,12 +3396,22 @@ impl PatchLifecycle {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::VerificationFailed);
         }
-        // The installed document must be the evaluated candidate itself, so the
-        // evaluated report is the installed document's report by construction:
-        // validation is a pure function of the document.
-        if resulting_revision == base_revision
-            || installed_document != candidate
-            || !evaluated_report.is_valid()
+        let candidate_matches = match candidate {
+            VerificationCandidate::Borrowed(candidate) => installed_document == candidate,
+            VerificationCandidate::Owned {
+                proof,
+                binding,
+                occurrence,
+            } => {
+                proof.candidate_matches
+                    && occurrence == Some(proof.occurrence)
+                    && proof.base_revision == *base_revision
+                    && proof.resulting_revision.as_ref() == Some(resulting_revision)
+                    && proof.binding.as_ref() == Some(binding)
+                    && binding.report == *evaluated_report
+            }
+        };
+        if resulting_revision == base_revision || !candidate_matches || !evaluated_report.is_valid()
         {
             self.append_state(proposal_id, PatchLifecycleState::Conflict);
             return Err(PatchLifecycleError::VerificationFailed);
@@ -3936,15 +4203,55 @@ impl PatchLifecycle {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
+    /// Plan and prepare the resident candidate once, binding its ordered body
+    /// and trusted writes privately to this session occurrence and revision.
+    ///
+    /// # Errors
+    /// Returns the same name admission and command planning errors as proposal.
+    ///
+    /// # Panics
+    ///
+    /// In test builds, panics if the old planner disagrees with the resident
+    /// candidate or its associated writes.
+    pub fn plan_resident_commands<'session>(
+        &self,
+        session: &'session ResidentWorkspaceSession,
+        body: &SemanticPatchBody,
+    ) -> Result<PreparedEvaluation<'session>, WorkspaceError> {
+        let (candidate, writes) = self.plan_candidate(session.document(), body)?;
+        #[cfg(test)]
+        super::planning_counters::cross_check(|| {
+            let (old_candidate, old_writes) = self.plan_commands(session.document(), body).unwrap();
+            assert_eq!(candidate, old_candidate);
+            assert_eq!(writes, old_writes);
+        });
+        Ok(session
+            .prepare_evaluation(candidate)
+            .bind_plan(PlannedCommands {
+                document_scope: self.document_scope.clone(),
+                document: self.document.clone(),
+                body: body.clone(),
+                writes,
+            }))
+    }
+
     fn plan_commands(
         &self,
         document: &Document,
         body: &SemanticPatchBody,
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
-        admit_command_names(body)?;
         #[cfg(test)]
         super::planning_counters::record_document_clone();
+        self.plan_candidate(document, body)
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
+    fn plan_candidate(
+        &self,
+        document: &Document,
+        body: &SemanticPatchBody,
+    ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+        admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
@@ -4430,13 +4737,25 @@ impl PatchLifecycle {
         base: &Document,
         candidate: Document,
         body: &SemanticPatchBody,
-        associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
+        writes: BTreeSet<AssociatedWriteRequirement>,
         prepared: Option<&PreparedEvaluation<'_>>,
     ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+        self.evaluate_candidate(base, &candidate, body, writes, prepared)
+            .map(|details| details.with_document(EvaluatedDocument::Copied(candidate)))
+    }
+
+    fn evaluate_candidate(
+        &self,
+        base: &Document,
+        candidate: &Document,
+        body: &SemanticPatchBody,
+        associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
+        prepared: Option<&PreparedEvaluation<'_>>,
+    ) -> Result<EvaluationDetails, PatchLifecycleError> {
         #[cfg(test)]
         self.evaluations.set(self.evaluations.get() + 1);
         if self.evidence_profile == EvidenceProfile::V2 {
-            return self.finalize_evaluation_v2(
+            return self.evaluate_candidate_v2(
                 base,
                 candidate,
                 body,
@@ -4444,11 +4763,11 @@ impl PatchLifecycle {
                 prepared,
             );
         }
-        reject_legacy_number_formats(base, &candidate, body)?;
-        reject_legacy_field_orders(base, &candidate, body)?;
+        reject_legacy_number_formats(base, candidate, body)?;
+        reject_legacy_field_orders(base, candidate, body)?;
         if contains_constraint_command(body)
             || document_has_field_constraints(base)
-            || document_has_field_constraints(&candidate)
+            || document_has_field_constraints(candidate)
         {
             return Err(PatchLifecycleError::CommandRejected {
                 source: Box::new(WorkspaceError::Diff(
@@ -4481,11 +4800,10 @@ impl PatchLifecycle {
                     )),
                 });
             }
-            let (validation_report, _calculation) = Self::validate_and_preflight(&candidate)?;
-            let disclosure_requirements = self.derive_disclosures(base, &candidate, body, &[])?;
-            return Ok(EvaluatedPatch {
+            let (validation_report, _calculation) = Self::validate_and_preflight(candidate)?;
+            let disclosure_requirements = self.derive_disclosures(base, candidate, body, &[])?;
+            return Ok(EvaluationDetails {
                 validation_report,
-                document: candidate,
                 evidence: PatchEvidence::V1(Vec::new()),
                 formula_impacts: Vec::new(),
                 footprint: AuthorizationFootprint {
@@ -4494,7 +4812,7 @@ impl PatchLifecycle {
                 },
             });
         }
-        let (document, semantic_changes, validation_report) =
+        let (semantic_changes, validation_report) =
             match finalize_edit_changes_with_validation(base, candidate, prepared) {
                 Ok(result) => result,
                 Err(WorkspaceError::InvalidDocument { report, .. }) => {
@@ -4508,9 +4826,8 @@ impl PatchLifecycle {
             };
         let formula_impacts = formula_impacts(&semantic_changes);
         let disclosure_requirements =
-            self.derive_disclosures(base, &document, body, &semantic_changes)?;
-        Ok(EvaluatedPatch {
-            document,
+            self.derive_disclosures(base, candidate, body, &semantic_changes)?;
+        Ok(EvaluationDetails {
             evidence: PatchEvidence::V1(semantic_changes),
             formula_impacts,
             validation_report,
@@ -4521,20 +4838,20 @@ impl PatchLifecycle {
         })
     }
 
-    fn finalize_evaluation_v2(
+    fn evaluate_candidate_v2(
         &self,
         base: &Document,
-        candidate: Document,
+        candidate: &Document,
         body: &SemanticPatchBody,
         associated_write_requirements: BTreeSet<AssociatedWriteRequirement>,
         prepared: Option<&PreparedEvaluation<'_>>,
-    ) -> Result<EvaluatedPatch, PatchLifecycleError> {
+    ) -> Result<EvaluationDetails, PatchLifecycleError> {
         // Only a successful evaluation of this exact candidate against a base
         // that today's path would accept can replace today's validation,
         // calculation and evidence work; every other case keeps it unchanged.
         let reusable = prepared
             .filter(|prepared| {
-                prepared.document() == &candidate
+                prepared.document() == candidate
                     && matches!(prepared.verdict(), PreparedVerdict::Valid)
                     && prepared.base_report_valid()
                     && super::validate_keyed_grouped_sum_definitions(base).is_ok()
@@ -4571,7 +4888,7 @@ impl PatchLifecycle {
                     })?;
                 }
                 if !prepared.candidate_preflight_succeeded() {
-                    super::preflight_formula_projections(&candidate).map_err(|source| {
+                    super::preflight_formula_projections(candidate).map_err(|source| {
                         PatchLifecycleError::CommandRejected {
                             source: Box::new(source),
                         }
@@ -4583,7 +4900,7 @@ impl PatchLifecycle {
                 let delta = canonical_delta_scoped(
                     CANONICAL_SEMANTIC_DELTA_V2,
                     base,
-                    &candidate,
+                    candidate,
                     base_calculation,
                     candidate_calculation,
                     &changes.diff_scope(),
@@ -4597,7 +4914,7 @@ impl PatchLifecycle {
                 let scope = changes.diff_scope();
                 let formula_changes = super::diff_changes_scoped(
                     &scoped_formula_projection_document(base, &scope),
-                    &scoped_formula_projection_document(&candidate, &scope),
+                    &scoped_formula_projection_document(candidate, &scope),
                     base_calculation,
                     candidate_calculation,
                     &scope,
@@ -4607,14 +4924,15 @@ impl PatchLifecycle {
                 let (_, base_calculation) = Self::validate_and_preflight(base)?;
                 #[cfg(test)]
                 super::evaluation_counters::record_base_calculation();
-                let (report, candidate_calculation) = Self::validate_and_preflight(&candidate)?;
-                let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, &candidate)
-                    .map_err(|source| PatchLifecycleError::CommandRejected {
+                let (report, candidate_calculation) = Self::validate_and_preflight(candidate)?;
+                let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, base, candidate).map_err(
+                    |source| PatchLifecycleError::CommandRejected {
                         source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
-                    })?;
+                    },
+                )?;
                 let formula_projection = super::diff_with_calculations(
                     &formula_projection_document(base),
-                    &formula_projection_document(&candidate),
+                    &formula_projection_document(candidate),
                     &base_calculation,
                     &candidate_calculation,
                 )
@@ -4625,9 +4943,8 @@ impl PatchLifecycle {
             };
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
-            self.derive_disclosures(base, &candidate, body, &formula_changes)?;
-        Ok(EvaluatedPatch {
-            document: candidate,
+            self.derive_disclosures(base, candidate, body, &formula_changes)?;
+        Ok(EvaluationDetails {
             evidence: PatchEvidence::V2(delta),
             formula_impacts,
             validation_report,
@@ -4636,6 +4953,32 @@ impl PatchLifecycle {
                 associated_write_requirements,
             },
         })
+    }
+
+    #[cfg(test)]
+    fn cross_check_resident(
+        &self,
+        base: &Document,
+        patch: &SemanticPatch,
+        result: &Result<EvaluationDetails, PatchLifecycleError>,
+    ) {
+        let evaluations = self.evaluations.get();
+        super::planning_counters::cross_check(|| {
+            super::evaluation_counters::cross_check(|| {
+                let old = self.evaluate_patch(base, patch);
+                match (result, old) {
+                    (Ok(new), Ok(old)) => {
+                        assert_eq!(new.evidence, old.evidence);
+                        assert_eq!(new.formula_impacts, old.formula_impacts);
+                        assert_eq!(new.validation_report, old.validation_report);
+                        assert_eq!(new.footprint, old.footprint);
+                    }
+                    (Err(new), Err(old)) => assert_eq!(format!("{new:?}"), format!("{old:?}")),
+                    _ => panic!("resident evaluation differs from old planning"),
+                }
+            });
+        });
+        self.evaluations.set(evaluations);
     }
 
     fn evaluate_patch(
