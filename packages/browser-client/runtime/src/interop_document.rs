@@ -227,7 +227,7 @@ impl DesignerRuntime {
             .ok_or_else(|| tracker_error("cleanup preview is absent or no longer current"))?;
         let commands = pending.commands.clone();
         let inverse = pending.inverse.clone();
-        let publication = self.publish_commands(expected_revision, commands.clone())?;
+        let publication = self.publish_commands(expected_revision, &commands)?;
         self.pending_cleanup = None;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(commands),

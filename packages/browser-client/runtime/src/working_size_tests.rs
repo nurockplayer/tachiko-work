@@ -4294,7 +4294,7 @@ fn edit_a_formula(runtime: &mut DesignerRuntime, random: &mut SeededRandom) {
     let current = revision(runtime);
     match runtime.publish_commands(
         &current,
-        vec![SemanticCommand::set_field_value(
+        &[SemanticCommand::set_field_value(
             FieldRef::new(format!("r{row:05}"), format!("c{column}")),
             value,
         )],
@@ -4481,7 +4481,7 @@ fn a_value_edit_past_the_formula_node_bound_refuses_like_the_full_walk() {
     let error = runtime
         .publish_commands(
             &base_revision,
-            vec![SemanticCommand::set_field_value(
+            &[SemanticCommand::set_field_value(
                 FieldRef::new("r09999", "c9"),
                 Value::Formula(eleven.clone()),
             )],
@@ -4566,7 +4566,7 @@ fn a_value_edit_past_the_dependency_edge_bound_refuses_like_the_full_walk() {
     let error = runtime
         .publish_commands(
             &base_revision,
-            vec![SemanticCommand::set_field_value(
+            &[SemanticCommand::set_field_value(
                 FieldRef::new("r09999", "c22"),
                 Value::Formula(formula.clone()),
             )],
@@ -4721,7 +4721,7 @@ fn a_value_edit_that_would_cross_the_formula_node_item_bound_is_refused_earlier(
     let error = runtime
         .publish_commands(
             &base_revision,
-            vec![SemanticCommand::set_field_value(
+            &[SemanticCommand::set_field_value(
                 FieldRef::new("r00000", "c0"),
                 Value::Formula(wide),
             )],
@@ -4855,7 +4855,7 @@ fn formula_cell_clear_reprojects_sources() {
     runtime
         .publish_commands(
             &revision(&runtime),
-            vec![SemanticCommand::UnsetField {
+            &[SemanticCommand::UnsetField {
                 field: field.clone(),
             }],
         )
@@ -4873,7 +4873,7 @@ fn formula_replacements_reproject_sources() {
     runtime
         .publish_commands(
             &revision(&runtime),
-            vec![SemanticCommand::set_field_value(field.clone(), formula)],
+            &[SemanticCommand::set_field_value(field.clone(), formula)],
         )
         .unwrap();
     assert!(runtime.formula_sources.contains_key(&field));
@@ -4887,7 +4887,7 @@ fn formula_replacements_reproject_sources() {
     let error = runtime
         .publish_commands(
             &current,
-            vec![SemanticCommand::set_field_value(
+            &[SemanticCommand::set_field_value(
                 field.clone(),
                 Value::Number(Number::new(3.0).unwrap()),
             )],
@@ -4944,7 +4944,7 @@ fn clear_with_structural_command_matches_full_walk() {
     let delta_before = super::admission_counters::value_delta_admissions();
     let full_before = super::admission_counters::full_walk_admissions();
     runtime
-        .publish_commands(&revision(&runtime), commands)
+        .publish_commands(&revision(&runtime), &commands)
         .unwrap();
     assert_eq!(
         super::admission_counters::value_delta_admissions(),
@@ -4992,7 +4992,7 @@ fn clear_batch_limits_and_refusal_match_full_walk() {
     let error = runtime
         .publish_commands(
             &current,
-            vec![
+            &[
                 SemanticCommand::UnsetField {
                     field: FieldRef::new("r00000", "c0"),
                 },
@@ -5026,10 +5026,7 @@ fn working_scalar_consumed_candidate_publishes_exact_document_and_report() {
         .fields
         .insert(field.field.clone(), value.clone());
     let publication = runtime
-        .publish_commands(
-            &current,
-            vec![SemanticCommand::SetFieldValue { field, value }],
-        )
+        .publish_commands(&current, &[SemanticCommand::SetFieldValue { field, value }])
         .unwrap();
     assert_ne!(publication.resulting_revision, current);
     assert_eq!(runtime.session.document(), &expected);
