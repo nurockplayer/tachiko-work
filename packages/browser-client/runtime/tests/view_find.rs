@@ -278,6 +278,40 @@ fn formatted_number_date_and_text_match_their_display_text() {
 }
 
 #[test]
+fn boolean_and_calculated_cells_match_displayed_values_at_their_locations() {
+    let mut runtime = find_runtime();
+    for (query, field, total, entity, row) in [
+        ("TrUe", "f04_done", 2, "e01", 0),
+        ("false", "f04_done", 1, "e02", 1),
+        ("$2,469.00", "f05_double", 1, "e01", 0),
+        ("$20.00", "f05_double", 1, "e02", 1),
+    ] {
+        let result = find(
+            &mut runtime,
+            TableView::default(),
+            query,
+            &[field],
+            None,
+            FindDirection::Next,
+        )
+        .expect("display text query is valid");
+        assert_eq!(result.total, total, "{query}");
+        assert_eq!(result.found, Some(found(entity, field, row, 0)), "{query}");
+    }
+    let last_true = find(
+        &mut runtime,
+        TableView::default(),
+        "true",
+        &["f04_done"],
+        Some(position(0, "f04_done")),
+        FindDirection::Next,
+    )
+    .unwrap();
+    assert_eq!(last_true.total, 2);
+    assert_eq!(last_true.found, Some(found("e04", "f04_done", 3, 1)));
+}
+
+#[test]
 fn matches_run_row_then_field_and_steps_wrap() {
     let mut runtime = find_runtime();
     let next = find(

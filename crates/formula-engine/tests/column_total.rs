@@ -737,13 +737,23 @@ fn average_keeps_the_remainder_of_near_cancelling_values() {
 fn sums_leaving_f64_stop_at_the_overflow() {
     // 30,000 values near f64::MAX took seconds while the error terms grew.
     let values = vec![2f64.powi(1023); 30_000];
-    assert!(!tachiko_formula_engine::numeric_sum(values.iter().copied()).is_finite());
+    let mut consumed = 0;
+    let sum = tachiko_formula_engine::numeric_sum(values.iter().copied().inspect(|_| {
+        consumed += 1;
+    }));
+    assert!(!sum.is_finite());
+    assert_eq!(
+        consumed, 2,
+        "overflow must leave the remaining input unread"
+    );
     assert_eq!(
         tachiko_formula_engine::numeric_average(&values).to_bits(),
         2f64.powi(1023).to_bits()
     );
     let cancelling = [f64::MAX, f64::MAX, -f64::MAX, -f64::MAX, 1e-305];
-    assert!(!tachiko_formula_engine::numeric_sum(cancelling.into_iter()).is_finite());
+    let mut remaining = cancelling.into_iter();
+    assert!(!tachiko_formula_engine::numeric_sum(remaining.by_ref()).is_finite());
+    assert_eq!(remaining.as_slice(), &cancelling[2..]);
 }
 
 #[test]
