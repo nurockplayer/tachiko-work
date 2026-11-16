@@ -284,6 +284,52 @@ fn a_rule_condition_holding_a_reference_is_refused() {
 }
 
 #[test]
+fn numeric_rule_roots_and_invalid_nested_conditions_are_refused() {
+    let numeric = || Expression::Number(number(1.0));
+    for condition in [
+        numeric(),
+        Expression::Not(Box::new(numeric())),
+        Expression::And(vec![valid_condition(), numeric()]),
+        Expression::Or(vec![numeric(), valid_condition()]),
+        Expression::Compare {
+            operator: ComparisonOperator::Less,
+            left: Box::new(Expression::If {
+                condition: Box::new(numeric()),
+                then_value: Box::new(numeric()),
+                else_value: Box::new(numeric()),
+            }),
+            right: Box::new(numeric()),
+        },
+    ] {
+        let mut store = valid_store();
+        store.rules.get_mut(&RuleId::from("r1")).unwrap().condition = condition;
+        assert_eq!(
+            validate_presentation(&store, &document()),
+            Err(PresentationError::RuleConditionType { rule: "r1".into() })
+        );
+    }
+}
+
+#[test]
+fn boolean_rules_keep_numeric_comparison_operands() {
+    let comparison = Expression::Compare {
+        operator: ComparisonOperator::Greater,
+        left: Box::new(Expression::Add {
+            left: Box::new(Expression::SameRowReference("amount".into())),
+            right: Box::new(Expression::Number(number(1.0))),
+        }),
+        right: Box::new(Expression::Number(number(0.0))),
+    };
+    let mut store = valid_store();
+    store.rules.get_mut(&RuleId::from("r1")).unwrap().condition = Expression::And(vec![
+        comparison,
+        Expression::Not(Box::new(valid_condition())),
+        Expression::IsBlank(Box::new(Expression::SameRowReference("due".into()))),
+    ]);
+    assert_eq!(validate_presentation(&store, &document()), Ok(()));
+}
+
+#[test]
 fn a_title_failing_the_spelling_rules_is_refused() {
     for title in ["", " padded ", "\u{0007}bell"] {
         let mut store = valid_store();

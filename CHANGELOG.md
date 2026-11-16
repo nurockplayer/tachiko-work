@@ -4,6 +4,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Preserve XLSX import formula caches for selected-type conflicts and non-English date patterns, export English month names with an explicit locale, disclose width rounding/clamping, and reject non-Boolean presentation rules (#802, #785, #782, #784, #724).
+
 ### Added
 
 - Add revision-bound selection statistics over resident cells for status bars (#811).

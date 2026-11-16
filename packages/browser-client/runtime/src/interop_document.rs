@@ -8,8 +8,9 @@ use super::{
 use crate::capacity::SessionProfile;
 use serde::{Deserialize, Serialize};
 use tachiko_formula_engine::{
-    CanonicalAuthoringProjectionError, ExpressionComplexityError, bind_expression_with_index,
-    parse_expression, project_expression_with_index, validate_expression_structure,
+    CanonicalAuthoringProjectionError, ExpressionComplexityError, FormulaBindError,
+    bind_expression_with_index, parse_expression, project_expression_with_index,
+    validate_expression_structure,
 };
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
@@ -1143,6 +1144,22 @@ fn import_workbook_document(
     };
     let mut formulas = Vec::new();
     let mut ledger = workbook.ledger.clone();
+    let changed_widths = workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.columns)
+        .filter_map(|column| column.width)
+        .filter(|width| *width != import_column_width(*width))
+        .count();
+    if changed_widths > 0 {
+        ledger.push(FidelityFinding {
+            category: FidelityCategory::Converted,
+            code: "column_width_converted".into(),
+            location: "workbook".into(),
+            message: format!("{changed_widths} column widths were rounded to 1/256-character units or clamped to the supported range."),
+            blocking: false,
+        });
+    }
     for (sheet_index, sheet) in workbook.sheets.iter().enumerate() {
         build_import_sheet(
             sheet_index,
@@ -1179,7 +1196,16 @@ fn import_workbook_document(
         );
         let (source, references) = match translated {
             Ok(translated) => translated,
-            Err(_) if contains_lookup_call(&source) => {
+            Err(error)
+                if contains_lookup_call(&source)
+                    || matches!(
+                        error,
+                        DesignerError::A1Translation {
+                            code: A1RefusalCode::FormulaTypeMismatch,
+                            ..
+                        }
+                    ) =>
+            {
                 let sheet = &workbook.sheets[sheet_index];
                 let location = format!(
                     "{}!{}{}",
@@ -1196,7 +1222,11 @@ fn import_workbook_document(
                     &sheet.rows[row][column],
                     &location,
                     &mut ledger,
-                    LOOKUP_IMPORT_REASON,
+                    if contains_lookup_call(&source) {
+                        LOOKUP_IMPORT_REASON
+                    } else {
+                        IMPORT_TYPE_REASON
+                    },
                 )?;
                 continue;
             }
@@ -1371,6 +1401,7 @@ fn promote_import_presentation(
             let mut alignments = Vec::new();
             let mut wraps = Vec::new();
             let mut dates = Vec::new();
+            let mut source_date_locale = false;
             let mut blank_date_formats = Vec::new();
             let field = &document.schemas[&schema_id].fields[&field_id];
             let is_number = field.field_type == FieldType::Number;
@@ -1447,6 +1478,16 @@ fn promote_import_presentation(
                         Some(_) => false,
                     };
                 let date = if takes_part {
+                    // A locale the field format cannot express remains cell-owned,
+                    // even in a column containing other, promotable patterns.
+                    if pattern.is_some_and(|pattern| {
+                        pattern.starts_with("[$-")
+                            && crate::interop_date_format::from_excel(pattern).is_none()
+                    }) {
+                        source_date_locale = true;
+                        dates.push(None);
+                        continue;
+                    }
                     let format = pattern.map_or(
                         Some(DateFormat::Iso),
                         crate::interop_date_format::from_excel,
@@ -1481,8 +1522,9 @@ fn promote_import_presentation(
                 .filter(|first| alignments.iter().all(|value| *value == Some(*first)));
             let common_wrap = !wraps.is_empty() && wraps.iter().all(|value| *value);
             let first_date = dates.iter().flatten().next().copied();
-            let uniform_date =
-                first_date.filter(|first| dates.iter().flatten().all(|date| date == first));
+            let uniform_date = first_date.filter(|first| {
+                !source_date_locale && dates.iter().flatten().all(|date| date == first)
+            });
             if let Some(format) = uniform_date.filter(|format| *format != DateFormat::Iso) {
                 document
                     .schemas
@@ -1783,7 +1825,7 @@ fn build_import_sheet(
         .map(|(column, kind)| {
             (
                 column.name.clone(),
-                column.width,
+                column.width.map(import_column_width),
                 *kind,
                 column.number_format.clone(),
             )
@@ -1910,6 +1952,15 @@ fn build_import_sheet(
     document.schemas.insert(schema_id, schema);
     metadata.sheets.push(sheet);
     Ok(())
+}
+
+// Normalize before metadata/export admission; non-finite input still fails there.
+fn import_column_width(width: f64) -> f64 {
+    if width.is_finite() {
+        (width * 256.0).round().clamp(1.0, 65280.0) / 256.0
+    } else {
+        width
+    }
 }
 
 fn normalize_import_date_styles(
@@ -2243,6 +2294,13 @@ fn bind_import_formula(
                 LOOKUP_IMPORT_REASON,
             );
         }
+        Err(
+            FormulaBindError::TypeMismatch { .. }
+            | FormulaBindError::NonNumericTarget { .. }
+            | FormulaBindError::NonNumericColumn { .. },
+        ) => {
+            return keep_import_cache(document, target, cell, location, ledger, IMPORT_TYPE_REASON);
+        }
         Err(error) => {
             return Err(tachiko_workspace_engine::WorkspaceError::FormulaBinding {
                 field: target.clone(),
@@ -2312,6 +2370,8 @@ fn bind_import_formula(
 
 const LOOKUP_IMPORT_REASON: &str =
     "lookup key, columns or fallback cannot be bound with the supported exact-match meaning";
+const IMPORT_TYPE_REASON: &str =
+    "formula operands are incompatible with the selected import field types";
 
 /// An imported formula outside the translated profile keeps Excel's cached
 /// Number in its temporary formula slot.
