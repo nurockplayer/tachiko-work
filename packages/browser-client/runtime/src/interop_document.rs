@@ -1149,7 +1149,7 @@ fn import_workbook_document(
         .iter()
         .flat_map(|sheet| &sheet.columns)
         .filter_map(|column| column.width)
-        .filter(|width| *width != import_column_width(*width))
+        .filter(|width| width.to_bits() != import_column_width(*width).to_bits())
         .count();
     if changed_widths > 0 {
         ledger.push(FidelityFinding {

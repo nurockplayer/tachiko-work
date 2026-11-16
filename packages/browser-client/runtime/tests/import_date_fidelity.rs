@@ -7,7 +7,7 @@ use tachiko_designer_runtime::{
         SourceValue, SourceWorkbook, export_xlsx, import_xlsx,
     },
 };
-use tachiko_workspace_engine::PatchLifecycleError;
+use tachiko_workspace_engine::patch_lifecycle::PatchLifecycleError;
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000802";
 

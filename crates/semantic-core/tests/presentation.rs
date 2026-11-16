@@ -779,7 +779,11 @@ fn a_rule_reading_a_missing_field_is_dropped() {
             schema: "orders".into(),
             rank: "a3".into(),
             fields: vec!["due".into()],
-            condition: Expression::ColumnTotal(ColumnRef::new("orders", "amount")),
+            condition: Expression::Compare {
+                operator: ComparisonOperator::Greater,
+                left: Box::new(Expression::ColumnTotal(ColumnRef::new("orders", "amount"))),
+                right: Box::new(Expression::Number(number(0.0))),
+            },
             style: "s2".into(),
         },
     );
