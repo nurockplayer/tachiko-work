@@ -4162,7 +4162,7 @@ fn xlsx_attempted_data_rows(
     data: &Xml,
     header: Option<u32>,
     styles: &[CellStyle],
-    shared: &[String],
+    shared: &[Result<String>],
     date1904: bool,
     keep_summary: bool,
 ) -> Result<usize> {
@@ -4234,7 +4234,7 @@ fn xlsx_row_index(row: &Xml) -> Result<usize> {
 fn xlsx_layout_row(
     row: &Xml,
     styles: &[CellStyle],
-    shared: &[String],
+    shared: &[Result<String>],
     date1904: bool,
 ) -> Result<Vec<SourceCell>> {
     let mut cells = Vec::new();
