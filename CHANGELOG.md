@@ -4,7 +4,7 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
-- Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks. (#819, #831, #782)
+- Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks (#819, #831, #782).
 - Preserve XLSX import formula caches for selected-type conflicts and non-English date patterns, export English month names with an explicit locale, disclose width rounding/clamping, and reject non-Boolean presentation rules (#802, #785, #782, #784, #724).
 
 ### Added
