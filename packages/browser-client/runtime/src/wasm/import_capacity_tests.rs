@@ -736,7 +736,7 @@ fn working_size_xlsx_last_excel_row_refuses_before_allocation() {
             .unwrap_err();
     assert_eq!(
         error,
-        InteropError::CapacityLowerBound(CapacityExceeded {
+        InteropError::Capacity(CapacityExceeded {
             limit: CapacityLimit::TableRows,
             maximum: crate::capacity::WORKING_LIMITS.table_rows,
             attempted: 1_048_575,
