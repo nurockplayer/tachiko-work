@@ -2267,6 +2267,8 @@ impl DependencyGraph {
         while let Some(field) = queue.pop_front() {
             for dependent in self.direct_dependents(&field) {
                 traversed = traversed.saturating_add(1);
+                #[cfg(test)]
+                causal_visits::record();
                 if (!include_roots && roots.contains(&dependent))
                     || !affected.insert(dependent.clone())
                 {
@@ -2283,17 +2285,75 @@ impl DependencyGraph {
         self.reverse_closure(&roots, true).0.into_iter().collect()
     }
 
+    /// The formulas on paths into requested targets. Each column's members
+    /// are inspected once, even when many targets read that column.
+    fn target_ancestors(&self, targets: &BTreeSet<FieldRef>) -> BTreeSet<FieldRef> {
+        let mut relevant = targets
+            .iter()
+            .filter(|field| self.is_formula(field))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut pending = relevant.iter().cloned().collect::<Vec<_>>();
+        let mut columns = BTreeSet::new();
+        while let Some(formula) = pending.pop() {
+            let references = self.reference_uses.get(&formula).into_iter().flatten();
+            let slots = self
+                .columns_of(&formula)
+                .filter(|column| columns.insert((*column).clone()))
+                .flat_map(|column| self.column_slots.get(column).into_iter().flatten());
+            for dependency in references.chain(slots) {
+                #[cfg(test)]
+                causal_visits::record();
+                if self.is_formula(dependency) && relevant.insert(dependency.clone()) {
+                    pending.push(dependency.clone());
+                }
+            }
+        }
+        relevant
+    }
+
     fn reaching_fields<'a>(
         &self,
         changed: impl IntoIterator<Item = &'a FieldRef>,
         targets: &BTreeSet<FieldRef>,
     ) -> BTreeMap<FieldRef, BTreeSet<FieldRef>> {
         let mut reaching = BTreeMap::<FieldRef, BTreeSet<FieldRef>>::new();
+        let changed = changed.into_iter().collect::<BTreeSet<_>>();
+        if changed.is_empty() || targets.is_empty() {
+            return reaching;
+        }
+        let relevant = self.target_ancestors(targets);
         for changed in changed {
-            let roots = BTreeSet::from([changed.clone()]);
-            for formula in self.reverse_closure(&roots, true).0 {
-                if targets.contains(&formula) {
-                    reaching.entry(formula).or_default().insert(changed.clone());
+            let mut pending = vec![changed.clone()];
+            let mut visited = BTreeSet::new();
+            let mut columns = BTreeSet::new();
+            while let Some(field) = pending.pop() {
+                // Intersect before cloning or visiting readers. In particular,
+                // never copy a high-fanout set only to filter it afterwards.
+                let readers = self
+                    .cell_readers
+                    .get(&field)
+                    .into_iter()
+                    .flat_map(|readers| readers.intersection(&relevant));
+                let column_readers = self
+                    .slot_columns
+                    .get(&field)
+                    .filter(|column| columns.insert((*column).clone()))
+                    .and_then(|column| self.column_readers.get(column))
+                    .into_iter()
+                    .flat_map(|readers| readers.intersection(&relevant));
+                for dependent in readers.chain(column_readers) {
+                    #[cfg(test)]
+                    causal_visits::record();
+                    if visited.insert(dependent.clone()) {
+                        if targets.contains(dependent) {
+                            reaching
+                                .entry(dependent.clone())
+                                .or_default()
+                                .insert(changed.clone());
+                        }
+                        pending.push(dependent.clone());
+                    }
                 }
             }
         }
@@ -2861,5 +2921,22 @@ mod column_walk_counter {
 
     pub(crate) fn take() -> usize {
         WALKS.with(|walks| walks.replace(0))
+    }
+}
+
+#[cfg(test)]
+mod causal_visits {
+    use std::cell::Cell;
+
+    thread_local! {
+        static VISITS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        VISITS.with(|visits| visits.set(visits.get() + 1));
+    }
+
+    pub(super) fn take() -> usize {
+        VISITS.with(|visits| visits.replace(0))
     }
 }
