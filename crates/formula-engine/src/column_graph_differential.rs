@@ -580,14 +580,14 @@ mod reference {
                 .values()
                 .filter(|row| row.schema == criteria[0].column.schema)
             {
-                let mut matches = true;
+                let mut row_matches = true;
                 for (criterion, test) in criteria.iter().zip(&tests) {
                     if !test.matches(self.cell(row, &criterion.column.field)?) {
-                        matches = false;
+                        row_matches = false;
                         break;
                     }
                 }
-                if !matches {
+                if !row_matches {
                     continue;
                 }
                 matched += 1;
