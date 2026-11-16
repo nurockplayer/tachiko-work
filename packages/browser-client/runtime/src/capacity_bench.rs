@@ -1313,9 +1313,40 @@ fn wq_print_latency(name: &str, prefix: &str, samples: &[Sample]) {
     );
 }
 
-/// One edit of `r00000.c1` through `edit_cells` and the host's re-query, the
-/// window and the column totals a `many` reply forces, measured
-/// `WQ_EDIT_COUNT` times.
+/// Measure one host edit, including a window request only for a `many` reply.
+fn wq_fanout_edit(runtime: &mut DesignerRuntime, row: usize) -> (bool, Sample, Option<Sample>) {
+    let request = DesignerRequest::EditCells {
+        expected_revision: runtime.observe_occurrence().revision,
+        edits: vec![CellEdit {
+            target: wb_field("r00000", "c1"),
+            input: ScalarEditInput::Number {
+                input: format!("{}", 100 + row),
+            },
+        }],
+    };
+    let (edited, edit_sample) = observe(|| runtime.handle(request));
+    let Ok(DesignerResponse::Published(publication)) = edited else {
+        panic!("fanout edit did not publish: {edited:?}");
+    };
+    let requery_sample = publication.many.then(|| {
+        // The first 100 rows carry the whole-table footer totals. Query first
+        // at the new revision, before optional standalone totals measurements.
+        let window = DesignerRequest::QueryTableWindow {
+            expected_revision: runtime.observe_occurrence().revision,
+            collection: "grid".to_owned(),
+            view: TableView::default(),
+            start: 0,
+            count: 100,
+            display: true,
+        };
+        let (windowed, sample) = observe(|| runtime.handle(window));
+        windowed.expect("required fanout window request succeeds");
+        sample
+    });
+    (publication.many, edit_sample, requery_sample)
+}
+
+/// Repeat the host edit path, measuring optional standalone totals separately.
 fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     let name = shape.name();
     // Sheet's filtered footer names the shown rows, under its 60 KB request
@@ -1330,50 +1361,9 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
     let mut view_totals_samples = Vec::with_capacity(WQ_EDIT_COUNT);
     let mut many = false;
     for row in 0..WQ_EDIT_COUNT {
-        // The edit goes through the reply boundary, as a host sends it.
-        let request = DesignerRequest::EditCells {
-            expected_revision: runtime.observe_occurrence().revision,
-            edits: vec![CellEdit {
-                target: FieldTarget {
-                    entity: "r00000".to_owned(),
-                    field: "c1".to_owned(),
-                },
-                input: ScalarEditInput::Number {
-                    input: format!("{}", 100 + row),
-                },
-            }],
-        };
-        let (edited, edit_sample) = observe(|| runtime.handle(request));
-        match edited {
-            Ok(DesignerResponse::Published(publication)) => many = publication.many,
-            Ok(_) => {
-                wq_print(name, "edit", "unexpected_reply");
-                return;
-            }
-            Err(error) => {
-                wq_refused(name, "edit", &error);
-                return;
-            }
-        }
-
-        // The re-query a host runs after a `many` reply on an unfiltered
-        // view: the first 100 rows, whose reply carries the whole-table
-        // footer totals. It runs first at the new revision, so nothing is
-        // cached yet.
+        let (published_many, edit_sample, requery_sample) = wq_fanout_edit(runtime, row);
+        many = published_many;
         let revision = runtime.observe_occurrence().revision;
-        let window = DesignerRequest::QueryTableWindow {
-            expected_revision: revision.clone(),
-            collection: "grid".to_owned(),
-            view: TableView::default(),
-            start: 0,
-            count: 100,
-            display: true,
-        };
-        let (windowed, requery_sample) = observe(|| runtime.handle(window));
-        if let Err(error) = windowed {
-            wq_refused(name, "requery", &error);
-            return;
-        }
         // A filtered view's footer, and a view's totals, each on their own.
         // Neither reads the window's totals cache.
         let shown_totals = DesignerRequest::QueryColumnTotals {
@@ -1397,20 +1387,24 @@ fn qualify_working_size_fanout(shape: WqShape, runtime: &mut DesignerRuntime) {
                 return;
             }
         }
-        edit_requery_samples.push(Sample {
-            millis: edit_sample.millis + requery_sample.millis,
-            ..edit_sample
-        });
+        if let Some(requery_sample) = requery_sample {
+            edit_requery_samples.push(Sample {
+                millis: edit_sample.millis + requery_sample.millis,
+                ..edit_sample
+            });
+            requery_samples.push(requery_sample);
+        }
         edit_samples.push(edit_sample);
-        requery_samples.push(requery_sample);
         shown_totals_samples.push(shown_totals_sample);
         view_totals_samples.push(view_totals_sample);
     }
     wq_print(name, "edit_n", edit_samples.len());
     wq_print(name, "edit_many", many);
     wq_print_latency(name, "edit", &edit_samples);
-    wq_print_latency(name, "requery", &requery_samples);
-    wq_print_latency(name, "edit_requery", &edit_requery_samples);
+    if !requery_samples.is_empty() {
+        wq_print_latency(name, "requery", &requery_samples);
+        wq_print_latency(name, "edit_requery", &edit_requery_samples);
+    }
     wq_print_latency(name, "requery_shown_totals", &shown_totals_samples);
     wq_print_latency(name, "requery_view_totals", &view_totals_samples);
 }
@@ -1458,8 +1452,8 @@ fn qualify_working_size_saves(shape: WqShape, runtime: &DesignerRuntime) {
 //
 // Each step builds a fresh working-size runtime, sends its request as JSON
 // through `process_wire_request`, and reports one `WB|<step>|<fact>|<value>`
-// line per fact. A refusal prints `WB|<step>|refused|<code>` and the run
-// continues.
+// line per fact. A measured refusal prints `WB|<step>|refused|<code>` and
+// fails the qualification.
 // ---------------------------------------------------------------------------
 
 const WB_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000678";
@@ -1554,7 +1548,7 @@ fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &Desig
         Ok(bytes) => bytes,
         Err(error) => {
             wb_print(step, "refused", format!("encode:{error}"));
-            return;
+            panic!("{step}: measured request could not be encoded");
         }
     };
     wb_print(step, "request_bytes", bytes.len());
@@ -1565,7 +1559,7 @@ fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &Desig
         Ok(reply) => reply,
         Err(error) => {
             wb_print(step, "refused", format!("decode:{error}"));
-            return;
+            panic!("{step}: measured reply could not be decoded");
         }
     };
     match reply {
@@ -1577,23 +1571,23 @@ fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &Desig
         }
         super::DesignerWireReply::Error { error } => {
             wb_print(step, "refused", error.code);
-            return;
+            panic!("{step}: measured operation refused");
         }
         other @ super::DesignerWireReply::Ok { .. } => {
             wb_print(step, "refused", format!("unexpected:{other:?}"));
-            return;
+            panic!("{step}: measured operation did not publish");
         }
     }
 
-    let Some(runtime) = resident.as_ref() else {
-        return;
-    };
+    let runtime = resident
+        .as_ref()
+        .expect("measured operation stays resident");
     let undo = DesignerRequest::Undo {
         expected_revision: runtime.current_revision().to_owned(),
     };
     let Ok(undo) = serde_json::to_vec(&undo) else {
         wb_print(step, "refused", "undo_encode");
-        return;
+        panic!("{step}: measured undo could not be encoded");
     };
     let (undo_reply, undo_sample) = observe(|| process_wire_request(&mut resident, &undo));
     wb_print(step, "undo_ms", wq_millis(&undo_sample));
@@ -1602,6 +1596,7 @@ fn wb_measure(step: &str, mut resident: Option<DesignerRuntime>, request: &Desig
         Ok(super::DesignerWireReply::Ok { .. })
     ) {
         wb_print(step, "undo_refused", "undo");
+        panic!("{step}: measured undo refused");
     }
 }
 
@@ -1731,4 +1726,48 @@ fn working_size_bulk() {
     wb_edit_values("edit_values_100000", 100_000);
     wb_edit_formulas();
     wb_fill_9999();
+}
+
+#[test]
+#[should_panic(expected = "measured operation refused")]
+fn refused_measured_wire_operation_fails_qualification() {
+    let runtime = wb_open("refusal_test", wb_seeded_document(1)).expect("fixture opens");
+    let request = DesignerRequest::EditCells {
+        expected_revision: runtime.current_revision().to_owned(),
+        // The last edit addresses a row that does not exist.
+        edits: wb_value_edits(WB_COLUMNS + 1),
+    };
+    wb_measure("refusal_test", Some(runtime), &request);
+}
+
+#[test]
+fn fanout101_edit_omits_window_requery() {
+    let mut document = wq_document(WqShape::Fanout101);
+    while document.entities.len() > 1_025 {
+        document.entities.pop_last();
+    }
+    let mut runtime = DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE)
+        .expect("fixture opens");
+    let (many, _, requery) = wq_fanout_edit(&mut runtime, 0);
+    assert!(!many, "102 changed cells publish inline");
+    assert!(
+        requery.is_none(),
+        "inline publication needs no window request"
+    );
+}
+
+#[test]
+fn many_edit_includes_required_window_requery() {
+    let mut document = wq_document(WqShape::Fanout);
+    while document.entities.len() > 1_025 {
+        document.entities.pop_last();
+    }
+    let mut runtime = DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE)
+        .expect("fixture opens");
+    let (many, _, requery) = wq_fanout_edit(&mut runtime, 0);
+    assert!(
+        many,
+        "more than 1,024 changed cells require a window request"
+    );
+    assert!(requery.is_some(), "required window request was measured");
 }
