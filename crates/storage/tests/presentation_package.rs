@@ -15,9 +15,9 @@ use tachiko_semantic_core::{
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, FormatError, PortablePackageError, ROPROJ_V3_PRESENTATION_PATH,
-    decode_portable_package_v1, encode_portable_package_v1, encode_presentation, encode_roproj_v3,
-    encode_roproj_v3_with_presentation, pack_roproj, portable_package_payload_root,
-    publish_roproj_v3, read_canonical_roproj_v3, unpack_roproj,
+    decode_portable_package_v1, decode_presentation, encode_portable_package_v1,
+    encode_presentation, encode_roproj_v3, encode_roproj_v3_with_presentation, pack_roproj,
+    portable_package_payload_root, publish_roproj_v3, read_canonical_roproj_v3, unpack_roproj,
 };
 
 const STYLE_FULL: &str = "4a19f7869a552af02c3dc68dc00487d4";
@@ -430,4 +430,12 @@ fn column_widths_survive_package_round_trip() {
     let bytes = encode_portable_package_v1(&tree).unwrap();
     let verified = decode_portable_package_v1(&bytes).unwrap();
     assert_eq!(files(verified.tree()), files(&tree));
+    for retained in [&tree, verified.tree()] {
+        let decoded =
+            decode_presentation(retained.file(ROPROJ_V3_PRESENTATION_PATH).unwrap()).unwrap();
+        assert_eq!(
+            decoded.tables[&SchemaId::from("orders")].column_widths,
+            presentation.tables[&SchemaId::from("orders")].column_widths
+        );
+    }
 }

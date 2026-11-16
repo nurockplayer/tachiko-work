@@ -64,6 +64,7 @@ try {
           let metadata, collection;
           const captures = [];
           const editProofs = [];
+          const viewTotalsProofs = [];
           const durationsMs = {edit: [], undo: [], redo: [], query: []};
           let captureSequence = 0;
           const timed = async (key, action) => {
@@ -102,6 +103,35 @@ try {
               same(f.formula, null, 'no formula'); same(f.diagnostics, [], 'no diagnostics');
               });
             });
+          };
+          const checkViewTotals = async () => {
+            const before = await client.observeOccurrence();
+            const columns = metadata.sheets[0].columns;
+            // Pick a proper subset from the independently held source matrix.
+            // The large fixture must retain thousands of visible rows.
+            const minimumRows = expected.length === 8406 ? 2000 : 1;
+            const candidates = columns.flatMap((column, index) =>
+              [...'0123456789'].map(value => ({field: column.field_id, value,
+                rows: expected.filter(row => row[index].includes(value)).length})));
+            const subset = candidates.find(candidate => candidate.rows >= minimumRows && candidate.rows < expected.length);
+            check(subset, 'fixture must provide a large proper filtered subset');
+            for (const [label, filter, rows] of [
+              ['filtered', {kind:'text_contains', field:subset.field, value:subset.value}, subset.rows],
+              ['empty', {kind:'is_blank', field:columns[0].field_id}, 0],
+            ]) {
+              const view = {filters:[filter]};
+              const request = {type:'query_view_totals', expected_revision:before.revision, collection, view};
+              const requestBytes = new TextEncoder().encode(JSON.stringify(request)).byteLength;
+              check(requestBytes < 1024, `${label} totals request must stay below 1 KiB`);
+              const result = await timed('query', () => client.queryViewTotals(before.revision, collection, view));
+              same(result.revision, before.revision, `${label} totals revision`);
+              same(result.rows, rows, `${label} visible row count`);
+              // This existing import journey deliberately preserves all three
+              // source columns as Text; only Number columns receive totals.
+              same(result.column_totals, {}, `${label} Text columns have no numeric totals`);
+              viewTotalsProofs.push({label, requestBytes, view, rows:result.rows, column_totals:result.column_totals});
+            }
+            same(await client.observeOccurrence(), before, 'totals queries preserve occurrence');
           };
           const byteList = bytes => Array.from(new Uint8Array(bytes));
           const exports = async label => {
@@ -143,6 +173,7 @@ try {
             } else {
               await openSaved(saved);
             }
+            await checkViewTotals();
             if (mvp && phase === 'save') {
               const fixedEdits = [[0, 0, '000-edited-雪,"first"\r\nkept'], [4203, 1, 'https://example.invalid/edited-middle?x=0007'], [8405, 2, '0001700008405999']];
               for (const [row, column, value] of fixedEdits) {
@@ -201,7 +232,7 @@ try {
             }
             const final = await snapshot();
             same(ordinaryOpenCalls, 0, 'no ordinary-open fallback');
-            return {saved:{metadata, opaque:final.opaque, files:final.files, expected, scope:final.occurrence.scope}, captures, editProofs, durationsMs};
+            return {saved:{metadata, opaque:final.opaque, files:final.files, expected, scope:final.occurrence.scope}, captures, editProofs, viewTotalsProofs, durationsMs};
           } finally { await client.close(); }
         }, {origin, fixture, format, carrier, phase, saved, sourceStem, mvp});
         assert.equal(workerUrls.length, 1, 'one actual Worker per browser phase');
@@ -217,7 +248,7 @@ try {
           catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(output, bytes); }
           await writeFile(`${output}.expected.json`, JSON.stringify(capture.expected));
         }
-        phaseReceipt = {format, carrier, phase, mvp, fixtureRows:fixture.rows.length, fixtureRecipe:fixture.recipe, workerUrls, browser:browser.version(), environment, durationsMs:result.durationsMs, editProofs:result.editProofs, rss:{status:'UNVERIFIED', reason:'CDP observed 7 Chromium processes while /proc observed 9; platform and process coverage differ, so whole-browser RSS is not established.'}, outcome:'PASS'};
+        phaseReceipt = {format, carrier, phase, mvp, fixtureRows:fixture.rows.length, fixtureRecipe:fixture.recipe, workerUrls, browser:browser.version(), environment, durationsMs:result.durationsMs, editProofs:result.editProofs, viewTotalsProofs:result.viewTotalsProofs, rss:{status:'UNVERIFIED', reason:'CDP observed 7 Chromium processes while /proc observed 9; platform and process coverage differ, so whole-browser RSS is not established.'}, outcome:'PASS'};
       } finally {
         await browser.close();
         if (phaseReceipt) phaseReceipt.phaseElapsedMs = Date.now() - phaseStarted;
