@@ -117,6 +117,48 @@ fn blank_date_criterion_range_binds_only_with_selected_date_type() {
     }
 }
 
+/// Re-inspects exported XLSX bytes with one header row.
+fn reimport(bytes: &[u8]) -> SourceWorkbook {
+    import_xlsx_with(
+        bytes,
+        &ImportOptions {
+            header_rows: vec![Some(1)],
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+/// Imports a blank Date criterion column with `formula`, exports it and re-inspects the XLSX.
+fn blank_date_round_trip(formula: &str) -> (SourceWorkbook, ImportSelection) {
+    let mut source = date_workbook(Some(formula));
+    let criterion = source.sheets[0].rows[0][0].clone();
+    source.sheets[0]
+        .columns
+        .extend(["Criterion", "Amount"].map(|name| SourceColumn {
+            name: name.into(),
+            width: None,
+            number_format: None,
+        }));
+    source.sheets[0].rows[0][0].value = SourceValue::Empty;
+    source.sheets[0].rows[0][1].value = SourceValue::Number { value: 0.0 };
+    source.sheets[0].rows[0].extend([
+        criterion,
+        SourceCell {
+            value: SourceValue::Number { value: 1.0 },
+            ..SourceCell::default()
+        },
+    ]);
+    let mut selected = selection(ImportFieldType::Date);
+    selected.column_types[0].extend([ImportFieldType::Date, ImportFieldType::Number]);
+    let (runtime, imported) = import_workbook(&source, &selected, OCCURRENCE).unwrap();
+    let exported = runtime
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    let inspected = reimport(&export_xlsx(&exported).unwrap());
+    (inspected, selected)
+}
+
 #[test]
 fn blank_date_criterion_round_trips_and_respects_selected_type() {
     for formula in [
@@ -124,39 +166,7 @@ fn blank_date_criterion_round_trips_and_respects_selected_type() {
         "=SUMIFS($D$2:$D$2,$A$2:$A$2,C2)",
         "=IF(COUNTIFS($A$2:$A$2,C2)>0,1,0)",
     ] {
-        let mut source = date_workbook(Some(formula));
-        let criterion = source.sheets[0].rows[0][0].clone();
-        source.sheets[0]
-            .columns
-            .extend(["Criterion", "Amount"].map(|name| SourceColumn {
-                name: name.into(),
-                width: None,
-                number_format: None,
-            }));
-        source.sheets[0].rows[0][0].value = SourceValue::Empty;
-        source.sheets[0].rows[0][1].value = SourceValue::Number { value: 0.0 };
-        source.sheets[0].rows[0].extend([
-            criterion,
-            SourceCell {
-                value: SourceValue::Number { value: 1.0 },
-                ..SourceCell::default()
-            },
-        ]);
-        let mut selected = selection(ImportFieldType::Date);
-        selected.column_types[0].extend([ImportFieldType::Date, ImportFieldType::Number]);
-        let (runtime, imported) = import_workbook(&source, &selected, OCCURRENCE).unwrap();
-        let exported = runtime
-            .export_workbook("resident/0", &imported.metadata)
-            .unwrap();
-        let bytes = export_xlsx(&exported).unwrap();
-        let inspected = import_xlsx_with(
-            &bytes,
-            &ImportOptions {
-                header_rows: vec![Some(1)],
-                ..ImportOptions::default()
-            },
-        )
-        .unwrap();
+        let (inspected, mut selected) = blank_date_round_trip(formula);
         assert!(
             inspected.sheets[0].rows[0][1].formula.is_some(),
             "{formula}"
@@ -228,7 +238,10 @@ fn blank_date_criterion_round_trips_and_respects_selected_type() {
             SourceValue::Number { value: 0.0 }
         );
     }
+}
 
+#[test]
+fn blank_date_criterion_exception_skips_nonblank_columns() {
     // These controls must not acquire the blank-column exception.
     for cell in [
         SourceCell {
@@ -263,14 +276,7 @@ fn blank_date_criterion_round_trips_and_respects_selected_type() {
         source.sheets[0].rows[0][0] = cell;
         source.sheets[0].rows[0][1].value = SourceValue::Number { value: 0.0 };
         source.sheets[0].rows[0].push(criterion);
-        let inspected = import_xlsx_with(
-            &export_xlsx(&source).unwrap(),
-            &ImportOptions {
-                header_rows: vec![Some(1)],
-                ..ImportOptions::default()
-            },
-        )
-        .unwrap();
+        let inspected = reimport(&export_xlsx(&source).unwrap());
         assert!(
             inspected.ledger.iter().any(|finding| {
                 finding.location == "Data!B2"
