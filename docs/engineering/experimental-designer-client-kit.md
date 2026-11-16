@@ -366,6 +366,37 @@ For example, `[["", {kind: "clear"}]]` sets empty Text in the starting
 Text column and clears the next optional column. Untargeted cells stay unchanged;
 omitted optional fields of newly pasted rows remain blank.
 
+### Moving cells (`move_cells`)
+
+Send `{type: "move_cells", expected_revision, moves: [{from, to}]}` through
+`trackerCommand`, where both targets are `{entity, field}` stable IDs. The reply
+is the same `PublicationProjection` as `edit_cells`. Cut remains pending in the
+client, including Esc cancellation: send nothing until Paste.
+
+The runtime resolves all targets and captures their original contents, assigns
+each destination its source's original contents, then clears only sources that
+are not destinations. The whole batch is one revision and one Undo/Redo entry;
+Undo restores overwritten destinations as well as cleared sources.
+
+| Case | Behaviour |
+| --- | --- |
+| Overlap, shift in either direction, swap or cycle | Allowed; all reads use originals, and destination assignment wins over source clearing. |
+| Duplicate source or destination | Refuse the entire request. |
+| Destination field type differs from the source value type | Refuse atomically, without Text/Number/Date coercion. |
+| Required source would become blank | Refuse; allowed when that source also receives another move. |
+| Blank source | Move absence; the destination must admit an `edit_cells` clear. |
+| Across collections in one document | Allowed when both sides pass normal admission. |
+| Formatting/style | Stay at their existing targets; destination formatting is preserved. |
+| All moves are self-moves, or all final contents already match | Existing `NoChange` refusal; no revision or history entry. |
+| Empty moves or union of affected targets exceeds the session's batch limit | Refuse, as for `edit_cells`. |
+| Stale revision, unknown entity, undeclared field or profile refusal | Same `DesignerError` variants as `edit_cells`, with no partial effect. |
+
+Formulas move as formulas with their dependencies unchanged. Explicit and
+column references stay unchanged; a same-row reference in a formula moved to a
+different row becomes an explicit reference to its original source row. Other
+formulas keep their existing targets, with ordinary validation and calculation
+refusals applied to the final candidate.
+
 Table columns (`ColumnProjection`, also exported by the public TS entry) expose
 `display_name_explicit?: true`: Rust emits `true` only when a stored display
 name exists and otherwise omits the member; the client rejects any other value,
