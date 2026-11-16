@@ -423,8 +423,8 @@ fn text_capacity_exports_all_date_formats_including_blanks() {
         (DateFormat::Dmy, "d/m/yyyy"),
         (DateFormat::YmdSlash, "yyyy/m/d"),
         (DateFormat::YmdCjk, "yyyy\"年\"m\"月\"d\"日\""),
-        (DateFormat::MonthDayYear, "mmm d, yyyy"),
-        (DateFormat::DayMonthYear, "d mmm yyyy"),
+        (DateFormat::MonthDayYear, "[$-409]mmm d, yyyy"),
+        (DateFormat::DayMonthYear, "[$-409]d mmm yyyy"),
     ] {
         let expected_revision = runtime.observe_occurrence().revision;
         publish(
