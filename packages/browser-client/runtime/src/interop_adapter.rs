@@ -5328,7 +5328,7 @@ fn conditional_admission(
                 "a date column can only be tested against a date",
             ));
         }
-        if !date && kind == CriterionKind::Date {
+        if !date && kind == CriterionKind::Date && !blank_column(sheet, column, sheets) {
             return FormulaAdmission::Refused(Some("a date criterion only tests a date column"));
         }
     }
@@ -5408,6 +5408,14 @@ fn date_column(sheet: usize, column: usize, sheets: &[SourceSheet]) -> bool {
     sheets[sheet].rows.iter().any(|row| {
         row.get(column)
             .is_some_and(|cell| matches!(cell.value, SourceValue::Date { .. }))
+    })
+}
+
+/// Whether a source column contains only absent or empty nonformula cells.
+fn blank_column(sheet: usize, column: usize, sheets: &[SourceSheet]) -> bool {
+    sheets[sheet].rows.iter().all(|row| {
+        row.get(column)
+            .is_none_or(|cell| matches!(cell.value, SourceValue::Empty) && cell.formula.is_none())
     })
 }
 
