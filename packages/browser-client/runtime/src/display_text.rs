@@ -82,12 +82,18 @@ pub(crate) fn format_date(date: Date, format: Option<&DateFormat>) -> String {
 /// else by code point. A tie falls back to the byte order of the originals,
 /// which keeps the order total and deterministic.
 pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
-    let ordering = natural_folded_cmp(&left.to_lowercase(), &right.to_lowercase());
+    let ordering = natural_normalized_cmp(left, right);
     if ordering == Ordering::Equal {
         left.as_bytes().cmp(right.as_bytes())
     } else {
         ordering
     }
+}
+
+/// Natural comparison without the original-byte tie-break, so later view sort
+/// keys can resolve case and zero-padding ties first.
+pub(crate) fn natural_normalized_cmp(left: &str, right: &str) -> Ordering {
+    natural_folded_cmp(&left.to_lowercase(), &right.to_lowercase())
 }
 
 fn natural_folded_cmp(left: &str, right: &str) -> Ordering {
