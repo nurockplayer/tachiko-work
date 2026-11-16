@@ -3732,8 +3732,9 @@ pub(crate) fn import_xlsx_profile(
             .get(sheet_index)
             .copied()
             .flatten()
-            .map(|row| usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1))
-            .unwrap_or(0);
+            .map_or(0, |row| {
+                usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1)
+            });
         if options.header_rows.get(sheet_index) == Some(&Some(0)) {
             return fail(format!("Header row 0 is outside worksheet {name}"));
         }
@@ -3785,12 +3786,13 @@ pub(crate) fn import_xlsx_profile(
                     date1904,
                     options.keep_summary_rows,
                 )?;
+                // The complete source was counted, so this is an exact refusal.
                 check_import_limit(
                     crate::CapacityLimit::TableRows,
                     row_limit,
                     attempted,
                     Some(&name),
-                    true,
+                    false,
                 )?;
             }
             rows.resize_with(rows.len().max(retained_index), Vec::new);
@@ -3903,9 +3905,6 @@ pub(crate) fn import_xlsx_profile(
                 };
             }
         }
-        if width == 0 {
-            return fail("Worksheet has no cells");
-        }
         for row in &mut rows {
             row.resize(width, SourceCell::default());
         }
@@ -3919,6 +3918,9 @@ pub(crate) fn import_xlsx_profile(
             }
             None => rows_above_header(&rows, width),
         };
+        if width == 0 {
+            return fail("Worksheet has no cells");
+        }
         let retained_above = above - skipped;
         if above > 0 {
             // The skipped rows are not imported, so their cell findings cannot block.
