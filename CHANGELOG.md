@@ -4,6 +4,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks.
+
 ### Added
 
 - Add revision-bound selection statistics over resident cells for status bars (#811).

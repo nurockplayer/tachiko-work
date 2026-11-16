@@ -406,3 +406,57 @@ fn text_number_capacity_unchanged() {
     let text = String::from_utf8(csv_bytes).unwrap();
     assert_eq!(text.replace("\r\n", "\n"), source);
 }
+
+/// #782.1: non-ISO formats and styled blanks must pass both admission and the
+/// bounded writer, then retain their format when the actual XLSX is parsed.
+#[test]
+fn text_capacity_exports_all_date_formats_including_blanks() {
+    use tachiko_workspace_engine::DateFormat;
+
+    let source = import_csv(&csv(100, false), &ImportOptions::default()).unwrap();
+    let (mut runtime, imported) = import_workbook(&source, &selection(false), ORIGINAL).unwrap();
+    let collection = imported.opened.bootstrap.default_collection.clone();
+    let field = imported.opened.table.columns[0].id.clone();
+    for (date_format, pattern) in [
+        (DateFormat::Iso, "yyyy-mm-dd"),
+        (DateFormat::Mdy, "m/d/yyyy"),
+        (DateFormat::Dmy, "d/m/yyyy"),
+        (DateFormat::YmdSlash, "yyyy/m/d"),
+        (DateFormat::YmdCjk, "yyyy\"年\"m\"月\"d\"日\""),
+        (DateFormat::MonthDayYear, "mmm d, yyyy"),
+        (DateFormat::DayMonthYear, "d mmm yyyy"),
+    ] {
+        let expected_revision = runtime.observe_occurrence().revision;
+        publish(
+            &mut runtime,
+            DesignerRequest::SetColumnDateFormat {
+                expected_revision,
+                collection: collection.clone(),
+                field: field.clone(),
+                date_format: Some(date_format),
+            },
+        );
+        let [csv_bytes, xlsx_bytes] = exports(&runtime, &imported.metadata);
+        let reread = import_xlsx(&xlsx_bytes).unwrap();
+        assert_eq!(reread.sheets[0].rows.len(), 100);
+        assert!(!reread.ledger.iter().any(|finding| finding.blocking));
+        for (index, row) in reread.sheets[0].rows.iter().enumerate() {
+            assert_eq!(row[0].style.number_format.as_deref(), Some(pattern));
+            if index % 7 == 0 {
+                assert_eq!(row[0].value, SourceValue::Empty);
+            } else {
+                assert_eq!(
+                    row[0].value,
+                    SourceValue::Date {
+                        value: format!("2026-{:02}-{:02}", index % 12 + 1, index % 28 + 1),
+                    }
+                );
+            }
+        }
+        assert!(
+            String::from_utf8(csv_bytes)
+                .unwrap()
+                .contains("2026-02-02,1.25,false")
+        );
+    }
+}

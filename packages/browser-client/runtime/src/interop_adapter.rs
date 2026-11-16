@@ -120,12 +120,37 @@ pub(crate) fn text_capacity_shape(workbook: &SourceWorkbook) -> bool {
         })
 }
 
-/// The one non-default cell style the capacity profile writes: an ISO date.
+const CAPACITY_DATE_FORMATS: [tachiko_workspace_engine::DateFormat; 7] = {
+    use tachiko_workspace_engine::DateFormat;
+    [
+        DateFormat::Iso,
+        DateFormat::Mdy,
+        DateFormat::Dmy,
+        DateFormat::YmdSlash,
+        DateFormat::YmdCjk,
+        DateFormat::MonthDayYear,
+        DateFormat::DayMonthYear,
+    ]
+};
+
+/// The default Date style used when no presentation format was selected.
 pub(crate) fn capacity_date_style() -> CellStyle {
     CellStyle {
         number_format: Some("yyyy-mm-dd".into()),
         ..CellStyle::default()
     }
+}
+
+fn capacity_date_style_index(style: &CellStyle) -> Option<usize> {
+    if style.bold || style.fill.is_some() || style.wrap || style.border || style.alignment.is_some()
+    {
+        return None;
+    }
+    let pattern = style.number_format.as_deref()?;
+    CAPACITY_DATE_FORMATS
+        .iter()
+        .position(|format| pattern == crate::interop_date_format::to_excel(*format))
+        .map(|index| index + 1)
 }
 
 fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
@@ -143,13 +168,12 @@ fn text_capacity_sheet_shape(sheet: &SourceSheet) -> bool {
                 && row.iter().all(|cell| {
                     cell.formula.is_none()
                         && match &cell.value {
-                            SourceValue::Empty
-                            | SourceValue::Text { .. }
+                            SourceValue::Text { .. }
                             | SourceValue::Number { .. }
                             | SourceValue::Boolean { .. } => cell.style == CellStyle::default(),
-                            SourceValue::Date { .. } => {
+                            SourceValue::Date { .. } | SourceValue::Empty => {
                                 cell.style == CellStyle::default()
-                                    || cell.style == capacity_date_style()
+                                    || capacity_date_style_index(&cell.style).is_some()
                             }
                         }
                 })
@@ -1300,14 +1324,22 @@ fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
                 )
                 .expect("capacity XML sinks are infallible"),
                 SourceValue::Date { value } => {
-                    write!(output, "<c r=\"{column}{number}\" s=\"1\" t=\"d\"><v>")
-                        .expect("capacity XML sinks are infallible");
+                    let style = capacity_date_style_index(&cell.style).unwrap_or(1);
+                    write!(
+                        output,
+                        "<c r=\"{column}{number}\" s=\"{style}\" t=\"d\"><v>"
+                    )
+                    .expect("capacity XML sinks are infallible");
                     output.text(value);
                     write!(output, "</v></c>").expect("capacity XML sinks are infallible");
                 }
                 SourceValue::Empty => {
-                    write!(output, "<c r=\"{column}{number}\" s=\"0\" t=\"n\"></c>")
-                        .expect("capacity XML sinks are infallible");
+                    let style = capacity_date_style_index(&cell.style).unwrap_or(0);
+                    write!(
+                        output,
+                        "<c r=\"{column}{number}\" s=\"{style}\" t=\"n\"></c>"
+                    )
+                    .expect("capacity XML sinks are infallible");
                 }
             }
         }
@@ -1533,7 +1565,17 @@ fn ledger_summary_total(finding: &FidelityFinding) -> Option<usize> {
 // `:columns <a>..<b>` is cut off.
 fn ledger_key(finding: &FidelityFinding) -> &str {
     let location = finding.location.as_str();
-    if ledger_summary_total(finding).is_some() {
+    // These codes name an entire worksheet, even when its name ends in !Q1.
+    if ledger_summary_total(finding).is_some()
+        || matches!(
+            finding.code.as_str(),
+            "hidden_sheet"
+                | "hidden_default_rows"
+                | "inherited_row_style"
+                | "inherited_column_style"
+                | "duplicate_header"
+        )
+    {
         return location;
     }
     let cell_sheet = location.rsplit_once('!').filter(|(_, address)| {
@@ -2789,6 +2831,10 @@ fn capacity_styles(xml: &Xml) -> Result<bool> {
         same_plain_tree(xml, &parse_xml(capacity_styles_xml().as_bytes())?)
             || same_plain_tree(
                 xml,
+                &parse_xml(capacity_styles_for_formats(&CAPACITY_DATE_FORMATS[..1]).as_bytes())?,
+            )
+            || same_plain_tree(
+                xml,
                 &parse_xml(capacity_styles_xml_before_dates().as_bytes())?,
             ),
     )
@@ -2799,8 +2845,29 @@ fn capacity_styles_xml_before_dates() -> String {
     )
 }
 fn capacity_styles_xml() -> String {
+    capacity_styles_for_formats(&CAPACITY_DATE_FORMATS)
+}
+
+fn capacity_styles_for_formats(formats: &[tachiko_workspace_engine::DateFormat]) -> String {
+    use std::fmt::Write as _;
+
+    let mut fmts = String::new();
+    let mut xfs = String::new();
+    for (index, format) in formats.iter().enumerate() {
+        let id = 164 + index;
+        write!(
+            fmts,
+            "<numFmt numFmtId=\"{id}\" formatCode=\"{}\"/>",
+            capacity_attribute(crate::interop_date_format::to_excel(*format))
+        )
+        .expect("writing a String is infallible");
+        write!(xfs, "<xf numFmtId=\"{id}\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>")
+            .expect("writing a String is infallible");
+    }
     format!(
-        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"yyyy-mm-dd\"/></numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/></cellXfs></styleSheet>"
+        "<styleSheet xmlns=\"{MAIN}\"><numFmts count=\"{}\">{fmts}</numFmts><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Arial\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>{xfs}</cellXfs></styleSheet>",
+        formats.len(),
+        formats.len() + 1
     )
 }
 
@@ -2892,19 +2959,22 @@ fn capacity_plain_values(node: &Xml) -> bool {
         "c" => {
             let default_style = matches!(node.attr("s"), None | Some("0"));
             let one_value = node.children.len() == 1 && node.children[0].name == "v";
+            let date_style = node
+                .attr("s")
+                .and_then(|style| style.parse::<usize>().ok())
+                .is_some_and(|style| (1..=CAPACITY_DATE_FORMATS.len()).contains(&style));
             match node.attr("t") {
                 Some("inlineStr") => {
                     default_style && node.children.len() == 1 && node.children[0].name == "is"
                 }
-                // A Boolean uses the default style; only a Date carries the
-                // one non-default style (the canonical yyyy-mm-dd format).
+                // Only Date values and blank Date cells use a date style.
                 Some("str" | "s" | "b") => default_style && one_value,
                 // A spreadsheet app may store the date as a serial number.
-                None | Some("n") if node.attr("s") == Some("1") => one_value,
+                None | Some("n") if date_style => node.children.is_empty() || one_value,
                 None | Some("n") => default_style && (node.children.is_empty() || one_value),
                 // An ISO date may carry the date format or the default style,
                 // as the sheet shape admits both.
-                Some("d") => (default_style || node.attr("s") == Some("1")) && one_value,
+                Some("d") => (default_style || date_style) && one_value,
                 _ => false,
             }
         }
@@ -3657,6 +3727,16 @@ pub(crate) fn import_xlsx_profile(
         } else {
             MAX_TEXT_CAPACITY_ROWS
         };
+        let skipped = options
+            .header_rows
+            .get(sheet_index)
+            .copied()
+            .flatten()
+            .map(|row| usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1))
+            .unwrap_or(0);
+        if options.header_rows.get(sheet_index) == Some(&Some(0)) {
+            return fail(format!("Header row 0 is outside worksheet {name}"));
+        }
         let physical_row_limit = max_physical_rows(row_limit, options, sheet_index);
         let mut seen = BTreeSet::new();
         let mut width = 0;
@@ -3692,16 +3772,28 @@ pub(crate) fn import_xlsx_profile(
             if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
             }
-            if row_index - 1 > physical_row_limit {
+            if row_index <= skipped {
+                continue;
+            }
+            let retained_index = row_index - skipped;
+            if retained_index - 1 > physical_row_limit {
+                let attempted = xlsx_attempted_data_rows(
+                    data,
+                    options.header_rows.get(sheet_index).copied().flatten(),
+                    &styles,
+                    &shared,
+                    date1904,
+                    options.keep_summary_rows,
+                )?;
                 check_import_limit(
                     crate::CapacityLimit::TableRows,
                     row_limit,
-                    row_index - 1,
+                    attempted,
                     Some(&name),
                     true,
                 )?;
             }
-            rows.resize_with(rows.len().max(row_index), Vec::new);
+            rows.resize_with(rows.len().max(retained_index), Vec::new);
             for c in row.kids("c") {
                 let address = c
                     .attr("r")
@@ -3722,8 +3814,9 @@ pub(crate) fn import_xlsx_profile(
                     true,
                 )?;
                 width = width.max(col + 1);
-                let new_width = rows[r].len().max(col + 1);
-                rows[r].resize(new_width, SourceCell::default());
+                let retained_row = r - skipped;
+                let new_width = rows[retained_row].len().max(col + 1);
+                rows[retained_row].resize(new_width, SourceCell::default());
                 let style = styles
                     .get(
                         c.attr("s")
@@ -3803,7 +3896,7 @@ pub(crate) fn import_xlsx_profile(
                 if matches!(value, SourceValue::Date { .. }) {
                     ledger.push(finding(FidelityCategory::Converted,"gregorian_date",&location,"Date mapped to Gregorian YYYY-MM-DD; source serial identity is adapter-only",false));
                 }
-                rows[r][col] = SourceCell {
+                rows[retained_row][col] = SourceCell {
                     value,
                     formula: source,
                     style,
@@ -3819,23 +3912,24 @@ pub(crate) fn import_xlsx_profile(
         let above = match options.header_rows.get(sheet_index).copied().flatten() {
             Some(row) => {
                 let row = usize::try_from(row).unwrap_or(usize::MAX);
-                if row == 0 || row > rows.len() {
+                if row == 0 || row > rows.len() + skipped {
                     return fail(format!("Header row {row} is outside worksheet {name}"));
                 }
                 row - 1
             }
             None => rows_above_header(&rows, width),
         };
+        let retained_above = above - skipped;
         if above > 0 {
             // The skipped rows are not imported, so their cell findings cannot block.
             let mut excluded = BTreeSet::new();
-            for row in 1..=above {
+            for row in skipped + 1..=above {
                 for column in 0..width {
                     excluded.insert(format!("{name}!{}{}", column_name(column), row));
                 }
             }
             ledger.retain(|finding| !excluded.contains(&finding.location));
-            rows.drain(..above);
+            rows.drain(..retained_above);
             ledger.push(finding(
                 FidelityCategory::LossyOnExport,
                 "rows_above_header_skipped",
@@ -4055,13 +4149,125 @@ fn max_physical_rows(limit: usize, options: &ImportOptions, sheet_index: usize) 
         .get(sheet_index)
         .copied()
         .flatten()
-        .map_or(MAX_DETECTED_ROWS_ABOVE_HEADER, |row| {
-            usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1)
-        });
-    // The caller already discounts the header with row_index - 1.
+        .map_or(MAX_DETECTED_ROWS_ABOVE_HEADER, |_| 0);
+    // Explicit offsets are compacted before this bound is checked.
     limit
         .saturating_add(above)
         .saturating_add(usize::from(!options.keep_summary_rows))
+}
+
+// Used only on the early refusal path. Inspect the complete source extent and
+// exclusions with at most eleven preview rows and one row of cells in memory.
+fn xlsx_attempted_data_rows(
+    data: &Xml,
+    header: Option<u32>,
+    styles: &[CellStyle],
+    shared: &[String],
+    date1904: bool,
+    keep_summary: bool,
+) -> Result<usize> {
+    let mut last = 0;
+    let mut width = 0;
+    let mut preview: Vec<Vec<SourceCell>> = Vec::new();
+    for row in data.kids("row") {
+        let index = xlsx_row_index(row)?;
+        last = last.max(index);
+        for cell in row.kids("c") {
+            let (_, column) = coordinate(cell.attr("r").unwrap_or_default())?;
+            width = width.max(column + 1);
+        }
+        if header.is_none() && index <= MAX_DETECTED_ROWS_ABOVE_HEADER + 1 {
+            preview.resize_with(preview.len().max(index), Vec::new);
+            preview[index - 1] = xlsx_layout_row(row, styles, shared, date1904)?;
+        }
+    }
+    // No capacity profile admits wider rows; avoid allocating an invalid width.
+    if width > MAX_NATIVE_TABLES_COLUMNS {
+        return fail("Worksheet exceeds the bounded column count");
+    }
+    for row in &mut preview {
+        row.resize(width, SourceCell::default());
+    }
+    let above = header.map_or_else(
+        || rows_above_header(&preview, width),
+        |row| usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1),
+    );
+    let attempted = last.saturating_sub(above + 1);
+    if keep_summary || attempted < 2 {
+        return Ok(attempted);
+    }
+    let mut numeric = vec![true; width];
+    let mut has_data = false;
+    let mut tail = Vec::new();
+    for row in data.kids("row") {
+        let index = xlsx_row_index(row)?;
+        if index <= above + 1 {
+            continue;
+        }
+        let cells = xlsx_layout_row(row, styles, shared, date1904)?;
+        if index == last {
+            tail = cells;
+        } else {
+            has_data |= cells.iter().any(present);
+            for (column, is_numeric) in numeric.iter_mut().enumerate().take(cells.len()) {
+                *is_numeric &= numeric_column(std::slice::from_ref(&cells), column);
+            }
+        }
+    }
+    let summary = has_data
+        && summary_cells(&tail, above + 1, last - 1, last, |column| numeric[column]).is_some();
+    Ok(attempted - usize::from(summary))
+}
+
+fn xlsx_row_index(row: &Xml) -> Result<usize> {
+    let index = row
+        .attr("r")
+        .unwrap_or_default()
+        .parse::<usize>()
+        .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
+    if index == 0 || index > 1_048_576 {
+        return fail("Invalid row index");
+    }
+    Ok(index)
+}
+
+fn xlsx_layout_row(
+    row: &Xml,
+    styles: &[CellStyle],
+    shared: &[String],
+    date1904: bool,
+) -> Result<Vec<SourceCell>> {
+    let mut cells = Vec::new();
+    for cell in row.kids("c") {
+        let (_, column) = coordinate(cell.attr("r").unwrap_or_default())?;
+        if column >= MAX_NATIVE_TABLES_COLUMNS {
+            return fail("Worksheet exceeds the bounded column count");
+        }
+        let index = cell
+            .attr("s")
+            .unwrap_or("0")
+            .parse::<usize>()
+            .map_err(|_| InteropError::Invalid("Invalid cell style".into()))?;
+        let style = styles
+            .get(index)
+            .ok_or_else(|| InteropError::Invalid("Cell style index out of bounds".into()))?;
+        let formula = cell.child("f").map(|formula| formula.text.clone());
+        let mut value = cell_value(cell, shared, style, date1904)?;
+        if formula.as_deref().is_some_and(|source| {
+            source.eq_ignore_ascii_case("TRUE()") || source.eq_ignore_ascii_case("FALSE()")
+        }) {
+            value = SourceValue::Boolean {
+                value: formula.as_deref() == Some("TRUE()"),
+            };
+        }
+        cells.resize(cells.len().max(column + 1), SourceCell::default());
+        cells[column] = SourceCell {
+            value,
+            formula,
+            style: style.clone(),
+        };
+    }
+    Ok(cells)
 }
 
 fn present(cell: &SourceCell) -> bool {
@@ -4170,14 +4376,28 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     // column total it becomes means the same rows.
     let last_data = header_row + last;
     let own_row = header_row + 1 + last;
+    let cells = summary_cells(&rows[last], header_row, last_data, own_row, |column| {
+        numeric_column(&rows[..last], column)
+    })?;
+    // Blank rows between the data and the summary stay data rows.
+    Some((last, cells))
+}
+
+fn summary_cells(
+    row: &[SourceCell],
+    header_row: usize,
+    last_data: usize,
+    own_row: usize,
+    numeric: impl Fn(usize) -> bool,
+) -> Option<Vec<SummaryCell>> {
     let mut cells = Vec::new();
     // A label such as "Total" is required: an unlabelled last row that sums
     // the column above may be an ordinary record, so it stays data.
     let mut labelled = false;
-    for (column, cell) in rows[last].iter().enumerate() {
+    for (column, cell) in row.iter().enumerate() {
         if let Some(formula) = cell.formula.as_deref() {
             let aggregate = column_aggregate(formula, column, header_row, last_data, own_row)?;
-            if !numeric_column(&rows[..last], column) {
+            if !numeric(column) {
                 return None;
             }
             cells.push(SummaryCell {
@@ -4197,9 +4417,7 @@ fn summary_row(rows: &[Vec<SourceCell>], header_row: usize) -> Option<(usize, Ve
     if cells.is_empty() || !labelled {
         return None;
     }
-    // Blank rows between the data and the summary stay data rows, as other
-    // intervening blank rows do; only the summary row itself is left out.
-    Some((last, cells))
+    Some(cells)
 }
 
 fn column_aggregate(
@@ -6384,15 +6602,13 @@ mod capacity_proof_tests {
     use super::{
         CapacityXmlCount, ImportOptions, InteropError, MAX_TEXT_CAPACITY_ROWS, OutputProfile,
         SourceColumn, SourceLayout, SourceValue, capacity_auxiliary_xml_reserve,
-        capacity_header_bytes, capacity_header_limit, capacity_worksheet, export_xlsx, import_csv,
-        import_xlsx, output_profile, plain_tag, st_xstring, validate_text_capacity,
+        capacity_header_bytes, capacity_header_limit, capacity_worksheet, column_name, export_xlsx,
+        import_csv, import_xlsx, import_xlsx_profile, max_physical_rows, output_profile, plain_tag,
+        st_xstring, validate_text_capacity,
     };
     use crate::{CapacityExceeded, CapacityLimit};
 
-    fn capacity_xlsx_with_title(rows: usize) -> Vec<u8> {
-        let csv = format!("Name,Amount\n{}", "1,2\n".repeat(MAX_TEXT_CAPACITY_ROWS));
-        let workbook = import_csv(csv.as_bytes(), &ImportOptions::default()).unwrap();
-        let template = export_xlsx(&workbook).unwrap();
+    fn capacity_xlsx_with_title(rows: usize, summary: bool) -> Vec<u8> {
         let mut xml = String::from(
             "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Title</t></is></c></row><row r=\"2\"/><row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>Name</t></is></c><c r=\"B3\" t=\"inlineStr\"><is><t>Amount</t></is></c></row>",
         );
@@ -6403,7 +6619,19 @@ mod capacity_proof_tests {
             )
             .unwrap();
         }
+        if summary {
+            let last = rows + 3;
+            let total = last + 1;
+            write!(xml, "<row r=\"{total}\"><c r=\"A{total}\" t=\"inlineStr\"><is><t>Total</t></is></c><c r=\"B{total}\"><f>SUM(B4:B{last})</f><v>0</v></c></row>").unwrap();
+        }
         xml.push_str("</sheetData></worksheet>");
+        xlsx_with_sheet(&xml)
+    }
+
+    fn xlsx_with_sheet(xml: &str) -> Vec<u8> {
+        let workbook = import_csv(b"Name,Amount\n1,2\n", &ImportOptions::default()).unwrap();
+        let template =
+            super::export_xlsx_for_profile(&workbook, OutputProfile::TextCapacity).unwrap();
         let mut input = ZipArchive::new(Cursor::new(template)).unwrap();
         let mut output = ZipWriter::new(Cursor::new(Vec::new()));
         let options =
@@ -6425,7 +6653,8 @@ mod capacity_proof_tests {
 
     #[test]
     fn capacity_xlsx_title_and_blank_rows_do_not_count_as_data() {
-        let workbook = import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS)).unwrap();
+        let workbook =
+            import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS, false)).unwrap();
         assert_eq!(workbook.sheets[0].rows.len(), MAX_TEXT_CAPACITY_ROWS);
         assert_eq!(workbook.sheets[0].layout.rows_above_header, 2);
         assert!(
@@ -6440,7 +6669,8 @@ mod capacity_proof_tests {
 
     #[test]
     fn capacity_xlsx_header_offset_refuses_exact_data_row_count() {
-        let error = import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS + 1)).unwrap_err();
+        let error =
+            import_xlsx(&capacity_xlsx_with_title(MAX_TEXT_CAPACITY_ROWS + 1, false)).unwrap_err();
         assert_eq!(
             error,
             InteropError::Capacity(CapacityExceeded {
@@ -6450,6 +6680,83 @@ mod capacity_proof_tests {
                 collection: Some("Imported table".into()),
             })
         );
+    }
+
+    #[test]
+    fn explicit_millionth_row_header_compacts_before_allocation() {
+        // #819.1, #826 and #800.3 are one prefix-allocation regression.
+        let options = ImportOptions {
+            header_rows: vec![Some(1_000_000)],
+            ..ImportOptions::default()
+        };
+        // This fails on main before the fixture can allocate a million rows.
+        assert_eq!(max_physical_rows(10_000, &options, 0), 10_001);
+        let mut xml = format!(
+            "<worksheet xmlns=\"{}\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Title</t></is></c></row>",
+            super::MAIN
+        );
+        for row in [1_000_000, 1_000_001] {
+            write!(xml, "<row r=\"{row}\">").unwrap();
+            for column in 0..32 {
+                let address = format!("{}{row}", column_name(column));
+                if row == 1_000_000 {
+                    write!(
+                        xml,
+                        "<c r=\"{address}\" t=\"inlineStr\"><is><t>F{column}</t></is></c>"
+                    )
+                    .unwrap();
+                } else {
+                    write!(xml, "<c r=\"{address}\"><f>UNKNOWN(1)</f><v>2</v></c>").unwrap();
+                }
+            }
+            xml.push_str("</row>");
+        }
+        xml.push_str("</sheetData></worksheet>");
+        let workbook = import_xlsx_profile(&xlsx_with_sheet(&xml), &options, true).unwrap();
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.rows.len(), 1);
+        assert_eq!(sheet.columns.len(), 32);
+        assert_eq!(sheet.layout.rows_above_header, 999_999);
+        assert!(
+            workbook
+                .ledger
+                .iter()
+                .any(|finding| finding.code == "unsupported_formula_kept_value"
+                    && finding.location == "Imported table!AF1000001")
+        );
+        assert!(!workbook.ledger.iter().any(|finding| finding.blocking));
+    }
+
+    #[test]
+    fn working_title_summary_import_and_refusal_use_data_rows() {
+        // #819.2: titles, blank prefixes and excluded summaries are not data.
+        for summary in [false, true] {
+            for explicit in [false, true] {
+                let options = ImportOptions {
+                    header_rows: if explicit { vec![Some(3)] } else { Vec::new() },
+                    ..ImportOptions::default()
+                };
+                let workbook =
+                    import_xlsx_profile(&capacity_xlsx_with_title(10_000, summary), &options, true)
+                        .unwrap();
+                assert_eq!(workbook.sheets[0].rows.len(), 10_000);
+                assert_eq!(workbook.sheets[0].layout.rows_above_header, 2);
+                assert_eq!(workbook.sheets[0].layout.summary_row.is_some(), summary);
+                assert!(!workbook.ledger.iter().any(|finding| finding.blocking));
+                let error =
+                    import_xlsx_profile(&capacity_xlsx_with_title(10_011, summary), &options, true)
+                        .unwrap_err();
+                assert_eq!(
+                    error,
+                    InteropError::Capacity(CapacityExceeded {
+                        limit: CapacityLimit::TableRows,
+                        maximum: 10_000,
+                        attempted: 10_011,
+                        collection: Some("Imported table".into()),
+                    })
+                );
+            }
+        }
     }
 
     #[test]
@@ -7800,6 +8107,39 @@ mod ledger_cap_tests {
         assert_eq!(ledger_summary_total(&ledger[100]), Some(160));
         assert_eq!(ledger[201].location, "Sales");
         assert_eq!(ledger_summary_total(&ledger[201]), Some(150));
+    }
+
+    #[test]
+    fn ordinary_worksheet_findings_keep_a1_shaped_names() {
+        // #831: ordinary findings, not just generated recap messages.
+        for code in [
+            "hidden_sheet",
+            "hidden_default_rows",
+            "inherited_row_style",
+            "inherited_column_style",
+            "duplicate_header",
+        ] {
+            let mut ledger = Vec::new();
+            for sheet in ["Sales!Q1", "Sales"] {
+                for _ in 0..150 {
+                    ledger.push(FidelityFinding {
+                        category: FidelityCategory::UnsupportedSafeDisabled,
+                        code: code.into(),
+                        location: sheet.into(),
+                        message: "worksheet finding".into(),
+                        blocking: true,
+                    });
+                }
+            }
+            cap_ledger(&mut ledger);
+            assert_eq!(ledger.len(), 202, "{code}");
+            assert_eq!(ledger[100].location, "Sales!Q1");
+            assert_eq!(ledger_summary_total(&ledger[100]), Some(150));
+            assert_eq!(ledger[201].location, "Sales");
+            assert_eq!(ledger_summary_total(&ledger[201]), Some(150));
+            cap_ledger(&mut ledger);
+            assert_eq!(ledger.len(), 202);
+        }
     }
 
     #[test]
