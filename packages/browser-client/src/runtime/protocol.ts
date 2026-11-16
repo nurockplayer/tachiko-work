@@ -578,6 +578,7 @@ export function isFormulaFailure(failure: FailureProjection): failure is Formula
 
 export type TrackerCommand =
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
+  | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
