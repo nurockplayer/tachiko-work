@@ -1,8 +1,7 @@
 //! Differential oracle for the column-edge dependency graph.
 //!
-//! The reference half keeps the previous implementation: expanded per-cell
-//! dependency sets, SCCs over those sets, and affected-by over the expanded
-//! map. Deterministic generated documents must produce identical values,
+//! The reference half uses expanded per-cell dependency sets, SCCs over those
+//! sets, affected-by over the expanded map, and an independent fixture interpreter. Deterministic generated documents must produce identical values,
 //! failures, dependencies, and affected-by results through the graph.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,10 +26,14 @@ mod reference {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
-    use tachiko_semantic_core::{Document, FieldRef, Number, Value};
+    use tachiko_semantic_core::{
+        ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+        ConditionalAggregate, CriterionCell, CriterionTest, Document, Entity, Expression, FieldRef,
+        FieldType, Number, Value,
+    };
 
     use crate::{
-        CalculationFailure, FailureMap, FormulaNodes, ValueNodes, evaluation, extract_dependencies,
+        CalculationFailure, FailureMap, FormulaNodes, ValueNodes, extract_dependencies,
         initial_values, pregraph_failures,
     };
 
@@ -154,41 +157,21 @@ mod reference {
             .map(|(formula, _)| formula.clone())
             .collect::<BTreeSet<_>>();
 
-        let mut columns = evaluation::ColumnCache::default();
         while let Some(formula) = ready.pop_first() {
             remaining_dependency_counts.remove(&formula);
-            let expression = formulas[&formula];
-            for column in crate::extract_column_totals(expression) {
-                columns.fill(document, values, failures, &column);
-            }
-            let mut evaluation = evaluation::Evaluation {
+            let interpreter = Interpreter {
                 document,
                 owner: &formula,
                 values,
-                columns: &mut columns,
+                failures,
             };
-            let failed_dependencies = evaluation
-                .required_references(expression, failures)
-                .iter()
-                .filter(|dependency| failures.contains_key(*dependency))
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            if failed_dependencies.is_empty() {
-                match evaluation.number(expression) {
-                    Ok(value) => {
-                        values.insert(formula.clone(), value);
-                    }
-                    Err(failure) => {
-                        failures.insert(formula.clone(), failure);
-                    }
+            match interpreter.evaluate(formulas[&formula]) {
+                Ok(value) => {
+                    values.insert(formula.clone(), value);
                 }
-            } else {
-                failures.insert(
-                    formula.clone(),
-                    CalculationFailure::FailedDependencies {
-                        dependencies: failed_dependencies,
-                    },
-                );
+                Err(failure) => {
+                    failures.insert(formula.clone(), failure);
+                }
             }
 
             for dependent in dependents.get(&formula).into_iter().flatten() {
@@ -206,6 +189,464 @@ mod reference {
             remaining_dependency_counts.is_empty(),
             "reference SCC condensation must be acyclic"
         );
+    }
+
+    /// Deliberately uncached and independent of the production evaluator.
+    /// Only the expression vocabulary used by this differential's fixtures is
+    /// supported; new fixture nodes must be added explicitly.
+    struct Interpreter<'a> {
+        document: &'a Document,
+        owner: &'a FieldRef,
+        values: &'a BTreeMap<FieldRef, Number>,
+        failures: &'a FailureMap,
+    }
+
+    impl Interpreter<'_> {
+        fn evaluate(&self, expression: &Expression) -> Result<Number, CalculationFailure> {
+            let dependencies = self
+                .required(expression)
+                .into_iter()
+                .filter(|reference| self.failures.contains_key(reference))
+                .collect::<BTreeSet<_>>();
+            if !dependencies.is_empty() {
+                return Err(CalculationFailure::FailedDependencies { dependencies });
+            }
+            self.number(expression)
+        }
+
+        fn required(&self, expression: &Expression) -> BTreeSet<FieldRef> {
+            let mut references = BTreeSet::new();
+            let mut pending = vec![expression];
+            while let Some(node) = pending.pop() {
+                match node {
+                    Expression::Reference(reference) => {
+                        references.insert(reference.clone());
+                    }
+                    Expression::SameRowReference(field) => {
+                        references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
+                    }
+                    Expression::ColumnTotal(column)
+                    | Expression::ColumnAggregate { column, .. } => {
+                        references.extend(self.first_failed(column));
+                    }
+                    Expression::ColumnConditional {
+                        aggregate,
+                        criteria,
+                    } => {
+                        if let ConditionalAggregate::Sum(column)
+                        | ConditionalAggregate::Average(column) = aggregate.as_ref()
+                        {
+                            references.extend(self.first_failed(column));
+                        }
+                        for criterion in criteria {
+                            references.extend(self.first_failed(&criterion.column));
+                            pending.extend(criterion.value.as_deref());
+                        }
+                    }
+                    Expression::Lookup {
+                        key,
+                        key_column,
+                        result_column,
+                        if_missing,
+                    } => {
+                        pending.push(key);
+                        references.extend(self.first_failed(key_column));
+                        references.extend(self.first_failed(result_column));
+                        if matches!(self.lookup(key, key_column), Ok(None)) {
+                            pending.extend(if_missing.as_deref());
+                        }
+                    }
+                    Expression::If {
+                        condition,
+                        then_value,
+                        else_value,
+                    } => {
+                        pending.push(condition);
+                        if let Ok(value) = self.condition(condition) {
+                            pending.push(if value { then_value } else { else_value });
+                        }
+                    }
+                    Expression::IfError { value, fallback } => {
+                        pending.push(value);
+                        if self.number(value).is_err() {
+                            pending.push(fallback);
+                        }
+                    }
+                    Expression::IsBlank(_) => {}
+                    _ => pending.extend(node.children()),
+                }
+            }
+            references
+        }
+
+        fn first_failed(&self, column: &ColumnRef) -> Option<FieldRef> {
+            self.cells(column)
+                .find(|reference| self.failures.contains_key(reference))
+        }
+
+        fn cells<'a>(&'a self, column: &'a ColumnRef) -> impl Iterator<Item = FieldRef> + 'a {
+            self.document
+                .entities
+                .iter()
+                .filter(|(_, row)| {
+                    row.schema == column.schema && row.fields.contains_key(&column.field)
+                })
+                .map(|(id, _)| FieldRef::new(id.clone(), column.field.clone()))
+        }
+
+        fn reference(&self, reference: &FieldRef) -> Result<Number, CalculationFailure> {
+            if let Some(value) = self.values.get(reference) {
+                return Ok(*value);
+            }
+            let blank_optional = self
+                .document
+                .entities
+                .get(&reference.entity)
+                .is_some_and(|row| {
+                    !row.fields.contains_key(&reference.field)
+                        && self
+                            .document
+                            .schemas
+                            .get(&row.schema)
+                            .and_then(|schema| schema.fields.get(&reference.field))
+                            .is_some_and(|field| {
+                                field.field_type == FieldType::Number && !field.required
+                            })
+                });
+            if blank_optional {
+                return Ok(Number::default());
+            }
+            Err(CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([reference.clone()]),
+            })
+        }
+
+        fn number(&self, expression: &Expression) -> Result<Number, CalculationFailure> {
+            let value = match expression {
+                Expression::Number(value) => return Ok(*value),
+                Expression::Reference(reference) => return self.reference(reference),
+                Expression::SameRowReference(field) => {
+                    return self
+                        .reference(&FieldRef::new(self.owner.entity.clone(), field.clone()));
+                }
+                Expression::If {
+                    condition,
+                    then_value,
+                    else_value,
+                } => {
+                    return self.number(if self.condition(condition)? {
+                        then_value
+                    } else {
+                        else_value
+                    });
+                }
+                Expression::IfError { value, fallback } => {
+                    return self.number(value).or_else(|_| self.number(fallback));
+                }
+                // A total deliberately retains the historical entity-order running sum.
+                Expression::ColumnTotal(column) => self
+                    .column_values(column)?
+                    .iter()
+                    .fold(0.0, |sum, value| sum + value),
+                Expression::ColumnAggregate { function, column } => {
+                    return Self::aggregate(*function, &self.column_values(column)?);
+                }
+                Expression::ColumnConditional {
+                    aggregate,
+                    criteria,
+                } => return self.conditional(aggregate, criteria),
+                Expression::Lookup {
+                    key,
+                    key_column,
+                    result_column,
+                    if_missing,
+                } => {
+                    return match self.lookup(key, key_column)? {
+                        Some(row) => self
+                            .reference(&FieldRef::new(row.id.clone(), result_column.field.clone())),
+                        None => if_missing
+                            .as_deref()
+                            .map_or(Err(CalculationFailure::LookupMissingKey), |fallback| {
+                                self.number(fallback)
+                            }),
+                    };
+                }
+                Expression::Abs(value) => self.number(value)?.get().abs(),
+                Expression::RoundUp { value, digits } | Expression::RoundDown { value, digits } => {
+                    directed(
+                        self.number(value)?.get(),
+                        *digits,
+                        matches!(expression, Expression::RoundUp { .. }),
+                    )
+                }
+                Expression::Add { left, right } => {
+                    self.number(left)?.get() + self.number(right)?.get()
+                }
+                Expression::Subtract { left, right } => {
+                    self.number(left)?.get() - self.number(right)?.get()
+                }
+                Expression::Divide { left, right } => {
+                    let left = self.number(left)?.get();
+                    let right = self.number(right)?.get();
+                    if right == 0.0 {
+                        return Err(CalculationFailure::DivisionByZero);
+                    }
+                    left / right
+                }
+                _ => panic!("expression outside differential fixture vocabulary: {expression:?}"),
+            };
+            number(value)
+        }
+
+        fn column_values(&self, column: &ColumnRef) -> Result<Vec<f64>, CalculationFailure> {
+            self.cells(column)
+                .map(|reference| {
+                    self.values
+                        .get(&reference)
+                        .map(|value| value.get())
+                        .ok_or_else(|| CalculationFailure::FailedDependencies {
+                            dependencies: BTreeSet::from([reference]),
+                        })
+                })
+                .collect()
+        }
+
+        fn aggregate(
+            function: ColumnAggregateFunction,
+            values: &[f64],
+        ) -> Result<Number, CalculationFailure> {
+            if values.is_empty() && function != ColumnAggregateFunction::Count {
+                return Err(CalculationFailure::EmptyAggregate);
+            }
+            number(match function {
+                ColumnAggregateFunction::Count => count(values.len()),
+                ColumnAggregateFunction::Minimum => {
+                    values.iter().copied().reduce(f64::min).expect("nonempty")
+                }
+                ColumnAggregateFunction::Maximum => {
+                    values.iter().copied().reduce(f64::max).expect("nonempty")
+                }
+                ColumnAggregateFunction::Average => {
+                    // Neumaier compensation, independent of production's partials
+                    // algorithm. Fixtures use small finite columns, including cancellation.
+                    let (mut sum, mut correction) = (0.0_f64, 0.0_f64);
+                    for &value in values {
+                        let next = sum + value;
+                        correction += if sum.abs() >= value.abs() {
+                            (sum - next) + value
+                        } else {
+                            (value - next) + sum
+                        };
+                        sum = next;
+                    }
+                    (sum + correction) / count(values.len())
+                }
+            })
+        }
+
+        fn condition(&self, expression: &Expression) -> Result<bool, CalculationFailure> {
+            match expression {
+                Expression::IsBlank(value) => {
+                    let reference = self
+                        .as_reference(value)
+                        .expect("fixture ISBLANK uses a reference");
+                    Ok(self
+                        .document
+                        .entities
+                        .get(&reference.entity)
+                        .is_some_and(|row| !row.fields.contains_key(&reference.field)))
+                }
+                Expression::Compare {
+                    operator,
+                    left,
+                    right,
+                } => {
+                    let (left, right) = (self.number(left)?, self.number(right)?);
+                    Ok(match operator {
+                        ComparisonOperator::Equal => left == right,
+                        ComparisonOperator::NotEqual => left != right,
+                        ComparisonOperator::Less => left < right,
+                        ComparisonOperator::LessOrEqual => left <= right,
+                        ComparisonOperator::Greater => left > right,
+                        ComparisonOperator::GreaterOrEqual => left >= right,
+                    })
+                }
+                _ => panic!("condition outside fixture vocabulary"),
+            }
+        }
+
+        fn as_reference(&self, expression: &Expression) -> Option<FieldRef> {
+            match expression {
+                Expression::Reference(reference) => Some(reference.clone()),
+                Expression::SameRowReference(field) => {
+                    Some(FieldRef::new(self.owner.entity.clone(), field.clone()))
+                }
+                _ => None,
+            }
+        }
+
+        fn cell<'a>(
+            &self,
+            row: &'a Entity,
+            field: &tachiko_semantic_core::FieldId,
+        ) -> Result<Option<CriterionCell<'a>>, CalculationFailure> {
+            Ok(match row.fields.get(field) {
+                None => None,
+                Some(Value::Number(_) | Value::Formula(_)) => Some(CriterionCell::Number(
+                    self.reference(&FieldRef::new(row.id.clone(), field.clone()))?
+                        .get(),
+                )),
+                Some(Value::Text(value)) => Some(CriterionCell::Text(value)),
+                Some(Value::Boolean(value)) => Some(CriterionCell::Boolean(*value)),
+                Some(Value::Date(value)) => Some(CriterionCell::Date(*value)),
+                Some(Value::Reference(_)) => return Err(CalculationFailure::TypeMismatch),
+            })
+        }
+
+        fn lookup(
+            &self,
+            key: &Expression,
+            column: &ColumnRef,
+        ) -> Result<Option<&Entity>, CalculationFailure> {
+            let reference = self.as_reference(key);
+            let key = if let Some(reference) = &reference {
+                let row = self
+                    .document
+                    .entities
+                    .get(&reference.entity)
+                    .expect("bound fixture row");
+                self.cell(row, &reference.field)?
+            } else {
+                Some(CriterionCell::Number(self.number(key)?.get()))
+            };
+            let Some(key) = key else {
+                return Err(CalculationFailure::LookupMissingKey);
+            };
+            for row in self
+                .document
+                .entities
+                .values()
+                .filter(|row| row.schema == column.schema)
+            {
+                // An unresolved key cell is skipped, matching the lookup contract.
+                if let Ok(Some(cell)) = self.cell(row, &column.field) {
+                    if cell.keys().first() == key.keys().first() {
+                        return Ok(Some(row));
+                    }
+                }
+            }
+            Ok(None)
+        }
+
+        fn criterion(
+            &self,
+            criterion: &ColumnCriterion,
+        ) -> Result<CriterionTest, CalculationFailure> {
+            let Some(value) = criterion.value.as_deref() else {
+                return Ok(CriterionTest::blank(criterion.operator));
+            };
+            if let Some(reference) = self.as_reference(value) {
+                let row = &self.document.entities[&reference.entity];
+                return match self.cell(row, &reference.field)? {
+                    None => Ok(CriterionTest::equal_number(0.0)),
+                    Some(CriterionCell::Number(value)) => Ok(CriterionTest::equal_number(value)),
+                    Some(CriterionCell::Text(value)) => {
+                        CriterionTest::parse(value).map_err(|_| CalculationFailure::TypeMismatch)
+                    }
+                    Some(CriterionCell::Boolean(value)) => Ok(CriterionTest::equal_boolean(value)),
+                    Some(CriterionCell::Date(value)) => Ok(CriterionTest::equal_date(value)),
+                };
+            }
+            Ok(CriterionTest::number(
+                criterion.operator,
+                self.number(value)?.get(),
+            ))
+        }
+
+        fn conditional(
+            &self,
+            aggregate: &ConditionalAggregate,
+            criteria: &[ColumnCriterion],
+        ) -> Result<Number, CalculationFailure> {
+            let tests = criteria
+                .iter()
+                .map(|criterion| self.criterion(criterion))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut values = Vec::new();
+            let mut matched = 0;
+            for row in self
+                .document
+                .entities
+                .values()
+                .filter(|row| row.schema == criteria[0].column.schema)
+            {
+                let mut row_matches = true;
+                for (criterion, test) in criteria.iter().zip(&tests) {
+                    if !test.matches(self.cell(row, &criterion.column.field)?) {
+                        row_matches = false;
+                        break;
+                    }
+                }
+                if !row_matches {
+                    continue;
+                }
+                matched += 1;
+                if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
+                    aggregate
+                {
+                    if row.fields.contains_key(&column.field) {
+                        values.push(self.column_cell(row, column)?);
+                    }
+                }
+            }
+            match aggregate {
+                ConditionalAggregate::Count => number(count(matched)),
+                ConditionalAggregate::Sum(_) => number(values.iter().sum()),
+                ConditionalAggregate::Average(_) => {
+                    Self::aggregate(ColumnAggregateFunction::Average, &values)
+                }
+            }
+        }
+
+        fn column_cell(&self, row: &Entity, column: &ColumnRef) -> Result<f64, CalculationFailure> {
+            self.values
+                .get(&FieldRef::new(row.id.clone(), column.field.clone()))
+                .map(|value| value.get())
+                .ok_or_else(|| CalculationFailure::FailedDependencies {
+                    dependencies: BTreeSet::from([FieldRef::new(
+                        row.id.clone(),
+                        column.field.clone(),
+                    )]),
+                })
+        }
+    }
+
+    fn number(value: f64) -> Result<Number, CalculationFailure> {
+        Number::new(value).map_err(|_| CalculationFailure::NonFiniteResult)
+    }
+
+    fn count(value: usize) -> f64 {
+        f64::from(u32::try_from(value).expect("small differential fixture"))
+    }
+
+    fn directed(value: f64, digits: u8, away: bool) -> f64 {
+        let text = value.abs().to_string();
+        let Some((integer, fraction)) = text.split_once('.') else {
+            return value;
+        };
+        let digits = usize::from(digits);
+        if fraction.len() <= digits {
+            return value;
+        }
+        let kept = format!("{integer}{}", &fraction[..digits]);
+        let mut units = kept.parse::<u64>().expect("small fixture decimal");
+        if away && fraction[digits..].bytes().any(|digit| digit != b'0') {
+            units += 1;
+        }
+        format!("{units}e-{digits}")
+            .parse::<f64>()
+            .expect("fixture decimal")
+            .copysign(value)
     }
 
     fn cyclic_components(
@@ -328,6 +769,39 @@ mod reference {
         }
 
         affected.into_iter().collect()
+    }
+    #[test]
+    fn independent_required_reads_agree_with_the_legacy_expanded_walk() {
+        // Keep the old test-only expanded failure walk exercised, separately
+        // from reference calculation. Its numeric decisions cannot feed back
+        // into the oracle's values or failures.
+        for seed in 0..48 {
+            let document = super::generated_document(seed);
+            let expected = calculate(&document);
+            let (_, formulas, _) = collect(&document);
+            let mut columns = crate::evaluation::ColumnCache::default();
+            for (owner, expression) in formulas {
+                for column in crate::extract_column_totals(expression) {
+                    columns.fill(&document, &expected.values, &expected.failures, &column);
+                }
+                let independent = Interpreter {
+                    document: &document,
+                    owner: &owner,
+                    values: &expected.values,
+                    failures: &expected.failures,
+                };
+                let mut legacy = crate::evaluation::Evaluation {
+                    document: &document,
+                    owner: &owner,
+                    values: &expected.values,
+                    columns: &mut columns,
+                };
+                assert_eq!(
+                    independent.required(expression),
+                    legacy.required_references(expression, &expected.failures)
+                );
+            }
+        }
     }
 }
 
@@ -2186,4 +2660,255 @@ fn a_conditional_aggregate_names_the_first_failed_cell_of_each_column() {
         "a SUMIF names the first failed sum cell and the first failed criterion cell"
     );
     assert_matches_reference(&document, "a SUMIF over two failed columns");
+}
+
+#[test]
+fn reaching_fields_does_not_visit_irrelevant_fanout() {
+    const INPUTS: usize = 128;
+    for fanout in [0, 2_048] {
+        let mut rows = (0..INPUTS)
+            .map(|index| {
+                fixed_row(
+                    &format!("input-{index}"),
+                    "inputs",
+                    &[("v", fixed_number(1.0))],
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(fixed_row(
+            "summary",
+            "outputs",
+            &[("v", Value::Formula(total("inputs", "v")))],
+        ));
+        for index in 0..fanout {
+            rows.push(fixed_row(
+                &format!("tail-{index}"),
+                "outputs",
+                &[(
+                    "v",
+                    Value::Formula(subtract(
+                        Expression::Reference(field_ref("summary", "v")),
+                        Expression::Reference(field_ref("summary", "v")),
+                    )),
+                )],
+            ));
+        }
+        let document = fixed_document(
+            vec![
+                fixed_schema("inputs", &[("v", FieldType::Number)]),
+                fixed_schema("outputs", &[("v", FieldType::Number)]),
+            ],
+            rows,
+        );
+        let (_, _, graph) = super::collect_calculation_nodes(&document);
+        let changed = (0..INPUTS)
+            .map(|index| field_ref(&format!("input-{index}"), "v"))
+            .collect::<BTreeSet<_>>();
+        let targets = BTreeSet::from([field_ref("summary", "v")]);
+        super::causal_visits::take();
+        assert_eq!(
+            graph.reaching_fields(&changed, &targets),
+            BTreeMap::from([(field_ref("summary", "v"), changed.clone())])
+        );
+        assert_eq!(
+            super::causal_visits::take(),
+            2 * INPUTS,
+            "fanout {fanout} must not add work"
+        );
+    }
+}
+
+#[test]
+fn reaching_fields_preserves_positive_length_paths_through_cycles() {
+    let document = fixed_document(
+        vec![fixed_schema("calc", &[("v", FieldType::Number)])],
+        vec![
+            fixed_row(
+                "a",
+                "calc",
+                &[(
+                    "v",
+                    Value::Formula(Expression::Reference(field_ref("b", "v"))),
+                )],
+            ),
+            fixed_row(
+                "b",
+                "calc",
+                &[(
+                    "v",
+                    Value::Formula(Expression::Reference(field_ref("a", "v"))),
+                )],
+            ),
+            fixed_row("self", "calc", &[("v", Value::Formula(total("calc", "v")))]),
+            fixed_row("literal", "calc", &[("v", fixed_number(1.0))]),
+        ],
+    );
+    let (_, _, graph) = super::collect_calculation_nodes(&document);
+    let targets = all_fields(&document);
+    let actual = graph.reaching_fields(&targets, &targets);
+    for target in &targets {
+        let expected = targets
+            .iter()
+            .filter(|changed| graph.affected_by(changed).contains(target))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual.get(target).cloned().unwrap_or_default(), expected);
+    }
+    assert!(actual[&field_ref("a", "v")].contains(&field_ref("a", "v")));
+    assert!(actual[&field_ref("self", "v")].contains(&field_ref("self", "v")));
+    assert!(!actual.contains_key(&field_ref("literal", "v")));
+}
+
+#[test]
+fn reference_numeric_evaluation_has_no_production_helpers() {
+    // This fails on the old reference even when both numeric results agree:
+    // its numeric calls went through the exact implementation under test.
+    let source = include_str!("column_graph_differential.rs");
+    let reference = source
+        .split("mod reference {")
+        .nth(1)
+        .unwrap()
+        .split("    fn cyclic_components(")
+        .next()
+        .unwrap();
+    for helper in ["evaluation::", "numeric_sum", "numeric_average"] {
+        assert!(
+            !reference.contains(helper),
+            "reference must not call {helper}"
+        );
+    }
+}
+
+#[test]
+fn independent_reference_aggregates_cover_cancellation_empty_and_invalid_columns() {
+    let mut document = reference_aggregate_document();
+    let expected = reference::calculate(&document);
+    assert_matches_reference(&document, "independent fixed aggregate values");
+    for (name, value) in [
+        ("total", 8.0_f64),
+        ("average", 2.0),
+        ("count", 4.0),
+        ("minimum", 0.5),
+        ("maximum", 4.0),
+        ("conditional", 3.5),
+    ] {
+        assert_eq!(
+            expected.values[&field_ref("reader", name)].get().to_bits(),
+            value.to_bits()
+        );
+    }
+    // A total keeps entity-order cancellation; AVERAGE uses a compensated sum.
+    document
+        .entities
+        .retain(|_, row| row.schema != SchemaId::from("calc"));
+    for (id, value) in [("a", 1e16), ("b", 1.0), ("c", -1e16)] {
+        document.entities.insert(
+            EntityId::from(id),
+            fixed_row(
+                id,
+                "calc",
+                &[("v", fixed_number(value)), ("k", fixed_number(2.0))],
+            ),
+        );
+    }
+    let cancellation = reference::calculate(&document);
+    assert_matches_reference(&document, "independent cancellation values");
+    assert_eq!(
+        cancellation.values[&field_ref("reader", "total")]
+            .get()
+            .to_bits(),
+        0.0_f64.to_bits()
+    );
+    assert_eq!(
+        cancellation.values[&field_ref("reader", "average")]
+            .get()
+            .to_bits(),
+        (1.0_f64 / 3.0).to_bits()
+    );
+    assert_eq!(
+        cancellation.values[&field_ref("reader", "conditional")]
+            .get()
+            .to_bits(),
+        0.0_f64.to_bits()
+    );
+    document
+        .entities
+        .retain(|_, row| row.schema != SchemaId::from("calc"));
+    let empty = reference::calculate(&document);
+    assert_matches_reference(&document, "independent empty aggregate values");
+    for name in ["total", "count", "conditional"] {
+        assert_eq!(empty.values[&field_ref("reader", name)], Number::default());
+    }
+    for name in ["average", "minimum", "maximum"] {
+        assert_eq!(
+            empty.failures[&field_ref("reader", name)],
+            CalculationFailure::EmptyAggregate
+        );
+    }
+    document.entities.insert(
+        EntityId::from("invalid"),
+        fixed_row(
+            "invalid",
+            "calc",
+            &[("v", Value::Text("invalid".to_owned()))],
+        ),
+    );
+    let invalid = reference::calculate(&document);
+    assert_matches_reference(&document, "independent invalid aggregate contributors");
+    for name in ["average", "count", "minimum", "maximum"] {
+        assert_eq!(
+            invalid.failures[&field_ref("reader", name)],
+            CalculationFailure::FailedDependencies {
+                dependencies: BTreeSet::from([field_ref("invalid", "v")])
+            }
+        );
+    }
+    assert_eq!(
+        invalid.failures[&field_ref("reader", "total")],
+        CalculationFailure::InvalidReferences {
+            targets: BTreeMap::from([(field_ref("invalid", "v"), ReferenceFailure::NonNumeric)])
+        }
+    );
+}
+
+#[test]
+fn reaching_fields_shares_column_ancestor_discovery_across_targets() {
+    const ROWS: usize = 128;
+    let mut rows = (0..ROWS)
+        .map(|index| {
+            fixed_row(
+                &format!("input-{index}"),
+                "inputs",
+                &[("v", fixed_number(1.0))],
+            )
+        })
+        .collect::<Vec<_>>();
+    let targets = (0..ROWS)
+        .map(|index| field_ref(&format!("reader-{index}"), "v"))
+        .collect::<BTreeSet<_>>();
+    for target in &targets {
+        rows.push(fixed_row(
+            target.entity.as_str(),
+            "outputs",
+            &[("v", Value::Formula(total("inputs", "v")))],
+        ));
+    }
+    let document = fixed_document(
+        vec![
+            fixed_schema("inputs", &[("v", FieldType::Number)]),
+            fixed_schema("outputs", &[("v", FieldType::Number)]),
+        ],
+        rows,
+    );
+    let (_, _, graph) = super::collect_calculation_nodes(&document);
+    let changed = field_ref("input-0", "v");
+    super::causal_visits::take();
+    assert_eq!(
+        graph.reaching_fields([&changed], &targets),
+        targets
+            .iter()
+            .map(|target| (target.clone(), BTreeSet::from([changed.clone()])))
+            .collect()
+    );
+    assert_eq!(super::causal_visits::take(), 2 * ROWS);
 }

@@ -11,15 +11,15 @@ pub(crate) fn to_excel(format: DateFormat) -> &'static str {
         DateFormat::Dmy => "d/m/yyyy",
         DateFormat::YmdSlash => "yyyy/m/d",
         DateFormat::YmdCjk => "yyyy\"年\"m\"月\"d\"日\"",
-        DateFormat::MonthDayYear => "mmm d, yyyy",
-        DateFormat::DayMonthYear => "d mmm yyyy",
+        DateFormat::MonthDayYear => "[$-409]mmm d, yyyy",
+        DateFormat::DayMonthYear => "[$-409]d mmm yyyy",
     }
 }
 
 pub(crate) fn from_excel(pattern: &str) -> Option<DateFormat> {
     let pattern = if pattern.starts_with("[$-") {
         let end = pattern.find(']')?;
-        if end == 3 {
+        if &pattern[3..end] != "409" {
             return None;
         }
         &pattern[end + 1..]
@@ -36,7 +36,12 @@ pub(crate) fn from_excel(pattern: &str) -> Option<DateFormat> {
         DateFormat::DayMonthYear,
     ]
     .into_iter()
-    .find(|format| pattern.eq_ignore_ascii_case(to_excel(*format)))
+    .find(|format| {
+        let excel = to_excel(*format)
+            .strip_prefix("[$-409]")
+            .unwrap_or(to_excel(*format));
+        pattern.eq_ignore_ascii_case(excel)
+    })
 }
 
 pub(crate) fn cell_style(

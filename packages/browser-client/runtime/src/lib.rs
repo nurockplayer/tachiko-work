@@ -3,6 +3,7 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+mod move_cells;
 mod translate_a1;
 pub use translate_a1::{
     A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
@@ -350,6 +351,10 @@ pub enum DesignerRequest {
     EditCells {
         expected_revision: String,
         edits: Vec<CellEdit>,
+    },
+    MoveCells {
+        expected_revision: String,
+        moves: Vec<CellMove>,
     },
     PasteCells {
         expected_revision: String,
@@ -945,6 +950,12 @@ fn wire_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64,
 pub struct CellEdit {
     pub target: FieldTarget,
     pub input: ScalarEditInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CellMove {
+    pub from: FieldTarget,
+    pub to: FieldTarget,
 }
 
 /// Private authoring input for the bounded native table creation path.
@@ -2914,9 +2925,9 @@ fn compare_ordering(ordering: Ordering, op: ComparisonOperator) -> bool {
     }
 }
 
-/// Stable view order. Missing values sort last in both directions; equal sort
-/// values keep the ascending entity-id order, which is the order of
-/// [`CollectionSpec::entities`].
+/// Stable view order. Missing values sort last in both directions. Natural
+/// text byte ties break only after all requested keys tie, followed by ascending
+/// entity-id order, which is the order of [`CollectionSpec::entities`].
 fn compare_view_rows(
     left: usize,
     right: usize,
@@ -2938,6 +2949,23 @@ fn compare_view_rows(
             return ordering;
         }
     }
+    for key in sort
+        .iter()
+        .filter(|key| key.text_order == ViewTextOrder::Natural)
+    {
+        let (Some(ViewValue::Text(left)), Some(ViewValue::Text(right))) =
+            (&cells[left][key.ordinal], &cells[right][key.ordinal])
+        else {
+            continue;
+        };
+        let ordering = match key.direction {
+            SortDirection::Asc => left.as_bytes().cmp(right.as_bytes()),
+            SortDirection::Desc => right.as_bytes().cmp(left.as_bytes()),
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
     entities[left].cmp(&entities[right])
 }
 
@@ -2946,7 +2974,7 @@ fn compare_view_values(left: &ViewValue, right: &ViewValue, text_order: ViewText
         (ViewValue::Number(left), ViewValue::Number(right)) => left.total_cmp(right),
         (ViewValue::Text(left), ViewValue::Text(right)) => match text_order {
             ViewTextOrder::Bytes => left.cmp(right),
-            ViewTextOrder::Natural => display_text::natural_cmp(left, right),
+            ViewTextOrder::Natural => display_text::natural_normalized_cmp(left, right),
         },
         (ViewValue::Boolean(left), ViewValue::Boolean(right)) => left.cmp(right),
         (ViewValue::Date(left), ViewValue::Date(right)) => left.cmp(right),
@@ -3897,6 +3925,12 @@ impl DesignerRuntime {
                 edits,
             } => Ok(DesignerResponse::Published(
                 self.edit_cells(&expected_revision, &edits)?,
+            )),
+            DesignerRequest::MoveCells {
+                expected_revision,
+                moves,
+            } => Ok(DesignerResponse::Published(
+                self.move_cells(&expected_revision, &moves)?,
             )),
             DesignerRequest::PasteCells {
                 expected_revision,
@@ -8087,6 +8121,16 @@ impl DesignerRuntime {
             HistoryAction::Commands(inverse),
         ));
         Ok(publication)
+    }
+
+    fn move_cells(
+        &mut self,
+        expected: &str,
+        moves: &[CellMove],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let (forward, inverse) = move_cells::plan(self, moves)?;
+        self.record_edit(expected, forward, inverse)
     }
 
     fn edit_cells(

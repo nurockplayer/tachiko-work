@@ -269,6 +269,66 @@ fn window_locate_and_two_keys_agree_on_natural_order() {
 }
 
 #[test]
+fn normalized_ties_use_secondary_numbers_before_bytes_and_entity_ids() {
+    for (first, second) in [("Item02", "Item2"), ("Apple", "apple")] {
+        let mut document = natural_document();
+        document.entities = [
+            ("e01", first, 100.0),
+            ("e02", second, 1.0),
+            ("e03", first, 1.0),
+            ("e04", second, 100.0),
+            ("e05", first, 1.0),
+        ]
+        .into_iter()
+        .map(|(id, name, amount)| {
+            entity(
+                id,
+                vec![("f01_name", text(name)), ("f02_amount", number(amount))],
+            )
+        })
+        .collect();
+        let mut runtime = DesignerRuntime::from_document(document, NATURAL)
+            .expect("the normalized-tie fixture is admitted");
+        for (primary, secondary, expected) in [
+            (
+                SortDirection::Asc,
+                SortDirection::Asc,
+                ["e03", "e05", "e02", "e01", "e04"],
+            ),
+            (
+                SortDirection::Desc,
+                SortDirection::Asc,
+                ["e02", "e03", "e05", "e04", "e01"],
+            ),
+            (
+                SortDirection::Asc,
+                SortDirection::Desc,
+                ["e01", "e04", "e03", "e05", "e02"],
+            ),
+            (
+                SortDirection::Desc,
+                SortDirection::Desc,
+                ["e04", "e01", "e02", "e03", "e05"],
+            ),
+        ] {
+            let mut view = sorted("f01_name", primary, ViewTextOrder::Natural);
+            view.sort.push(ViewSortKey {
+                field: "f02_amount".to_owned(),
+                direction: secondary,
+                text_order: ViewTextOrder::Bytes,
+            });
+            // Different amounts override byte order; equal amounts use bytes,
+            // and e03/e05 still tie exactly and keep ascending entity IDs.
+            assert_eq!(
+                order(&mut runtime, view),
+                ids(&expected),
+                "{first}/{second}, primary {primary:?}, secondary {secondary:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn the_cached_view_index_keeps_bytes_and_natural_apart() {
     let mut runtime = natural_runtime();
     let bytes = order(

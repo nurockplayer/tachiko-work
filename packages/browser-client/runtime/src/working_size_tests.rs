@@ -414,6 +414,27 @@ fn populated_limit_grid() -> Document {
     document
 }
 
+fn assert_populated_limit_targets(runtime: &DesignerRuntime, expected: &Value) {
+    let document = runtime.session.document();
+    for column in 0..10 {
+        let field = FieldId::from(format!("c{column}"));
+        for row in [0, 5_000, 9_999] {
+            let entity = &document.entities[&EntityId::from(format!("r{row:05}"))];
+            assert_eq!(entity.fields.get(&field), Some(expected), "{row}, {column}");
+        }
+    }
+    // Read the retained document directly: no projection or snapshot cloning
+    // of the 100,000 targets, and unchanged prepopulated zeroes cannot count.
+    let populated = document
+        .entities
+        .values()
+        .filter(|entity| entity.schema == SchemaId::from("grid"))
+        .flat_map(|entity| entity.fields.values())
+        .filter(|value| *value == expected)
+        .count();
+    assert_eq!(populated, super::capacity::WORKING_LIMITS.populated_cells);
+}
+
 #[test]
 fn the_working_size_edit_batch_accepts_exactly_the_populated_cell_bound() {
     let limit = super::capacity::WORKING_LIMITS.populated_cells;
@@ -435,6 +456,7 @@ fn the_working_size_edit_batch_accepts_exactly_the_populated_cell_bound() {
     let current = revision(&runtime);
     runtime.edit_cells(&current, &edits).unwrap();
     assert_ne!(revision(&runtime), current);
+    assert_populated_limit_targets(&runtime, &Value::Number(Number::new(1.0).unwrap()));
 }
 
 #[test]
@@ -465,6 +487,10 @@ fn the_working_size_copy_batch_accepts_exactly_the_populated_cell_bound() {
         .copy_formula(&current, &source, &destinations, &[], false, false)
         .unwrap();
     assert_ne!(revision(&runtime), current);
+    assert_populated_limit_targets(
+        &runtime,
+        &Value::Formula(Expression::Number(Number::new(1.0).unwrap())),
+    );
 }
 
 #[test]

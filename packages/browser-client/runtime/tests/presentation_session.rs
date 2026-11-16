@@ -258,8 +258,23 @@ fn open(bytes: &[u8], occurrence_id: &str) -> (Option<DesignerRuntime>, OpenedPr
 #[test]
 fn a_project_with_styles_saves_every_v3_route_byte_identically() {
     let document = orders_document();
-    let input = v3_tree(&document, &orders_store());
+    let widths = BTreeMap::from([
+        (FieldId::from("amount"), 256),
+        (FieldId::from("note"), 65280),
+    ]);
+    let mut presentation = orders_store();
+    presentation
+        .tables
+        .get_mut(&SchemaId::from("orders"))
+        .unwrap()
+        .column_widths
+        .clone_from(&widths);
+    let input = v3_tree(&document, &presentation);
     let input_member = input.file(ROPROJ_V3_PRESENTATION_PATH).unwrap().to_vec();
+    assert_eq!(
+        decode_presentation(&input_member).unwrap().tables[&SchemaId::from("orders")].column_widths,
+        widths
+    );
     let (mut slot, opened) = open(&transfer(&input), RESIDENT);
     assert_eq!(opened.bootstrap.revision, "resident/0");
     let runtime = slot.as_ref().unwrap();

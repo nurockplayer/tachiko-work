@@ -4,9 +4,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
-- Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks.
+- Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks. (#819, #831, #782)
+- Preserve XLSX import formula caches for selected-type conflicts and non-English date patterns, export English month names with an explicit locale, disclose width rounding/clamping, and reject non-Boolean presentation rules (#802, #785, #782, #784, #724).
 
 ### Added
+
+- Add atomic `move_cells` for Cut → Paste as one revision and one Undo/Redo step, preserving formula dependencies (#813).
 
 - Add revision-bound selection statistics over resident cells for status bars (#811).
 
@@ -140,6 +143,8 @@ All notable changes to Tachiko Work are documented in this file.
   refuse formatted documents rather than dropping display metadata.
 
 ### Fixed
+
+- Natural view sort ties now defer to later sort keys before original text bytes (#699).
 
 - Whole-column formula imports share column dependencies and numeric admission scans, keeping repeated totals within working-size capacity (#678).
 

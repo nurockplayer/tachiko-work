@@ -3,6 +3,11 @@ use tachiko_designer_runtime::{
     DesignerResponse, DesignerRuntime, DesignerWireReply, StoredValueProjection, TableProjection,
     process_wire_request,
 };
+use tachiko_workspace_engine::{
+    Document, FieldConstraint, FieldDefinition, FieldId, FieldType, KeyedGroupedSumDefinition,
+    KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
+    Schema,
+};
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000315";
 const SECOND_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000316";
@@ -444,4 +449,99 @@ fn typed_invalid_paste_and_stale_first_edit_preserve_the_new_inventory_occurrenc
         project_bytes(&mut runtime, &second.resulting_revision),
         before_stale
     );
+}
+
+fn keyed_sum_document() -> Document {
+    let mut document = Document::empty("keyed-deletion", "Keyed deletion");
+    for (name, columns) in [
+        (
+            "orders",
+            vec![("sku", FieldType::Text), ("quantity", FieldType::Number)],
+        ),
+        (
+            "products",
+            vec![
+                ("sku", FieldType::Text),
+                ("category", FieldType::Text),
+                ("price", FieldType::Number),
+            ],
+        ),
+    ] {
+        let schema = Schema {
+            id: name.into(),
+            key: name.into(),
+            display_name: None,
+            field_order: None,
+            fields: columns
+                .into_iter()
+                .map(|(id, field_type)| {
+                    let id = FieldId::from(id);
+                    (
+                        id.clone(),
+                        FieldDefinition {
+                            key: id.as_str().into(),
+                            id,
+                            display_name: None,
+                            field_type,
+                            required: false,
+                            constraint: FieldConstraint::None,
+                            number_format: None,
+                            date_format: None,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        document.schemas.insert(schema.id.clone(), schema);
+    }
+    let id = KeyedGroupedSumDefinitionId::from("sales-by-category");
+    document.keyed_grouped_sum_definitions.insert(
+        id.clone(),
+        KeyedGroupedSumDefinition {
+            id,
+            orders: KeyedGroupedSumOrdersBinding {
+                schema: "orders".into(),
+                lookup_key_field: "sku".into(),
+                quantity_field: "quantity".into(),
+            },
+            products: KeyedGroupedSumProductsBinding {
+                schema: "products".into(),
+                key_field: "sku".into(),
+                category_field: "category".into(),
+                price_field: "price".into(),
+            },
+        },
+    );
+    document
+}
+
+#[test]
+fn deleting_either_keyed_sum_bound_table_refuses_without_changing_the_document() {
+    let mut runtime = Some(
+        DesignerRuntime::from_document(keyed_sum_document(), OCCURRENCE)
+            .expect("the saved keyed definition must be admitted"),
+    );
+    let orders = table(&mut runtime, "orders");
+    let products = table(&mut runtime, "products");
+    let before = project_bytes(&mut runtime, &orders.revision);
+    for collection in ["orders", "products"] {
+        let DesignerWireReply::Error { error } = request(
+            &mut runtime,
+            &json!({
+                "type": "delete_table",
+                "expected_revision": orders.revision,
+                "collection": collection,
+            }),
+        ) else {
+            panic!("deleting the {collection} binding must refuse");
+        };
+        assert_eq!(error.code, "table_referenced");
+        assert!(error.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "table_referenced"
+                && diagnostic.path == "keyed_grouped_sum_definitions.sales-by-category"
+        }));
+        assert_eq!(table(&mut runtime, "orders"), orders);
+        assert_eq!(table(&mut runtime, "products"), products);
+        assert_eq!(project_bytes(&mut runtime, &orders.revision), before);
+    }
 }
