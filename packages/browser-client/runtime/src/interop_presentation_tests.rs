@@ -110,7 +110,7 @@ fn native_presentation_is_projected_and_survives_xlsx() {
     assert_eq!(sheet.columns[0].width, Some(10.0));
     assert_eq!(
         sheet.rows[0][0].style.number_format.as_deref(),
-        Some("mmm d, yyyy")
+        Some("[$-409]mmm d, yyyy")
     );
     assert_eq!(
         sheet.rows[1][0].style.number_format.as_deref(),
@@ -122,7 +122,7 @@ fn native_presentation_is_projected_and_survives_xlsx() {
     let reopened = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
     let sheet = &reopened.sheets[0];
     assert_eq!(sheet.columns[0].width, Some(10.0));
-    for (row, pattern) in sheet.rows.iter().zip(["mmm d, yyyy", "d/m/yyyy"]) {
+    for (row, pattern) in sheet.rows.iter().zip(["[$-409]mmm d, yyyy", "d/m/yyyy"]) {
         assert!(matches!(&row[0].value, SourceValue::Date { .. }));
         assert_eq!(row[0].style.number_format.as_deref(), Some(pattern));
         assert!(row[1].style.wrap);
@@ -215,7 +215,7 @@ fn imported_store_overrides_metadata_and_csv_ignores_presentation() {
     assert_eq!(exported.sheets[0].columns[0].width, Some(10.0));
     assert_eq!(
         exported.sheets[0].rows[0][0].style.number_format.as_deref(),
-        Some("d mmm yyyy")
+        Some("[$-409]d mmm yyyy")
     );
     let csv_after = runtime
         .export_imported_workbook(
@@ -393,7 +393,7 @@ fn import_presentation_round_trip_clear_and_reopen() {
     let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
     assert_eq!(reread.sheets[0].columns[0].width, Some(12.5));
     for (row, alignment) in reread.sheets[0].rows.iter().zip(["center", "right"]) {
-        assert_eq!(row[0].style.number_format.as_deref(), Some("mmm d, yyyy"));
+        assert_eq!(row[0].style.number_format.as_deref(), Some("[$-409]mmm d, yyyy"));
         assert_eq!(row[1].style.alignment.as_deref(), Some(alignment));
         assert!(row[1].style.wrap);
     }
@@ -461,7 +461,7 @@ fn a_blank_cell_with_its_own_date_format_keeps_the_column_mixed() {
     let rows = &exported.sheets[0].rows;
     assert_eq!(
         rows[0][0].style.number_format.as_deref(),
-        Some("mmm d, yyyy")
+        Some("[$-409]mmm d, yyyy")
     );
     assert_eq!(
         rows[1][0].style.number_format.as_deref(),
@@ -516,7 +516,7 @@ fn import_mixed_and_unsupported_date_formats() {
     for (row, pattern) in exported.sheets[0]
         .rows
         .iter()
-        .zip(["m/d/yyyy", "d mmm yyyy"])
+        .zip(["m/d/yyyy", "[$-409]d mmm yyyy"])
     {
         assert_eq!(row[0].style.number_format.as_deref(), Some(pattern));
     }
