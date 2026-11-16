@@ -393,7 +393,10 @@ fn import_presentation_round_trip_clear_and_reopen() {
     let reread = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
     assert_eq!(reread.sheets[0].columns[0].width, Some(12.5));
     for (row, alignment) in reread.sheets[0].rows.iter().zip(["center", "right"]) {
-        assert_eq!(row[0].style.number_format.as_deref(), Some("[$-409]mmm d, yyyy"));
+        assert_eq!(
+            row[0].style.number_format.as_deref(),
+            Some("[$-409]mmm d, yyyy")
+        );
         assert_eq!(row[1].style.alignment.as_deref(), Some(alignment));
         assert!(row[1].style.wrap);
     }
