@@ -84,6 +84,7 @@ fn document(rows: u32) -> Document {
     document
 }
 
+#[allow(clippy::unnecessary_wraps)] // The helpers take the runtime out of the Option and put it back.
 fn fixture(document: Document) -> Session {
     Some(DesignerRuntime::from_document(document, OCCURRENCE).unwrap())
 }
