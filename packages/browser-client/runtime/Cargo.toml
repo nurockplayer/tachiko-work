@@ -40,3 +40,8 @@ unsafe_code = "allow"
 [lints.clippy]
 all = "deny"
 pedantic = "warn"
+
+# The capacity tests run ~5x faster at opt-level 1 (Issue #852). Debug
+# assertions and overflow checks stay on, inherited from `dev`.
+[profile.test]
+opt-level = 1
