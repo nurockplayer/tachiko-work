@@ -10,8 +10,9 @@ use std::{
 };
 
 use crate::{
-    ConditionalAggregate, Document, EntityId, Expression, FieldId, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId, display_name_failures,
+    ConditionalAggregate, Document, EntityId, Expression, FieldId, FormulaExpressionType,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
+    display_name_failures,
 };
 
 /// Maximum number of styles a document may hold.
@@ -227,6 +228,9 @@ pub enum PresentationError {
     RuleConditionReference {
         rule: RuleId,
     },
+    RuleConditionType {
+        rule: RuleId,
+    },
     RuleExpressionTooDeep {
         rule: RuleId,
         limit: usize,
@@ -325,6 +329,10 @@ impl fmt::Display for PresentationError {
             Self::RuleConditionReference { rule } => write!(
                 formatter,
                 "rule '{rule}' condition holds a record reference"
+            ),
+            Self::RuleConditionType { rule } => write!(
+                formatter,
+                "rule '{rule}' condition must be a Boolean-valued expression"
             ),
             Self::RuleExpressionTooDeep { rule, limit } => write!(
                 formatter,
@@ -479,6 +487,12 @@ fn validate_rule_condition(
             _ => {}
         }
         stack.extend(node.children().into_iter().map(|child| (child, depth + 1)));
+    }
+    // Infer only after the bounded walk, including the types of nested operands.
+    if condition.expression_type() != Some(FormulaExpressionType::Condition) {
+        return Err(PresentationError::RuleConditionType {
+            rule: rule_id.clone(),
+        });
     }
     Ok(())
 }
