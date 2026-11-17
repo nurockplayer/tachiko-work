@@ -89,7 +89,8 @@ impl DesignerRuntime {
             DesignerResponse::Duplicated(duplicated) => &mut duplicated.publication,
             _ => unreachable!("imported mutation publishes an invalidation"),
         };
-        publication.base_revision = self.current_revision().to_owned();
+        self.current_revision()
+            .clone_into(&mut publication.base_revision);
         let generation = self
             .current_revision()
             .strip_prefix("resident/")
