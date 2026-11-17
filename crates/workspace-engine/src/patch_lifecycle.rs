@@ -1528,6 +1528,32 @@ impl EvaluationDetails {
     }
 }
 
+struct CandidatePlan {
+    candidate: Document,
+    writes: BTreeSet<AssociatedWriteRequirement>,
+    entity_scope: Option<BTreeSet<EntityId>>,
+}
+
+fn include_write_entities(
+    scope: &mut Option<BTreeSet<EntityId>>,
+    writes: &BTreeSet<AssociatedWriteRequirement>,
+) {
+    if let Some(ids) = scope {
+        for write in writes {
+            match write.scope.subject() {
+                SemanticScope::Entity { entity, .. }
+                | SemanticScope::EntityField { entity, .. } => {
+                    ids.insert(entity.clone());
+                }
+                _ => {
+                    *scope = None;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// Private proof that planning admitted these commands, in this exact order.
 #[derive(Debug)]
 pub(crate) struct PlannedCommands {
@@ -4218,7 +4244,11 @@ impl PatchLifecycle {
         session: &'session ResidentWorkspaceSession,
         body: &SemanticPatchBody,
     ) -> Result<PreparedEvaluation<'session>, WorkspaceError> {
-        let (candidate, writes) = self.plan_candidate(session.document(), body)?;
+        let CandidatePlan {
+            candidate,
+            writes,
+            entity_scope,
+        } = self.plan_candidate(session.document(), body)?;
         #[cfg(test)]
         super::planning_counters::cross_check(|| {
             let (old_candidate, old_writes) = self.plan_commands(session.document(), body).unwrap();
@@ -4226,7 +4256,7 @@ impl PatchLifecycle {
             assert_eq!(writes, old_writes);
         });
         Ok(session
-            .prepare_evaluation(candidate)
+            .prepare_evaluation_scoped(candidate, entity_scope.as_ref())
             .bind_plan(PlannedCommands {
                 document_scope: self.document_scope.clone(),
                 document: self.document.clone(),
@@ -4242,7 +4272,8 @@ impl PatchLifecycle {
     ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
         #[cfg(test)]
         super::planning_counters::record_document_clone();
-        self.plan_candidate(document, body)
+        let plan = self.plan_candidate(document, body)?;
+        Ok((plan.candidate, plan.writes))
     }
 
     #[allow(clippy::too_many_lines)] // Keep the closed command catalogue together.
@@ -4250,13 +4281,29 @@ impl PatchLifecycle {
         &self,
         document: &Document,
         body: &SemanticPatchBody,
-    ) -> Result<(Document, BTreeSet<AssociatedWriteRequirement>), WorkspaceError> {
+    ) -> Result<CandidatePlan, WorkspaceError> {
         admit_command_names(body)?;
         let mut candidate = document.clone();
         let mut writes = BTreeSet::new();
         let mut field_edits = FieldEditPlanning::new();
         let mut append_entities = EntityAppendPlanning::default();
+        let mut entity_scope = Some(BTreeSet::new());
         for command in body.commands() {
+            let target = match command {
+                SemanticCommand::SetFieldValue { field, .. }
+                | SemanticCommand::UnsetField { field } => Some(field),
+                SemanticCommand::FormulaUpdate(command) => Some(command.target()),
+                SemanticCommand::FormulaRestore(command) => Some(command.target()),
+                SemanticCommand::FormulaInverseRestore(command) => Some(command.target()),
+                _ => None,
+            };
+            match (entity_scope.as_mut(), target) {
+                (Some(ids), Some(field)) if document.entities.contains_key(&field.entity) => {
+                    ids.insert(field.entity.clone());
+                }
+                _ => entity_scope = None,
+            }
+
             // Only the cell edits keep the batch state; every other command
             // may change the structures and keys it rests on.
             if !matches!(
@@ -4705,7 +4752,12 @@ impl PatchLifecycle {
                 }
             }
         }
-        Ok((candidate, writes))
+        include_write_entities(&mut entity_scope, &writes);
+        Ok(CandidatePlan {
+            candidate,
+            writes,
+            entity_scope,
+        })
     }
 
     /// Validate one snapshot and preflight its formula projections.

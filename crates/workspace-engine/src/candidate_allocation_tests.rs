@@ -210,3 +210,102 @@ fn refused_candidates_preserve_exact_borrowed_error_and_earlier_input() {
         assert_eq!(base, original);
     }
 }
+
+fn two_entity_fixture() -> Document {
+    let mut document = fixture();
+    let mut second = document.entities["e"].clone();
+    second.id = "e2".into();
+    second.key = "e2".into();
+    document.entities.insert(second.id.clone(), second);
+    document
+        .entities
+        .get_mut("e")
+        .unwrap()
+        .fields
+        .insert("optional".into(), Value::Boolean(true));
+    document
+}
+
+fn inspected_for(document: Document, command: SemanticCommand) -> usize {
+    let session = crate::resident_session::ResidentWorkspaceSession::new("scope".into(), document);
+    let body = SemanticPatchBody::command(command);
+    lifecycle().plan_resident_commands(&session, &body).unwrap();
+    crate::resident_session::PREPARATION_ENTITIES_INSPECTED.with(std::cell::Cell::get)
+}
+
+#[test]
+fn resident_cell_edits_scan_only_targets() {
+    let base = two_entity_fixture();
+    let formula = super::FormulaUpdateCommand::new(
+        &base,
+        FieldRef::new("e", "number"),
+        Expression::Number(Number::new(3.0).unwrap()),
+    );
+    for command in [
+        SemanticCommand::set_field_value(FieldRef::new("e", "text"), Value::Text("new".into())),
+        SemanticCommand::FormulaUpdate(formula),
+        SemanticCommand::UnsetField {
+            field: FieldRef::new("e", "optional"),
+        },
+    ] {
+        assert_eq!(inspected_for(base.clone(), command), 1);
+    }
+}
+
+#[test]
+fn resident_structural_edits_scan_all_entities() {
+    let base = two_entity_fixture();
+    let mut added = base.entities["e"].clone();
+    added.id = "e3".into();
+    added.key = "e3".into();
+    assert_eq!(
+        inspected_for(
+            base.clone(),
+            SemanticCommand::AppendEntity { entity: added }
+        ),
+        3
+    );
+    assert_eq!(
+        inspected_for(
+            base,
+            SemanticCommand::SetSchemaDisplayName {
+                schema: "s".into(),
+                display_name: Some("New".into())
+            }
+        ),
+        2
+    );
+}
+
+#[test]
+fn associated_write_entity_is_included_in_projection_scope() {
+    let base = two_entity_fixture();
+    let mut scope = Some(std::collections::BTreeSet::from(["e".into()]));
+    let writes = std::collections::BTreeSet::from([super::AssociatedWriteRequirement {
+        family: OperationFamily::SetFieldValue,
+        mutation_class: MutationClass::Value,
+        scope: super::ScopedSemanticSubject::new(
+            "scope".into(),
+            "doc".into(),
+            super::SemanticScope::EntityField {
+                entity: "e2".into(),
+                schema: "s".into(),
+                field: "text".into(),
+            },
+        ),
+    }]);
+    super::include_write_entities(&mut scope, &writes);
+    let mut candidate = base.clone();
+    candidate
+        .entities
+        .get_mut("e2")
+        .unwrap()
+        .fields
+        .insert("text".into(), Value::Text("derived".into()));
+    let session = crate::resident_session::ResidentWorkspaceSession::new("scope".into(), base);
+    session.prepare_evaluation_scoped(candidate, scope.as_ref());
+    assert_eq!(
+        crate::resident_session::PREPARATION_ENTITIES_INSPECTED.with(std::cell::Cell::get),
+        2
+    );
+}
