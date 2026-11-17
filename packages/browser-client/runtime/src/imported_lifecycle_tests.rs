@@ -15,7 +15,6 @@ const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000859";
 
 fn fixture(formula: bool) -> SourceWorkbook {
     SourceWorkbook {
-        version: 1,
         ledger: Vec::new(),
         sheets: ["Input", "Scratch"]
             .into_iter()

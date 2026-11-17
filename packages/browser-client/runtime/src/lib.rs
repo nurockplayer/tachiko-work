@@ -8292,7 +8292,8 @@ impl DesignerRuntime {
                 commands,
                 default_collection,
             } => {
-                let result = self.publish_commands_with_imported(expected, commands, imported)?;
+                let mut result =
+                    self.publish_commands_with_imported(expected, commands, imported)?;
                 self.default_collection.clone_from(default_collection);
                 result.import_metadata = self.imported.as_ref().map(|state| state.metadata.clone());
                 Ok(result)
