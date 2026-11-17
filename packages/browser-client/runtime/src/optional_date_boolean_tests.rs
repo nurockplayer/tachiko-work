@@ -279,7 +279,7 @@ fn blank_boolean_is_not_zero_and_blank_date_is_probed_by_isblank() {
         field,
         Some(CalculationProjection::Value {
             value: 1.0,
-            result: Some(crate::StoredValueProjection::Number { value: 1.0 })
+            result: None
         })
     );
     assert_eq!(blank_fields(&runtime, &collection, 0), [due, done]);

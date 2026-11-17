@@ -30,7 +30,7 @@ function transport() {
 }
 
 describe("calculated result validation", () => {
-  it("preserves each stored-value tag, legacy payloads and failures, and rejects malformed tags", async () => {
+  it("accepts absent result as Number and valid stored-value tags, preserves failures, and rejects malformed tags", async () => {
     const fixture = transport();
     const valid: Array<FieldProjection["calculated"]> = [
       {status: "value", value: 2.5},
@@ -48,6 +48,9 @@ describe("calculated result validation", () => {
       fixture.fields(calculated);
       const projection = await pending;
       expect(projection.fields[0]?.calculated).toEqual(calculated);
+      if (calculated?.status === "value") {
+        expect(projection.fields[0]?.calculated).toHaveProperty("value", 2.5);
+      }
       if (calculated?.status === "value" && calculated.result === undefined) {
         expect(projection.fields[0]?.calculated).not.toHaveProperty("result");
       }

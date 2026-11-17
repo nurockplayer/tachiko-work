@@ -4348,11 +4348,8 @@ impl DesignerRuntime {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
-            if let Some(CalculationProjection::Value { value, result }) = &mut field.calculated {
+            if let Some(CalculationProjection::Value { value, .. }) = &mut field.calculated {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
-                if let Some(StoredValueProjection::Number { value }) = result {
-                    *value = MAX_WIDTH_FINITE_JSON_NUMBER;
-                }
             }
         }
         ensure_projection_size(&post_edit_refresh).map_err(post_edit_refresh_failure)?;
@@ -12019,7 +12016,7 @@ fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationPro
     match outcome {
         FormulaCalculationOutcome::Value(value) => CalculationProjection::Value {
             value: value.get(),
-            result: Some(StoredValueProjection::Number { value: value.get() }),
+            result: None,
         },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),
@@ -12811,7 +12808,7 @@ mod tests {
             explanation.value.calculated,
             Some(super::CalculationProjection::Value {
                 value: 1360.0,
-                result: Some(super::StoredValueProjection::Number { value: 1360.0 })
+                result: None
             })
         );
         let dependencies = &explanation.direct_dependencies;
@@ -15470,7 +15467,7 @@ mod tests {
                 None,
                 Some(super::CalculationProjection::Value {
                     value: 1.5,
-                    result: Some(super::StoredValueProjection::Number { value: 1.5 }),
+                    result: None,
                 }),
             ),
             blank.clone(),

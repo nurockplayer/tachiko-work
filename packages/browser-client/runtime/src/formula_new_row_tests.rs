@@ -79,7 +79,7 @@ fn inherited_formula_is_published_and_undoable() {
         field.calculated,
         Some(CalculationProjection::Value {
             value: 20.0,
-            result: Some(crate::StoredValueProjection::Number { value: 20.0 })
+            result: None
         })
     );
     assert!(publication.fields.contains(&field.target));
@@ -133,7 +133,7 @@ fn typed_value_ends_qualification_and_blank_dependency_is_zero() {
         field.calculated,
         Some(CalculationProjection::Value {
             value: 0.0,
-            result: Some(crate::StoredValueProjection::Number { value: 0.0 })
+            result: None
         })
     );
     insert(&mut runtime, &collection, &ids, &[(2, "7")]);

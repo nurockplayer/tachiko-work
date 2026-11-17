@@ -983,6 +983,7 @@ function validateCalculatedResult(result: unknown): void {
 }
 
 function validateFieldPresence(field: FieldProjection): void {
+  // An absent result means Number; preserve the compact numeric wire payload.
   if (field.calculated?.status === "value" && field.calculated.result !== undefined) {
     validateCalculatedResult(field.calculated.result);
   }

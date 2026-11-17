@@ -6,12 +6,12 @@ use super::{
 };
 
 #[test]
-fn calculated_number_publishes_its_tag_and_failure_keeps_its_code() {
+fn calculated_number_preserves_main_wire_bytes_and_failure_keeps_its_code() {
     let number =
         calculation_projection(&FormulaCalculationOutcome::Value(Number::new(2.5).unwrap()));
     assert_eq!(
-        serde_json::to_value(number).unwrap(),
-        json!({"status": "value", "value": 2.5, "result": {"kind": "number", "value": 2.5}})
+        serde_json::to_vec(&number).unwrap().as_slice(),
+        br#"{"status":"value","value":2.5}"#
     );
     let failure = calculation_projection(&FormulaCalculationOutcome::Failure(
         tachiko_formula_engine::CalculationFailure::DivisionByZero,
@@ -67,7 +67,7 @@ fn malformed_calculated_results_refuse_instead_of_losing_the_tag() {
 }
 
 #[test]
-fn budget_table_wire_publishes_tagged_numeric_formulas_beside_stored_dates() {
+fn budget_table_wire_omits_number_tags_beside_stored_dates() {
     let mut runtime = DesignerRuntime::budget("00000000-0000-4000-8000-000000000842").unwrap();
     let DesignerResponse::Table(table) = runtime
         .handle(DesignerRequest::QueryTable {
@@ -87,12 +87,9 @@ fn budget_table_wire_publishes_tagged_numeric_formulas_beside_stored_dates() {
             }
             let calculated = &field["calculated"];
             if calculated["status"] == "value" {
-                assert_eq!(
-                    calculated["result"],
-                    json!({
-                        "kind": "number", "value": calculated["value"]
-                    })
-                );
+                assert!(calculated.get("result").is_none());
+                assert_eq!(calculated.as_object().unwrap().len(), 2);
+                assert!(calculated["value"].is_number());
                 formulas += 1;
             }
         }

@@ -1595,9 +1595,7 @@ fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
         explanation.value.calculated,
         Some(CalculationProjection::Value {
             value: 90_000.0,
-            result: Some(tachiko_designer_runtime::StoredValueProjection::Number {
-                value: 90_000.0
-            })
+            result: None
         })
     );
     let read = explanation
@@ -1654,9 +1652,7 @@ fn explaining_a_column_total_over_a_blank_cell_lists_only_present_values() {
         explanation.value.calculated,
         Some(CalculationProjection::Value {
             value: 91_000.0,
-            result: Some(tachiko_designer_runtime::StoredValueProjection::Number {
-                value: 91_000.0
-            })
+            result: None
         })
     );
 }

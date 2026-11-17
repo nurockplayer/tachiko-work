@@ -61,6 +61,7 @@ export type StoredValueProjection =
   | { kind: "date"; value: string }
   | { kind: "reference"; entity: string };
 
+/** Carries an optional tagged result for non-Number outcomes; absent result means Number. */
 export type CalculationProjection =
   | { status: "value"; value: number; result?: StoredValueProjection }
   | { status: "failure"; code: string; message: string }

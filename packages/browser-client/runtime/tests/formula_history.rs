@@ -82,7 +82,7 @@ fn explanation_wire_preserves_complete_projection_and_stale_refusal() {
         expected.value.calculated,
         Some(tachiko_designer_runtime::CalculationProjection::Value {
             value: 2.5,
-            result: Some(tachiko_designer_runtime::StoredValueProjection::Number { value: 2.5 })
+            result: None
         })
     ));
     assert_eq!(expected.diagnostics, expected.value.diagnostics);

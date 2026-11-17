@@ -1990,7 +1990,7 @@ fn a_publication_over_the_target_list_comes_back_as_a_marker() {
             projected(row, "calc").calculated,
             Some(CalculationProjection::Value {
                 value: 7.0,
-                result: Some(crate::StoredValueProjection::Number { value: 7.0 })
+                result: None
             })
         );
     }
