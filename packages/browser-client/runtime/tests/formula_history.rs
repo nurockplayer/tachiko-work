@@ -80,7 +80,10 @@ fn explanation_wire_preserves_complete_projection_and_stale_refusal() {
     let expected = explanation(&mut runtime, 1, "r1.n");
     assert!(matches!(
         expected.value.calculated,
-        Some(tachiko_designer_runtime::CalculationProjection::Value { value: 2.5 })
+        Some(tachiko_designer_runtime::CalculationProjection::Value {
+            value: 2.5,
+            result: None
+        })
     ));
     assert_eq!(expected.diagnostics, expected.value.diagnostics);
     assert_eq!(expected.direct_dependencies.len(), 1);

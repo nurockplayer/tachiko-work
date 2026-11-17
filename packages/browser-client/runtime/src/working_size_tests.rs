@@ -154,8 +154,9 @@ fn assert_fixture_window(opened: &OpenedWindowProjection) {
         let Some(StoredValueProjection::Number { value }) = &projected(row, "c0").stored else {
             panic!("row {} has no stored Number in c0", row.id);
         };
-        let Some(CalculationProjection::Value { value: calculated }) =
-            &projected(row, CALC_FIELD).calculated
+        let Some(CalculationProjection::Value {
+            value: calculated, ..
+        }) = &projected(row, CALC_FIELD).calculated
         else {
             panic!("row {} has no calculated value in {CALC_FIELD}", row.id);
         };
@@ -1987,7 +1988,10 @@ fn a_publication_over_the_target_list_comes_back_as_a_marker() {
     for row in &window.rows {
         assert_eq!(
             projected(row, "calc").calculated,
-            Some(CalculationProjection::Value { value: 7.0 })
+            Some(CalculationProjection::Value {
+                value: 7.0,
+                result: None
+            })
         );
     }
 

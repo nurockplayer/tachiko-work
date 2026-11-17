@@ -390,7 +390,7 @@ fn projected_cell(
         spec.summary.id, column.id
     );
     let value = match computed.get(&target) {
-        Some(crate::CalculationProjection::Value { value }) => *value,
+        Some(crate::CalculationProjection::Value { value, .. }) => *value,
         Some(crate::CalculationProjection::Failure { code, message }) => {
             return Err(refused(
                 "native_tables_formula_value_unavailable",
