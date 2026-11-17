@@ -1451,6 +1451,32 @@ fn linear_document(rows: usize) -> Document {
 }
 
 #[test]
+fn bulk_graph_matches_incremental_graph_for_references_and_totals() {
+    let mut document = linear_document(2);
+    let row = document
+        .entities
+        .get_mut(&EntityId::from("row-00000"))
+        .unwrap();
+    row.fields.insert(
+        FieldId::from("c2"),
+        Value::Formula(Expression::SameRowReference(FieldId::from("c0"))),
+    );
+    row.fields.insert(
+        FieldId::from("c3"),
+        Value::Formula(Expression::Reference(FieldRef::new("row-00001", "c0"))),
+    );
+    let (_, formulas, bulk) = super::collect_calculation_nodes(&document);
+    let mut incremental = super::DependencyGraph::default();
+    for entity in document.entities.keys() {
+        incremental.remember_entity(&document, entity);
+    }
+    for formula in formulas.keys() {
+        incremental.replace_formula(&document, formula);
+    }
+    assert_eq!(bulk, incremental);
+}
+
+#[test]
 fn a_column_reading_formula_per_row_keeps_graph_memory_linear() {
     const ROWS: usize = 2_000;
     let document = linear_document(ROWS);
