@@ -13,6 +13,8 @@ use crate::{DesignerError, DesignerRuntime, HistoryAction, HistoryEntry, Publica
 #[derive(Clone, Debug)]
 pub(super) struct ImportedState {
     pub metadata: InteropMetadata,
+    /// Restored with the mapping by Undo, including the untouched import state.
+    pub lifecycle_changed: bool,
 }
 
 impl HistoryEntry {
@@ -35,47 +37,21 @@ impl HistoryEntry {
 }
 
 impl DesignerRuntime {
-    pub(super) fn attach_imported_metadata(
-        &mut self,
-        metadata: &InteropMetadata,
-    ) -> Result<(), DesignerError> {
-        if self.imported.is_none() {
-            validate_import_metadata_for_profile(self.session.document(), metadata, self.profile)?;
-            self.imported = Some(ImportedState {
-                metadata: metadata.clone(),
-            });
-            self.order_imported_collections();
-        }
-        Ok(())
-    }
-
-    pub(super) fn refresh_imported_opened(
-        &self,
-        opened: &mut crate::OpenedProjection,
-    ) -> Result<(), DesignerError> {
-        opened.bootstrap = self.bootstrap_projection();
-        opened.table.collection = self
-            .collection_spec(&opened.table.collection.id)?
-            .summary
-            .clone();
-        crate::ensure_opened_wire_projection_size(opened, self.profile)
+    pub(super) fn attach_imported_metadata(&mut self, metadata: &InteropMetadata) {
+        // Admission already proved the client's mapping through main's gates.
+        // Retaining it must not alter the profile, projections or diagnostics.
+        self.imported = Some(ImportedState {
+            metadata: metadata.clone(),
+            lifecycle_changed: false,
+        });
     }
 
     pub(super) fn order_imported_collections(&mut self) {
-        if let Some(state) = &self.imported {
-            for collection in &mut self.collections {
-                if let Some(sheet) = state
-                    .metadata
-                    .sheets
-                    .iter()
-                    .find(|sheet| sheet.schema_id == collection.id)
-                {
-                    collection.display_name.clone_from(&sheet.name);
-                    if let Some(spec) = self.collection_specs.get_mut(&collection.key) {
-                        spec.summary.display_name.clone_from(&sheet.name);
-                    }
-                }
-            }
+        if let Some(state) = self
+            .imported
+            .as_ref()
+            .filter(|state| state.lifecycle_changed)
+        {
             self.collections.sort_by_key(|collection| {
                 state
                     .metadata
@@ -87,29 +63,18 @@ impl DesignerRuntime {
         }
     }
 
-    pub(super) fn imported_table_name<'a>(&'a self, schema: &'a Schema) -> &'a str {
-        if schema.display_name.is_none() {
-            if let Some(sheet) = self.imported.as_ref().and_then(|state| {
-                state
-                    .metadata
-                    .sheets
-                    .iter()
-                    .find(|sheet| sheet.schema_id == schema.id.as_str())
-            }) {
-                return &sheet.name;
-            }
-        }
-        schema.effective_name()
-    }
-
     /// Export accepts the mapping the client most recently received; mixing
     /// an older sidecar with a newer worksheet lifecycle would lose identities.
     pub(super) fn metadata_for_export<'a>(
         &'a self,
         source: &'a InteropMetadata,
     ) -> Result<&'a InteropMetadata, DesignerError> {
-        match &self.imported {
-            Some(state) if &state.metadata != source => {
+        match self
+            .imported
+            .as_ref()
+            .filter(|state| state.lifecycle_changed)
+        {
+            Some(state) if !same_mapping(&state.metadata, source) => {
                 Err(crate::interop_document::imported_export_error(
                     "workbook",
                     "Import metadata is stale; use the mapping published by the current worksheet lifecycle.",
@@ -158,6 +123,7 @@ impl DesignerRuntime {
                 state.metadata.sheets.push(added_sheet_metadata(schema));
             }
         }
+        state.lifecycle_changed |= !same_mapping(&before.metadata, &state.metadata);
         validate_import_metadata_for_profile(document, &state.metadata, self.profile)?;
         Ok(Some(state))
     }
@@ -179,6 +145,21 @@ impl DesignerRuntime {
         );
         Ok(publication)
     }
+}
+
+/// Presentation and metadata wire versions do not identify a worksheet mapping.
+fn same_mapping(left: &InteropMetadata, right: &InteropMetadata) -> bool {
+    left.sheets.len() == right.sheets.len()
+        && left.sheets.iter().zip(&right.sheets).all(|(left, right)| {
+            left.schema_id == right.schema_id
+                && left.name == right.name
+                && left.columns.len() == right.columns.len()
+                && left
+                    .columns
+                    .iter()
+                    .zip(&right.columns)
+                    .all(|(left, right)| left.field_id == right.field_id && left.name == right.name)
+        })
 }
 
 fn added_sheet_metadata(schema: &Schema) -> InteropSheetMetadata {

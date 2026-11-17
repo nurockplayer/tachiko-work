@@ -6288,7 +6288,7 @@ impl DesignerRuntime {
             let subjects = document
                 .schemas
                 .values()
-                .filter(|other| other.id != schema_id && self.imported_table_name(other) == name)
+                .filter(|other| other.id != schema_id && other.effective_name() == name)
                 .map(|other| tachiko_workspace_engine::SemanticSubject::Schema(other.id.clone()))
                 .collect::<Vec<_>>();
             if !subjects.is_empty() {
@@ -6707,7 +6707,7 @@ impl DesignerRuntime {
             let subjects = document
                 .schemas
                 .values()
-                .filter(|schema| self.imported_table_name(schema) == name)
+                .filter(|schema| schema.effective_name() == name)
                 .map(|schema| SemanticSubject::Schema(schema.id.clone()))
                 .collect::<Vec<_>>();
             if !subjects.is_empty() {
@@ -8292,10 +8292,8 @@ impl DesignerRuntime {
                 commands,
                 default_collection,
             } => {
-                let mut result =
-                    self.publish_commands_with_imported(expected, commands, imported)?;
+                let result = self.publish_commands_with_imported(expected, commands, imported)?;
                 self.default_collection.clone_from(default_collection);
-                result.import_metadata = self.imported.as_ref().map(|state| state.metadata.clone());
                 Ok(result)
             }
             HistoryAction::ColumnPresentation {
@@ -8311,6 +8309,14 @@ impl DesignerRuntime {
                 self.restore_formula_inverse(expected, target, *value)
             }
         }?;
+        if entry.imported.is_some()
+            || self
+                .imported
+                .as_ref()
+                .is_some_and(|state| state.lifecycle_changed)
+        {
+            result.import_metadata = self.imported.as_ref().map(|state| state.metadata.clone());
+        }
         if redo {
             self.redo.pop();
             self.undo.push(entry);
@@ -8318,7 +8324,6 @@ impl DesignerRuntime {
             self.undo.pop();
             self.redo.push(entry);
         }
-        result.import_metadata = self.imported.as_ref().map(|state| state.metadata.clone());
         Ok(result)
     }
 
@@ -9594,7 +9599,7 @@ pub(crate) fn admit_imported_project(
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
         let gate = document.clone();
-        let (candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
+        let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
         match candidate.profile {
             SessionProfile::TextCapacity => {
                 interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
@@ -9605,28 +9610,26 @@ pub(crate) fn admit_imported_project(
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        candidate.attach_imported_metadata(metadata)?;
-        candidate.refresh_imported_opened(&mut opened)?;
         ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+        candidate.attach_imported_metadata(metadata);
         return Ok((candidate, opened));
     }
 
     let ordinary: Result<(DesignerRuntime, OpenedProjection), DesignerError> = (|| {
-        let (mut candidate, mut opened) = DesignerRuntime::from_document_profile_with_opened(
+        let (candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
             document.clone(),
             occurrence_id,
             SessionProfile::Ordinary,
         )?;
         ensure_opened_wire_projection_size(&opened, SessionProfile::Ordinary)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        candidate.attach_imported_metadata(metadata)?;
-        candidate.refresh_imported_opened(&mut opened)?;
         Ok((candidate, opened))
     })();
     match ordinary {
         Ok((mut candidate, opened)) => {
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
+            candidate.attach_imported_metadata(metadata);
             Ok((candidate, opened))
         }
         Err(error)
@@ -9637,17 +9640,16 @@ pub(crate) fn admit_imported_project(
             // both pass may an eligible non-v3 candidate retry the complete
             // admission in the enlarged profile.
             interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
-            let (mut candidate, mut opened) = DesignerRuntime::from_document_profile_with_opened(
+            let (mut candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
                 document,
                 occurrence_id,
                 SessionProfile::TextCapacity,
             )?;
             interop_document::validate_saved_open_closure(&candidate, metadata)?;
-            candidate.attach_imported_metadata(metadata)?;
-            candidate.refresh_imported_opened(&mut opened)?;
             ensure_opened_wire_projection_size(&opened, SessionProfile::TextCapacity)?;
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
+            candidate.attach_imported_metadata(metadata);
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -9678,8 +9680,8 @@ pub(crate) fn admit_imported_project_working_size(
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
-    candidate.attach_imported_metadata(metadata)?;
     let opened = candidate.opened_window()?;
+    candidate.attach_imported_metadata(metadata);
     Ok((candidate, opened))
 }
 

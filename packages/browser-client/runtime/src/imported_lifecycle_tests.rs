@@ -113,9 +113,9 @@ fn snapshot(runtime: &DesignerRuntime) -> Snapshot {
     }
 }
 
-fn history_round_trip(runtime: &mut DesignerRuntime, before: Snapshot) {
+fn history_round_trip(runtime: &mut DesignerRuntime, before: &Snapshot) {
     let after = snapshot(runtime);
-    assert_ne!(after, before);
+    assert_ne!(&after, before);
     let undo_len = runtime.undo.len();
     let revision = runtime.current_revision().to_owned();
     let serial = revision
@@ -133,7 +133,7 @@ fn history_round_trip(runtime: &mut DesignerRuntime, before: Snapshot) {
         format!("resident/{}", serial + 1)
     );
     assert_eq!(runtime.undo.len(), undo_len - 1);
-    assert_eq!(snapshot(runtime), before);
+    assert_eq!(&snapshot(runtime), before);
     let revision = runtime.current_revision().to_owned();
     let redo = runtime.history_edit(&revision, true).unwrap();
     assert_eq!(
@@ -145,6 +145,81 @@ fn history_round_trip(runtime: &mut DesignerRuntime, before: Snapshot) {
         format!("resident/{}", serial + 2)
     );
     assert_eq!(snapshot(runtime), after);
+}
+
+#[test]
+fn untouched_import_keeps_main_names_client_metadata_and_history_replies() {
+    let (mut runtime, mut metadata) = imported(false);
+    assert_eq!(names(&runtime), ["sheet_1", "sheet_2"]);
+    metadata.sheets[0].name = "Client Input".into();
+    let workbook = runtime.export_workbook("resident/0", &metadata).unwrap();
+    assert_eq!(workbook.sheets[0].name, "Client Input");
+    let target = runtime.query_table("sheet_1").unwrap().rows[0].fields[0]
+        .target
+        .clone();
+    let edited = runtime
+        .edit_cells(
+            "resident/0",
+            &[crate::CellEdit {
+                target,
+                input: crate::ScalarEditInput::Number { input: "31".into() },
+            }],
+        )
+        .unwrap();
+    assert!(
+        serde_json::to_value(edited)
+            .unwrap()
+            .get("import_metadata")
+            .is_none()
+    );
+    let undone = runtime.history_edit("resident/1", false).unwrap();
+    assert!(
+        serde_json::to_value(undone)
+            .unwrap()
+            .get("import_metadata")
+            .is_none()
+    );
+    assert_eq!(
+        runtime
+            .export_workbook("resident/2", &metadata)
+            .unwrap()
+            .sheets[0]
+            .name,
+        "Client Input"
+    );
+}
+
+#[test]
+fn lifecycle_export_compares_identity_names_and_undo_restores_client_authority() {
+    let (mut runtime, metadata) = imported(false);
+    let renamed = runtime
+        .rename_table("resident/0", "sheet_1", "Renamed Input")
+        .unwrap();
+    let mut published = renamed.import_metadata.unwrap();
+    // Presentation and wire-version differences do not make an identity mapping stale.
+    published.sheets[0].columns[0].width = Some(99.0);
+    published.version = 2;
+    let projected = runtime.export_workbook("resident/1", &published).unwrap();
+    assert_eq!(projected.sheets[0].name, "Renamed Input");
+    assert_ne!(projected.sheets[0].columns[0].width, Some(99.0));
+    let undone = runtime.history_edit("resident/1", false).unwrap();
+    assert_eq!(undone.import_metadata.unwrap(), metadata);
+    assert!(!runtime.imported.as_ref().unwrap().lifecycle_changed);
+    let mut client_metadata = metadata;
+    client_metadata.sheets[0].name = "Client Input".into();
+    assert_eq!(
+        runtime
+            .export_workbook("resident/2", &client_metadata)
+            .unwrap()
+            .sheets[0]
+            .name,
+        "Client Input"
+    );
+    runtime.history_edit("resident/2", true).unwrap();
+    assert!(matches!(
+        runtime.export_workbook("resident/3", &client_metadata),
+        Err(crate::DesignerError::ImportedSpreadsheetExport { .. })
+    ));
 }
 
 #[test]
@@ -172,9 +247,9 @@ fn imported_rename_history_restores_authoritative_names_metadata_and_export() {
             .formula
             .as_ref()
             .unwrap()
-            .contains("'Renamed Input'!A2")
+            .contains("'Renamed Input'!$A$2")
     );
-    history_round_trip(&mut runtime, before);
+    history_round_trip(&mut runtime, &before);
 }
 
 #[test]
@@ -184,8 +259,8 @@ fn imported_add_history_restores_mapping_and_appends_after_source_sheets() {
     add(&mut runtime);
     assert_eq!(runtime.current_revision(), "resident/1");
     assert_eq!(runtime.undo.len(), 1);
-    assert_eq!(names(&runtime), ["Input", "Scratch", "A Added"]);
-    history_round_trip(&mut runtime, before);
+    assert_eq!(names(&runtime), ["sheet_1", "sheet_2", "A Added"]);
+    history_round_trip(&mut runtime, &before);
 }
 
 #[test]
@@ -200,8 +275,8 @@ fn imported_delete_history_restores_source_position_and_presentation() {
     runtime.delete_table("resident/0", "sheet_1").unwrap();
     assert_eq!(runtime.current_revision(), "resident/1");
     assert_eq!(runtime.undo.len(), 1);
-    assert_eq!(names(&runtime), ["Scratch"]);
-    history_round_trip(&mut runtime, before);
+    assert_eq!(names(&runtime), ["sheet_2"]);
+    history_round_trip(&mut runtime, &before);
     let undo = runtime.history_edit("resident/3", false).unwrap();
     assert_eq!(undo.import_metadata.unwrap(), metadata);
 }
@@ -276,7 +351,7 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
             .formula
             .as_ref()
             .unwrap()
-            .contains("'Renamed Input'!A2")
+            .contains("'Renamed Input'!$A$2")
     );
     let ro = runtime.export_portable_ro("resident/5").unwrap().bytes;
     let verified = decode_portable_package_v1(&ro).unwrap();
@@ -296,13 +371,13 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
             .iter()
             .map(|table| table.display_name.as_str())
             .collect::<Vec<_>>(),
-        ["Renamed Input", "A Added"]
+        ["A Added", "Renamed Input"]
     );
     let mut reopened = reopened.unwrap();
     assert_eq!(xlsx(&reopened, &metadata), exported);
     assert_recalculation(&mut reopened, &metadata);
     let (mut from_xlsx, projection) = import_workbook(&book, &selection(), OCCURRENCE).unwrap();
-    assert_eq!(names(&from_xlsx), ["Renamed Input", "A Added"]);
+    assert_eq!(names(&from_xlsx), ["sheet_1", "sheet_2"]);
     assert_recalculation(&mut from_xlsx, &projection.metadata);
 }
 
@@ -393,7 +468,7 @@ fn working_size_import_lifecycle_publishes_mapping_with_same_order() {
     let metadata = added.publication.import_metadata.unwrap();
     assert_eq!(metadata.version, 2);
     assert_eq!(metadata.sheets.last().unwrap().name, "A Added");
-    history_round_trip(&mut runtime, before);
+    history_round_trip(&mut runtime, &before);
     let renamed = runtime
         .rename_table("resident/3", "sheet_1", "Renamed Input")
         .unwrap();
@@ -406,7 +481,7 @@ fn working_size_import_lifecycle_publishes_mapping_with_same_order() {
     let project = runtime.export_project_v3("resident/5").unwrap();
     let (reopened, _) =
         crate::admit_imported_project_working_size(&project.bytes, OCCURRENCE, &metadata).unwrap();
-    assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
+    assert_eq!(names(&reopened), ["A Added", "Renamed Input"]);
     assert_eq!(xlsx(&reopened, &metadata), xlsx(&runtime, &metadata));
 }
 
