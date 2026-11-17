@@ -996,7 +996,30 @@ function validateCapacity(capacity: CapacityProjection): void {
   }
 }
 
+function validateCalculatedResult(result: unknown): void {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    const tagged = result as Record<string, unknown>;
+    switch (tagged.kind) {
+      case "number": if (typeof tagged.value === "number" && Number.isFinite(tagged.value)) return; break;
+      case "text": if (typeof tagged.value === "string") return; break;
+      case "boolean": if (typeof tagged.value === "boolean") return; break;
+      case "reference": if (typeof tagged.entity === "string") return; break;
+      case "date": {
+        if (typeof tagged.value !== "string" || !/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(tagged.value)) break;
+        const date = new Date(`${tagged.value}T00:00:00Z`);
+        if (Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === tagged.value) return;
+        break;
+      }
+    }
+  }
+  throw new Error("Invalid Worker calculated result.");
+}
+
 function validateFieldPresence(field: FieldProjection): void {
+  // An absent result means Number; preserve the compact numeric wire payload.
+  if (field.calculated?.status === "value" && field.calculated.result !== undefined) {
+    validateCalculatedResult(field.calculated.result);
+  }
   if (field.blank !== undefined && typeof field.blank !== "boolean") {
     throw new Error("Invalid Worker field blank flag.");
   }

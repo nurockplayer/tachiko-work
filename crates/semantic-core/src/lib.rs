@@ -46,6 +46,7 @@ pub use presentation::{
 #[cfg(feature = "issue-175-research")]
 pub use validation::validate_document_cancellable;
 pub use validation::{
-    is_valid_identifier, validate_complete_formula_constraints, validate_document,
-    validate_document_core, validate_entity_field_core, validate_formula_value_constraint,
+    FormulaValueLookup, is_valid_identifier, validate_complete_formula_constraints,
+    validate_document, validate_document_core, validate_entity_field_core,
+    validate_formula_value_constraint,
 };

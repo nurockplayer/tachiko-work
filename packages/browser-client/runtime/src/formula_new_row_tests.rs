@@ -77,7 +77,10 @@ fn inherited_formula_is_published_and_undoable() {
     );
     assert_eq!(
         field.calculated,
-        Some(CalculationProjection::Value { value: 20.0 })
+        Some(CalculationProjection::Value {
+            value: 20.0,
+            result: None
+        })
     );
     assert!(publication.fields.contains(&field.target));
     for redo in [false, true] {
@@ -128,7 +131,10 @@ fn typed_value_ends_qualification_and_blank_dependency_is_zero() {
         .unwrap();
     assert_eq!(
         field.calculated,
-        Some(CalculationProjection::Value { value: 0.0 })
+        Some(CalculationProjection::Value {
+            value: 0.0,
+            result: None
+        })
     );
     insert(&mut runtime, &collection, &ids, &[(2, "7")]);
     let table = runtime.query_table(&collection).unwrap();

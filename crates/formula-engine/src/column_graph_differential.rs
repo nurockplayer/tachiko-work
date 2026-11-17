@@ -780,9 +780,15 @@ mod reference {
             let expected = calculate(&document);
             let (_, formulas, _) = collect(&document);
             let mut columns = crate::evaluation::ColumnCache::default();
+            let legacy_values = crate::PartitionedMap::from_sorted_iter(
+                expected
+                    .values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), *value)),
+            );
             for (owner, expression) in formulas {
                 for column in crate::extract_column_totals(expression) {
-                    columns.fill(&document, &expected.values, &expected.failures, &column);
+                    columns.fill(&document, &legacy_values, &expected.failures, &column);
                 }
                 let independent = Interpreter {
                     document: &document,
@@ -793,7 +799,7 @@ mod reference {
                 let mut legacy = crate::evaluation::Evaluation {
                     document: &document,
                     owner: &owner,
-                    values: &expected.values,
+                    values: &legacy_values,
                     columns: &mut columns,
                 };
                 assert_eq!(
@@ -1049,7 +1055,10 @@ fn all_fields(document: &Document) -> BTreeSet<FieldRef> {
 fn assert_matches_reference(document: &Document, label: impl std::fmt::Display) {
     let expected = reference::calculate(document);
     let actual = super::full_calculation_parts(document);
-    assert_eq!(&actual.values, &expected.values, "values of {label}");
+    assert!(
+        actual.values.iter().eq(expected.values.iter()),
+        "values of {label}"
+    );
     assert_eq!(&actual.failures, &expected.failures, "failures of {label}");
     assert_eq!(
         actual.graph.expanded_dependencies(),
@@ -1302,7 +1311,7 @@ fn retained_update_matches_the_expanded_reference_after_row_edits() {
             );
             match (retained.outcome(), expected.failures.is_empty()) {
                 (CalculationOutcome::Complete(calculation), true) => {
-                    assert_eq!(calculation.values(), &expected.values);
+                    assert!(calculation.values().iter().eq(expected.values.iter()));
                 }
                 (CalculationOutcome::Failed(failures), false) => {
                     assert_eq!(failures.failures(), &expected.failures);
@@ -1380,7 +1389,10 @@ fn retained_update_matches_the_expanded_reference_after_schema_moves() {
             );
             match retained.outcome() {
                 CalculationOutcome::Complete(calculation) => {
-                    assert_eq!(calculation.values(), &expected.values, "{from} to {to}");
+                    assert!(
+                        calculation.values().iter().eq(expected.values.iter()),
+                        "{from} to {to}"
+                    );
                 }
                 CalculationOutcome::Failed(failures) => {
                     assert_eq!(failures.failures(), &expected.failures, "{from} to {to}");
@@ -1436,6 +1448,32 @@ fn linear_document(rows: usize) -> Document {
         entities,
         keyed_grouped_sum_definitions: BTreeMap::new(),
     }
+}
+
+#[test]
+fn bulk_graph_matches_incremental_graph_for_references_and_totals() {
+    let mut document = linear_document(2);
+    let row = document
+        .entities
+        .get_mut(&EntityId::from("row-00000"))
+        .unwrap();
+    row.fields.insert(
+        FieldId::from("c2"),
+        Value::Formula(Expression::SameRowReference(FieldId::from("c0"))),
+    );
+    row.fields.insert(
+        FieldId::from("c3"),
+        Value::Formula(Expression::Reference(FieldRef::new("row-00001", "c0"))),
+    );
+    let (_, formulas, bulk) = super::collect_calculation_nodes(&document);
+    let mut incremental = super::DependencyGraph::default();
+    for entity in document.entities.keys() {
+        incremental.remember_entity(&document, entity);
+    }
+    for formula in formulas.keys() {
+        incremental.replace_formula(&document, formula);
+    }
+    assert_eq!(bulk, incremental);
 }
 
 #[test]
@@ -1743,7 +1781,7 @@ fn fixed_failures(document: &Document) -> BTreeMap<FieldRef, CalculationFailure>
     }
 }
 
-fn fixed_values(document: &Document) -> BTreeMap<FieldRef, Number> {
+fn fixed_values(document: &Document) -> crate::PartitionedMap<FieldRef, Number> {
     match calculate_complete(document) {
         CalculationOutcome::Complete(calculation) => calculation.values().clone(),
         CalculationOutcome::Failed(failures) => {
@@ -1923,7 +1961,7 @@ fn if_branch_document() -> Document {
 }
 
 /// A partial view of the value map even when the document has failures.
-fn fixed_values_ignoring_failures(document: &Document) -> BTreeMap<FieldRef, Number> {
+fn fixed_values_ignoring_failures(document: &Document) -> crate::PartitionedMap<FieldRef, Number> {
     let parts = super::full_calculation_parts(document);
     parts.values
 }
@@ -2359,9 +2397,8 @@ fn fixed_column_documents_match_the_expanded_reference() {
         );
         match retained.outcome() {
             CalculationOutcome::Complete(calculation) => {
-                assert_eq!(
-                    calculation.values(),
-                    &expected.values,
+                assert!(
+                    calculation.values().iter().eq(expected.values.iter()),
                     "{name}: values after a retained edit"
                 );
             }
@@ -2911,4 +2948,217 @@ fn reaching_fields_shares_column_ancestor_discovery_across_targets() {
             .collect()
     );
     assert_eq!(super::causal_visits::take(), 2 * ROWS);
+}
+
+#[test]
+fn retained_scalar_edit_shares_graph_and_value_chunks_at_ten_thousand_rows() {
+    let schema = fixed_schema(
+        "row",
+        &[
+            ("input", FieldType::Number),
+            ("a", FieldType::Number),
+            ("b", FieldType::Number),
+            ("c", FieldType::Number),
+        ],
+    );
+    let rows = (0..10_000)
+        .map(|index| {
+            fixed_row(
+                &format!("row-{index:05}"),
+                "row",
+                &[
+                    ("input", fixed_number(2.0)),
+                    ("a", Value::Formula(same_row("input"))),
+                    ("b", Value::Formula(same_row("a"))),
+                    ("c", Value::Formula(same_row("b"))),
+                ],
+            )
+        })
+        .collect();
+    let mut document = fixed_document(vec![schema], rows);
+    let (base, _) = RetainedCalculationState::rebuild(&document);
+    let mut candidate = base.clone();
+    document
+        .entities
+        .get_mut("row-05000")
+        .unwrap()
+        .fields
+        .insert("input".into(), fixed_number(3.0));
+    let transition = candidate.update(
+        &document,
+        &BTreeSet::from([field_ref("row-05000", "input")]),
+    );
+    assert_eq!(transition.work.nodes_recomputed, 4);
+    assert_eq!(transition.work.nodes_reused, 39_996);
+    assert_eq!(transition.work.reverse_edges_traversed, 6);
+    let (shared, total) = candidate
+        .calculation
+        .values
+        .shared_chunks(&base.calculation.values);
+    assert!(total > 100);
+    assert!(
+        total - shared <= 2,
+        "detached {} value chunks",
+        total - shared
+    );
+    let (shared, total) = candidate.nodes.shared_chunks(&base.nodes);
+    assert!(total - shared <= 1);
+    let old = &base.calculation.graph;
+    let new = &candidate.calculation.graph;
+    macro_rules! shared_graph {
+        ($($field:ident),+ $(,)?) => { $(
+            let (shared, total) = new.$field.shared_chunks(&old.$field);
+            assert!(total - shared <= 2, "{} detached {} chunks", stringify!($field), total - shared);
+        )+ };
+    }
+    shared_graph!(
+        reference_uses,
+        column_uses,
+        cell_readers,
+        column_readers,
+        column_slots,
+        slot_columns,
+        entity_schemas
+    );
+    assert_eq!(
+        base.value(&field_ref("row-05000", "c")),
+        Number::new(2.0).ok()
+    );
+    assert_eq!(
+        candidate.value(&field_ref("row-05000", "c")),
+        Number::new(3.0).ok()
+    );
+    assert_eq!(candidate, RetainedCalculationState::rebuild(&document).0);
+}
+
+fn assert_retained_revision(
+    retained: &mut RetainedCalculationState,
+    document: &Document,
+    roots: &BTreeSet<FieldRef>,
+    affected: Vec<FieldRef>,
+    changed: Vec<FieldRef>,
+    counts: (usize, usize, usize),
+) {
+    let transition = retained.update(document, roots);
+    assert_eq!(*retained, RetainedCalculationState::rebuild(document).0);
+    assert_eq!(retained.outcome(), calculate_complete(document));
+    assert_eq!(
+        transition,
+        super::IncrementalCalculationTransition {
+            work: super::IncrementalCalculationWork {
+                full_rebuilds: 0,
+                incremental_updates: 1,
+                nodes_recomputed: counts.0,
+                nodes_reused: counts.1,
+                reverse_edges_traversed: counts.2,
+            },
+            affected_calculations: affected,
+            changed_calculation_projections: changed,
+        }
+    );
+}
+
+#[test]
+fn retained_partitions_match_rebuild_and_transitions_for_scalar_formula_and_cycle_edits() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    // Scalar edit: the one direct reverse edge is visited in both graphs.
+    document
+        .entities
+        .get_mut("r")
+        .unwrap()
+        .fields
+        .insert("input".into(), fixed_number(4.0));
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &BTreeSet::from([field_ref("r", "input")]),
+        vec![field_ref("r", "output")],
+        vec![field_ref("r", "output")],
+        (2, 3, 2),
+    );
+    // Formula edit drops the old input edge and installs a constant-field edge.
+    document
+        .entities
+        .get_mut("r")
+        .unwrap()
+        .fields
+        .insert("output".into(), Value::Formula(same_row("constant")));
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &BTreeSet::from([field_ref("r", "output")]),
+        vec![],
+        vec![field_ref("r", "output")],
+        (1, 4, 0),
+    );
+    // Introduce a two-node cycle, then remove it: global failure flips project
+    // all formulas, including the independent stable formula, in key order.
+    let all_formulas = vec![
+        field_ref("r", "constant"),
+        field_ref("r", "output"),
+        field_ref("r", "stable"),
+    ];
+    document
+        .entities
+        .get_mut("r")
+        .unwrap()
+        .fields
+        .insert("constant".into(), Value::Formula(same_row("output")));
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &BTreeSet::from([field_ref("r", "constant")]),
+        vec![field_ref("r", "output")],
+        all_formulas.clone(),
+        (2, 3, 3),
+    );
+    document
+        .entities
+        .get_mut("r")
+        .unwrap()
+        .fields
+        .insert("constant".into(), Value::Formula(literal(7.0)));
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &BTreeSet::from([field_ref("r", "constant")]),
+        vec![field_ref("r", "output")],
+        all_formulas,
+        (2, 3, 3),
+    );
+}
+
+#[test]
+fn retained_partitions_match_rebuild_and_transitions_for_row_addition_and_removal() {
+    let mut document = projection_update_document();
+    let (mut retained, _) = RetainedCalculationState::rebuild(&document);
+    // Membership changes retain the exact current node set and graph.
+    let row = fixed_row(
+        "s",
+        "r",
+        &[
+            ("input", fixed_number(9.0)),
+            ("output", Value::Formula(same_row("input"))),
+        ],
+    );
+    let roots = BTreeSet::from([field_ref("s", "input"), field_ref("s", "output")]);
+    document.entities.insert("s".into(), row);
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &roots,
+        vec![],
+        vec![field_ref("s", "output")],
+        (2, 5, 1),
+    );
+    document.entities.remove("s");
+    assert_retained_revision(
+        &mut retained,
+        &document,
+        &roots,
+        vec![],
+        vec![field_ref("s", "output")],
+        (0, 5, 1),
+    );
 }

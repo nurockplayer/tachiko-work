@@ -4,6 +4,10 @@
 mod column_graph_differential;
 mod evaluation;
 mod parser;
+mod partitioned;
+
+pub use partitioned::PartitionedMap;
+use partitioned::PartitionedSet;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -1111,7 +1115,7 @@ pub fn extract_dependencies(
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
-    values: BTreeMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, Number>,
     graph: DependencyGraph,
 }
 
@@ -1135,7 +1139,7 @@ pub enum CalculationOutcome {
 /// semantic state, a cache key contract, or a serialization surface.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetainedCalculationState {
-    nodes: BTreeSet<FieldRef>,
+    nodes: PartitionedSet<FieldRef>,
     calculation: Calculation,
     failures: FailureMap,
 }
@@ -1179,8 +1183,8 @@ struct DirtyCalculationImpact {
 }
 
 struct FullCalculationParts {
-    nodes: BTreeSet<FieldRef>,
-    values: BTreeMap<FieldRef, Number>,
+    nodes: PartitionedSet<FieldRef>,
+    values: PartitionedMap<FieldRef, Number>,
     failures: FailureMap,
     graph: DependencyGraph,
 }
@@ -1510,7 +1514,7 @@ impl RetainedCalculationState {
     /// Return the complete published value map only for an atomic successful
     /// outcome.
     #[must_use]
-    pub fn complete_values(&self) -> Option<&BTreeMap<FieldRef, Number>> {
+    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, Number>> {
         self.failures.is_empty().then_some(&self.calculation.values)
     }
 
@@ -1840,7 +1844,7 @@ impl Calculation {
     }
 
     #[must_use]
-    pub fn values(&self) -> &BTreeMap<FieldRef, Number> {
+    pub fn values(&self) -> &PartitionedMap<FieldRef, Number> {
         &self.values
     }
 
@@ -1963,7 +1967,7 @@ fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
-        values,
+        values: PartitionedMap::from_sorted_iter(values),
         failures,
         graph,
     }
@@ -2031,6 +2035,18 @@ fn formula_uses(
 /// `slot_columns` maps a slot back to its column.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct DependencyGraph {
+    reference_uses: PartitionedMap<FieldRef, PartitionedSet<FieldRef>>,
+    column_uses: PartitionedMap<FieldRef, BTreeSet<ColumnRef>>,
+    cell_readers: PartitionedMap<FieldRef, PartitionedSet<FieldRef>>,
+    column_readers: PartitionedMap<ColumnRef, PartitionedSet<FieldRef>>,
+    column_slots: PartitionedMap<ColumnRef, PartitionedSet<FieldRef>>,
+    slot_columns: PartitionedMap<FieldRef, ColumnRef>,
+    entity_schemas:
+        PartitionedMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
+}
+
+#[derive(Default)]
+struct GraphBuilder {
     reference_uses: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
     column_uses: BTreeMap<FieldRef, BTreeSet<ColumnRef>>,
     cell_readers: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
@@ -2040,22 +2056,7 @@ struct DependencyGraph {
     entity_schemas: BTreeMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
 }
 
-impl DependencyGraph {
-    fn new(document: &Document, formulas: &FormulaNodes<'_>) -> Self {
-        let mut graph = Self::default();
-        for (entity_id, entity) in &document.entities {
-            graph
-                .entity_schemas
-                .insert(entity_id.clone(), entity.schema.clone());
-        }
-        for (formula, expression) in formulas {
-            let references = direct_references(formula, expression);
-            let columns = extract_column_totals(expression);
-            graph.insert_edges(document, formula, references, columns);
-        }
-        graph
-    }
-
+impl GraphBuilder {
     fn insert_edges(
         &mut self,
         document: &Document,
@@ -2074,9 +2075,83 @@ impl DependencyGraph {
                 .entry(column.clone())
                 .or_default()
                 .insert(formula.clone());
-            self.ensure_column_slots(document, column);
+            if !self.column_slots.contains_key(column) {
+                let slots: BTreeSet<_> = document
+                    .entities
+                    .iter()
+                    .filter(|(_, entity)| entity.schema == column.schema)
+                    .map(|(id, _)| FieldRef::new(id.clone(), column.field.clone()))
+                    .collect();
+                for slot in &slots {
+                    self.slot_columns.insert(slot.clone(), column.clone());
+                }
+                self.column_slots.insert(column.clone(), slots);
+            }
         }
         self.reference_uses.insert(formula.clone(), references);
+        self.column_uses.insert(formula.clone(), columns);
+    }
+
+    fn finish(self) -> DependencyGraph {
+        DependencyGraph {
+            reference_uses: PartitionedMap::from_sorted_iter(
+                self.reference_uses.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_uses: PartitionedMap::from_sorted_iter(self.column_uses),
+            cell_readers: PartitionedMap::from_sorted_iter(
+                self.cell_readers.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_readers: PartitionedMap::from_sorted_iter(
+                self.column_readers.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_slots: PartitionedMap::from_sorted_iter(
+                self.column_slots.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            slot_columns: PartitionedMap::from_sorted_iter(self.slot_columns),
+            entity_schemas: PartitionedMap::from_sorted_iter(self.entity_schemas),
+        }
+    }
+}
+
+impl DependencyGraph {
+    fn new(document: &Document, formulas: &FormulaNodes<'_>) -> Self {
+        let mut builder = GraphBuilder::default();
+        for (entity_id, entity) in &document.entities {
+            builder
+                .entity_schemas
+                .insert(entity_id.clone(), entity.schema.clone());
+        }
+        for (formula, expression) in formulas {
+            builder.insert_edges(
+                document,
+                formula,
+                direct_references(formula, expression),
+                extract_column_totals(expression),
+            );
+        }
+        builder.finish()
+    }
+
+    fn insert_edges(
+        &mut self,
+        document: &Document,
+        formula: &FieldRef,
+        references: BTreeSet<FieldRef>,
+        columns: BTreeSet<ColumnRef>,
+    ) {
+        for reference in &references {
+            self.cell_readers
+                .get_or_default(reference)
+                .insert(formula.clone());
+        }
+        for column in &columns {
+            self.column_readers
+                .get_or_default(column)
+                .insert(formula.clone());
+            self.ensure_column_slots(document, column);
+        }
+        self.reference_uses
+            .insert(formula.clone(), references.into());
         self.column_uses.insert(formula.clone(), columns);
     }
 
@@ -2089,7 +2164,7 @@ impl DependencyGraph {
             .iter()
             .filter(|(_, entity)| entity.schema == column.schema)
             .map(|(entity_id, _)| FieldRef::new(entity_id.clone(), column.field.clone()))
-            .collect::<BTreeSet<_>>();
+            .collect::<PartitionedSet<_>>();
         for slot in &slots {
             self.slot_columns.insert(slot.clone(), column.clone());
         }
@@ -2216,7 +2291,7 @@ impl DependencyGraph {
 
     fn dependencies_of(&self, field: &FieldRef) -> Option<BTreeSet<FieldRef>> {
         let references = self.reference_uses.get(field)?;
-        let mut dependencies = references.clone();
+        let mut dependencies = references.iter().cloned().collect::<BTreeSet<_>>();
         for column in self.column_uses.get(field).into_iter().flatten() {
             if let Some(slots) = self.column_slots.get(column) {
                 dependencies.extend(slots.iter().cloned());
@@ -2228,7 +2303,13 @@ impl DependencyGraph {
     /// Formulas whose expanded dependencies contain `field`: the ones naming
     /// it directly plus the readers of the column it is a slot of.
     fn direct_dependents(&self, field: &FieldRef) -> BTreeSet<FieldRef> {
-        let mut dependents = self.cell_readers.get(field).cloned().unwrap_or_default();
+        let mut dependents = self
+            .cell_readers
+            .get(field)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         if let Some(column) = self.slot_columns.get(field) {
             dependents.extend(self.column_readers(column).cloned());
         }
@@ -2244,7 +2325,13 @@ impl DependencyGraph {
         let mut dependencies: BTreeSet<FieldRef> = self
             .reference_uses
             .get(formula)
-            .map(|references| references.intersection(within).cloned().collect())
+            .map(|references| {
+                references
+                    .iter()
+                    .filter(|reference| within.contains(*reference))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         for column in self.column_uses.get(formula).into_iter().flatten() {
             for slot in self.column_slots.get(column).into_iter().flatten() {
@@ -2363,13 +2450,21 @@ impl DependencyGraph {
     fn entry_count(&self) -> usize {
         self.reference_uses.len()
             + self.column_uses.len()
-            + self.cell_readers.values().map(BTreeSet::len).sum::<usize>()
+            + self
+                .cell_readers
+                .values()
+                .map(PartitionedSet::len)
+                .sum::<usize>()
             + self
                 .column_readers
                 .values()
-                .map(BTreeSet::len)
+                .map(PartitionedSet::len)
                 .sum::<usize>()
-            + self.column_slots.values().map(BTreeSet::len).sum::<usize>()
+            + self
+                .column_slots
+                .values()
+                .map(PartitionedSet::len)
+                .sum::<usize>()
             + self.slot_columns.len()
             + self.entity_schemas.len()
     }
@@ -2583,12 +2678,28 @@ fn remaining_counts(
     (dependency_counts, column_counts)
 }
 
-fn evaluate_remaining_formulas(
+trait ValueStore: tachiko_semantic_core::FormulaValueLookup {
+    fn put(&mut self, field: FieldRef, value: Number);
+}
+
+impl ValueStore for BTreeMap<FieldRef, Number> {
+    fn put(&mut self, field: FieldRef, value: Number) {
+        self.insert(field, value);
+    }
+}
+
+impl ValueStore for PartitionedMap<FieldRef, Number> {
+    fn put(&mut self, field: FieldRef, value: Number) {
+        self.insert(field, value);
+    }
+}
+
+fn evaluate_remaining_formulas<V: ValueStore>(
     document: &Document,
     formulas: &FormulaNodes<'_>,
     graph: &DependencyGraph,
     failures: &mut FailureMap,
-    values: &mut BTreeMap<FieldRef, Number>,
+    values: &mut V,
 ) {
     // Phases 3 and 4: process the remaining acyclic graph dependency-first.
     // Edges to already-failed nodes are ready and become direct dependency
@@ -2629,7 +2740,7 @@ fn evaluate_remaining_formulas(
         if failed_dependencies.is_empty() {
             match evaluation.number(expression) {
                 Ok(value) => {
-                    values.insert(formula.clone(), value);
+                    values.put(formula.clone(), value);
                 }
                 Err(failure) => {
                     failures.insert(formula.clone(), failure);
@@ -2938,5 +3049,11 @@ mod causal_visits {
 
     pub(super) fn take() -> usize {
         VISITS.with(|visits| visits.replace(0))
+    }
+}
+
+impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, Number> {
+    fn formula_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field)
     }
 }

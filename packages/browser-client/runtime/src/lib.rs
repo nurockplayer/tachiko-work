@@ -19,6 +19,8 @@ pub use capacity::{
 };
 #[cfg(test)]
 mod authored_input_tests;
+#[cfg(test)]
+mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
 #[cfg(test)]
@@ -1466,8 +1468,15 @@ pub struct FormulaProjection {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CalculationProjection {
-    Value { value: f64 },
-    Failure { code: String, message: String },
+    Value {
+        value: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<StoredValueProjection>,
+    },
+    Failure {
+        code: String,
+        message: String,
+    },
     Unavailable,
 }
 
@@ -1483,12 +1492,18 @@ impl<'de> Deserialize<'de> for CalculationProjection {
             .ok_or_else(|| serde::de::Error::custom("calculation status must be a string"))?;
         match status {
             "value" => {
-                let value = raw.get("value").cloned().ok_or_else(|| {
-                    serde::de::Error::custom("calculation value projection is missing value")
-                })?;
-                serde_json::from_value(value)
-                    .map(|value| Self::Value { value })
-                    .map_err(serde::de::Error::custom)
+                #[derive(Deserialize)]
+                struct ValuePayload {
+                    value: f64,
+                    #[serde(default)]
+                    result: Option<StoredValueProjection>,
+                }
+                let payload: ValuePayload =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::Value {
+                    value: payload.value,
+                    result: payload.result,
+                })
             }
             "failure" => {
                 let code = raw.get("code").cloned().ok_or_else(|| {
@@ -1514,7 +1529,7 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value } => Some(*value),
+            Self::Value { value, .. } => Some(*value),
             Self::Failure { .. } | Self::Unavailable => None,
         }
     }
@@ -4347,7 +4362,7 @@ impl DesignerRuntime {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
-            if let Some(CalculationProjection::Value { value }) = &mut field.calculated {
+            if let Some(CalculationProjection::Value { value, .. }) = &mut field.calculated {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
         }
@@ -8977,7 +8992,7 @@ impl NumberTotal {
 
     fn add(&mut self, field: &FieldProjection) {
         match (&field.calculated, &field.stored) {
-            (Some(CalculationProjection::Value { value }), _)
+            (Some(CalculationProjection::Value { value, .. }), _)
             | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
             (
                 Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
@@ -12110,9 +12125,10 @@ const fn scalar_kind(value: Option<&Value>) -> Option<ScalarKind> {
 
 fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationProjection {
     match outcome {
-        FormulaCalculationOutcome::Value(value) => {
-            CalculationProjection::Value { value: value.get() }
-        }
+        FormulaCalculationOutcome::Value(value) => CalculationProjection::Value {
+            value: value.get(),
+            result: None,
+        },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),
             message: calculation_failure_message(failure).to_owned(),
@@ -12901,7 +12917,10 @@ mod tests {
         );
         assert_eq!(
             explanation.value.calculated,
-            Some(super::CalculationProjection::Value { value: 1360.0 })
+            Some(super::CalculationProjection::Value {
+                value: 1360.0,
+                result: None
+            })
         );
         let dependencies = &explanation.direct_dependencies;
         assert_eq!(dependencies.len(), 2);
@@ -15557,7 +15576,10 @@ mod tests {
             total_row(
                 "b",
                 None,
-                Some(super::CalculationProjection::Value { value: 1.5 }),
+                Some(super::CalculationProjection::Value {
+                    value: 1.5,
+                    result: None,
+                }),
             ),
             blank.clone(),
         ];
