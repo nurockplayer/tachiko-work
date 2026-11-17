@@ -306,6 +306,21 @@ impl<K: Ord + Clone> PartitionedSet<K> {
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &K> {
         self.0.keys()
     }
+
+    pub(crate) fn intersection<'a>(
+        &'a self,
+        other: &'a BTreeSet<K>,
+    ) -> impl Iterator<Item = &'a K> {
+        let mut own = self.iter();
+        let mut other_keys = other.iter();
+        std::iter::from_fn(move || {
+            if self.len() <= other.len() {
+                own.find(|key| other.contains(*key))
+            } else {
+                other_keys.find(|key| self.contains(*key))
+            }
+        })
+    }
 }
 
 impl<K: Ord + Clone> FromIterator<K> for PartitionedSet<K> {
