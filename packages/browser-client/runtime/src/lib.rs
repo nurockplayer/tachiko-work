@@ -6758,7 +6758,8 @@ impl DesignerRuntime {
             entities: Vec::new(),
         }];
         let imported_before = self.imported.clone();
-        let publication = self.publish_commands(expected, &forward)?;
+        let publication =
+            self.publish_commands_with_imported(expected, &forward, None, Some(&key))?;
         self.duplicate_serial = serial;
         self.record_history_entry(
             HistoryEntry::new(
@@ -6957,7 +6958,12 @@ impl DesignerRuntime {
             }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
-        let publication = self.publish_commands(expected_revision, &forward)?;
+        let publication = self.publish_commands_with_imported(
+            expected_revision,
+            &forward,
+            None,
+            Some(&target_key),
+        )?;
         self.duplicate_serial = ids.serial;
         self.record_history_entry(HistoryEntry::new(
             HistoryAction::Commands(forward),
@@ -7421,7 +7427,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         commands: &[SemanticCommand],
     ) -> Result<PublicationProjection, DesignerError> {
-        self.publish_commands_with_imported(expected_revision, commands, None)
+        self.publish_commands_with_imported(expected_revision, commands, None, None)
     }
 
     #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
@@ -7430,6 +7436,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         commands: &[SemanticCommand],
         restored_import: Option<&imported_lifecycle::ImportedState>,
+        added_collection: Option<&str>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
@@ -7452,6 +7459,18 @@ impl DesignerRuntime {
             Some(state) => Some(state.clone()),
             None => self.plan_imported_state(candidate, commands)?,
         };
+        if let Some(imported) = imported.as_ref().filter(|_| restored_import.is_none()) {
+            self.preflight_imported_reply(&imported.metadata, |candidate| {
+                let publication = candidate.publish_commands("resident/0", commands)?;
+                Ok(match added_collection {
+                    Some(key) => DesignerResponse::Duplicated(DuplicateCollectionProjection {
+                        publication,
+                        collection: candidate.collection_specs[key].summary.clone(),
+                    }),
+                    None => DesignerResponse::Published(publication),
+                })
+            })?;
+        }
         // A batch that only replaces stored values on entities the base holds
         // derives the candidate's totals from the base's instead of walking it.
         let working_edit = match self.profile {
@@ -8284,15 +8303,34 @@ impl DesignerRuntime {
             .imported
             .as_ref()
             .map(|(before, after)| if redo { after } else { before });
+        if let Some(state) = imported.or_else(|| {
+            self.imported
+                .as_ref()
+                .filter(|state| state.lifecycle_changed)
+        }) {
+            self.preflight_imported_reply(&state.metadata, |candidate| {
+                let mut detached_entry = entry.clone();
+                detached_entry.imported = None;
+                if redo {
+                    candidate.redo.push(detached_entry);
+                } else {
+                    candidate.undo.push(detached_entry);
+                }
+                candidate
+                    .history_edit("resident/0", redo)
+                    .map(DesignerResponse::Published)
+            })?;
+        }
         let mut result = match action {
             HistoryAction::Commands(commands) => {
-                self.publish_commands_with_imported(expected, commands, imported)
+                self.publish_commands_with_imported(expected, commands, imported, None)
             }
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
-                let result = self.publish_commands_with_imported(expected, commands, imported)?;
+                let result =
+                    self.publish_commands_with_imported(expected, commands, imported, None)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
@@ -9599,7 +9637,7 @@ pub(crate) fn admit_imported_project(
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
         let gate = document.clone();
-        let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        let (candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
         match candidate.profile {
             SessionProfile::TextCapacity => {
                 interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
@@ -9612,6 +9650,7 @@ pub(crate) fn admit_imported_project(
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         candidate.attach_imported_metadata(metadata);
+        opened.bootstrap = candidate.bootstrap_projection();
         return Ok((candidate, opened));
     }
 
@@ -9626,10 +9665,11 @@ pub(crate) fn admit_imported_project(
         Ok((candidate, opened))
     })();
     match ordinary {
-        Ok((mut candidate, opened)) => {
+        Ok((mut candidate, mut opened)) => {
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
+            opened.bootstrap = candidate.bootstrap_projection();
             Ok((candidate, opened))
         }
         Err(error)
@@ -9640,7 +9680,7 @@ pub(crate) fn admit_imported_project(
             // both pass may an eligible non-v3 candidate retry the complete
             // admission in the enlarged profile.
             interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
-            let (mut candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            let (mut candidate, mut opened) = DesignerRuntime::from_document_profile_with_opened(
                 document,
                 occurrence_id,
                 SessionProfile::TextCapacity,
@@ -9650,6 +9690,7 @@ pub(crate) fn admit_imported_project(
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
+            opened.bootstrap = candidate.bootstrap_projection();
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -9680,8 +9721,8 @@ pub(crate) fn admit_imported_project_working_size(
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
-    let opened = candidate.opened_window()?;
     candidate.attach_imported_metadata(metadata);
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 

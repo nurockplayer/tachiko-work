@@ -371,9 +371,18 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
             .iter()
             .map(|table| table.display_name.as_str())
             .collect::<Vec<_>>(),
-        ["A Added", "Renamed Input"]
+        ["Renamed Input", "A Added"]
     );
     let mut reopened = reopened.unwrap();
+    assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
+    let extra = reopened
+        .add_table("resident/0", "Z Extra", &columns())
+        .unwrap();
+    reopened
+        .delete_table("resident/1", &extra.collection.key)
+        .unwrap();
+    // Both the initial reply and later structural refreshes retain source order.
+    assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
     assert_eq!(xlsx(&reopened, &metadata), exported);
     assert_recalculation(&mut reopened, &metadata);
     let (mut from_xlsx, projection) = import_workbook(&book, &selection(), OCCURRENCE).unwrap();
@@ -479,10 +488,85 @@ fn working_size_import_lifecycle_publishes_mapping_with_same_order() {
     let deleted = runtime.delete_table("resident/4", "sheet_2").unwrap();
     let metadata = deleted.import_metadata.unwrap();
     let project = runtime.export_project_v3("resident/5").unwrap();
-    let (reopened, _) =
+    let (reopened, opened) =
         crate::admit_imported_project_working_size(&project.bytes, OCCURRENCE, &metadata).unwrap();
-    assert_eq!(names(&reopened), ["A Added", "Renamed Input"]);
+    assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
+    assert_eq!(
+        opened
+            .bootstrap
+            .collections
+            .iter()
+            .map(|table| table.display_name.as_str())
+            .collect::<Vec<_>>(),
+        ["Renamed Input", "A Added"]
+    );
     assert_eq!(xlsx(&reopened, &metadata), xlsx(&runtime, &metadata));
+}
+
+#[test]
+fn imported_oversized_publication_refuses_before_mutation_and_history() {
+    let mut source = fixture(false);
+    for sheet in &mut source.sheets {
+        sheet.rows.resize(8, sheet.rows[0].clone());
+    }
+    let (runtime, projection) = import_workbook(&source, &selection(), OCCURRENCE).unwrap();
+    let mut metadata = projection.metadata;
+    for sheet in &mut metadata.sheets {
+        for row in &mut sheet.rows {
+            row.styles[0].number_format = Some("0".repeat(crate::MAX_PROFILE_STRING_BYTES));
+        }
+    }
+    let bytes = crate::serialized_projection_bytes(&metadata).unwrap();
+    let excess = bytes - (crate::MAX_PROJECTION_BYTES - 16);
+    let last = metadata
+        .sheets
+        .last_mut()
+        .unwrap()
+        .rows
+        .last_mut()
+        .unwrap()
+        .styles[0]
+        .number_format
+        .as_mut()
+        .unwrap();
+    last.truncate(last.len() - excess);
+    crate::interop_document::validate_import_metadata_for_profile(
+        runtime.session.document(),
+        &metadata,
+        runtime.profile,
+    )
+    .unwrap();
+    let project = runtime.export_project_v3("resident/0").unwrap().bytes;
+    let mut resident = None;
+    open_imported_project(&mut resident, &project, &metadata, OCCURRENCE).unwrap();
+    let before = snapshot(resident.as_ref().unwrap());
+    let request = serde_json::to_vec(&crate::DesignerRequest::RenameTable {
+        expected_revision: "resident/0".into(),
+        collection: "sheet_1".into(),
+        name: "Renamed Input".into(),
+    })
+    .unwrap();
+    let reply: crate::DesignerWireReply =
+        serde_json::from_slice(&crate::process_wire_request(&mut resident, &request)).unwrap();
+    assert!(matches!(reply, crate::DesignerWireReply::Error { error }
+        if error.code == "query_too_large" && error.current_revision == "resident/0"));
+    let runtime = resident.as_mut().unwrap();
+    assert_eq!(snapshot(runtime), before);
+    assert!(runtime.undo.is_empty());
+    assert!(runtime.redo.is_empty());
+
+    // Deleting a sheet fits, but Undo must refuse atomically when restoring its
+    // complete source presentation would overflow the publication reply.
+    runtime.delete_table("resident/0", "sheet_2").unwrap();
+    let before = snapshot(runtime);
+    assert!(matches!(
+        runtime.history_edit("resident/1", false),
+        Err(crate::DesignerError::ProjectionTooLarge { .. })
+    ));
+    assert_eq!(runtime.current_revision(), "resident/1");
+    assert_eq!(snapshot(runtime), before);
+    assert_eq!(runtime.undo.len(), 1);
+    assert!(runtime.redo.is_empty());
 }
 
 #[test]

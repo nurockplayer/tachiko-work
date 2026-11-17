@@ -6,7 +6,10 @@ use crate::interop_document::{
     InteropColumnMetadata, InteropMetadata, InteropSheetMetadata,
     validate_import_metadata_for_profile,
 };
-use crate::{DesignerError, DesignerRuntime, HistoryAction, HistoryEntry, PublicationProjection};
+use crate::{
+    DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply, HistoryAction,
+    HistoryEntry, PublicationProjection,
+};
 
 /// History owns independent before/after mappings so a deleted sheet's source
 /// styles and position survive Undo. No runtime borrow crosses publication.
@@ -39,19 +42,16 @@ impl HistoryEntry {
 impl DesignerRuntime {
     pub(super) fn attach_imported_metadata(&mut self, metadata: &InteropMetadata) {
         // Admission already proved the client's mapping through main's gates.
-        // Retaining it must not alter the profile, projections or diagnostics.
+        // Source order lives in the sidecar even after saving and reopening.
         self.imported = Some(ImportedState {
             metadata: metadata.clone(),
             lifecycle_changed: false,
         });
+        self.order_imported_collections();
     }
 
     pub(super) fn order_imported_collections(&mut self) {
-        if let Some(state) = self
-            .imported
-            .as_ref()
-            .filter(|state| state.lifecycle_changed)
-        {
+        if let Some(state) = self.imported.as_ref() {
             self.collections.sort_by_key(|collection| {
                 state
                     .metadata
@@ -61,6 +61,44 @@ impl DesignerRuntime {
                     .unwrap_or(usize::MAX)
             });
         }
+    }
+
+    /// Run the existing publisher against an independent occurrence before
+    /// committing. Its invalidation plus the complete sidecar must fit the
+    /// actual response envelope, including add-table's collection summary.
+    pub(super) fn preflight_imported_reply(
+        &self,
+        metadata: &InteropMetadata,
+        publish: impl FnOnce(&mut Self) -> Result<DesignerResponse, DesignerError>,
+    ) -> Result<(), DesignerError> {
+        let mut candidate = Self::from_document_profile_baseline(
+            self.session.document().clone(),
+            crate::PREFLIGHT_OCCURRENCE,
+            self.profile,
+        )?;
+        candidate
+            .default_collection
+            .clone_from(&self.default_collection);
+        candidate.opened_from_v3 = self.opened_from_v3;
+        candidate.set_presentation(self.presentation.clone())?;
+        // No imported state is attached to this disposable runtime, so its
+        // publication cannot recursively preflight another metadata reply.
+        let mut response = publish(&mut candidate)?;
+        let publication = match &mut response {
+            DesignerResponse::Published(publication) => publication,
+            DesignerResponse::Duplicated(duplicated) => &mut duplicated.publication,
+            _ => unreachable!("imported mutation publishes an invalidation"),
+        };
+        publication.base_revision = self.current_revision().to_owned();
+        let generation = self
+            .current_revision()
+            .strip_prefix("resident/")
+            .and_then(|generation| generation.parse::<u64>().ok())
+            .and_then(|generation| generation.checked_add(1))
+            .ok_or_else(|| crate::tracker_error("resident revision counter exhausted"))?;
+        publication.resulting_revision = format!("resident/{generation}");
+        publication.import_metadata = Some(metadata.clone());
+        crate::ensure_wire_reply_size(&DesignerWireReply::Ok { response }, self.profile)
     }
 
     /// Export accepts the mapping the client most recently received; mixing

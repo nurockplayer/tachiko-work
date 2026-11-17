@@ -1022,6 +1022,7 @@ fn import_workbook_candidate(
         )?;
     }
     runtime.attach_imported_metadata(&projection.metadata);
+    projection.opened.bootstrap = runtime.bootstrap_projection();
     Ok((runtime, projection))
 }
 
