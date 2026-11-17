@@ -354,7 +354,9 @@ impl<K: Ord + Clone> IntoIterator for PartitionedSet<K> {
 
 impl<K: Ord + Clone> From<BTreeSet<K>> for PartitionedSet<K> {
     fn from(keys: BTreeSet<K>) -> Self {
-        keys.into_iter().collect()
+        Self(PartitionedMap::from_sorted_iter(
+            keys.into_iter().map(|key| (key, ())),
+        ))
     }
 }
 
@@ -386,6 +388,24 @@ mod tests {
         let map = PartitionedMap::from_sorted_iter((0..10_000).map(|key| (key, key)));
         assert_eq!(map.chunks.len(), 79);
         assert_contents(&map, &(0..10_000).map(|key| (key, key)).collect());
+    }
+
+    #[test]
+    fn btree_set_conversion_ten_thousand_keys_has_bounded_chunks() {
+        let set = PartitionedSet::from((0..10_000).collect::<BTreeSet<_>>());
+        assert_eq!(set.0.chunks.len(), 79);
+        assert_contents(
+            &PartitionedMap::from_sorted_iter(set.iter().map(|key| (*key, *key))),
+            &(0..10_000).map(|key| (key, key)).collect(),
+        );
+        assert!(set.0.chunks.iter().all(|chunk| chunk.len() <= MAX));
+        assert!(
+            set.0
+                .chunks
+                .iter()
+                .take(set.0.chunks.len() - 1)
+                .all(|chunk| chunk.len() >= MIN)
+        );
     }
 
     #[test]
