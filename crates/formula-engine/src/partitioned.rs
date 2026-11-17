@@ -14,6 +14,48 @@ type Iter<'a, K, V> = std::iter::FlatMap<
     fn(&'a Arc<BTreeMap<K, V>>) -> btree_map::Iter<'a, K, V>,
 >;
 
+type DifferingEntry<'a, K, V> = (&'a K, Option<&'a V>, Option<&'a V>);
+
+/// Merge-compare one overlapping directory range, retaining only differences.
+fn compare_entries<'a, K: Ord, V: PartialEq>(
+    before: impl Iterator<Item = (&'a K, &'a V)>,
+    after: impl Iterator<Item = (&'a K, &'a V)>,
+    differences: &mut Vec<DifferingEntry<'a, K, V>>,
+    #[cfg(test)] reads: &mut usize,
+) {
+    let mut before = before.peekable();
+    let mut after = after.peekable();
+    while before.peek().is_some() || after.peek().is_some() {
+        #[cfg(test)]
+        {
+            *reads += usize::from(before.peek().is_some()) + usize::from(after.peek().is_some());
+        }
+        let order = match (before.peek(), after.peek()) {
+            (Some((a, _)), Some((b, _))) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => break,
+        };
+        match order {
+            std::cmp::Ordering::Equal => {
+                let (a, av) = before.next().expect("peeked before entry");
+                let (_, bv) = after.next().expect("peeked after entry");
+                if av != bv {
+                    differences.push((a, Some(av), Some(bv)));
+                }
+            }
+            std::cmp::Ordering::Less => {
+                let (key, value) = before.next().expect("peeked before entry");
+                differences.push((key, Some(value), None));
+            }
+            std::cmp::Ordering::Greater => {
+                let (key, value) = after.next().expect("peeked after entry");
+                differences.push((key, None, Some(value)));
+            }
+        }
+    }
+}
+
 /// An ordered borrowed view of calculation values, backed by shared partitions.
 /// Mutation is restricted to formula-engine; cloning copies only the directory.
 #[derive(Clone)]
@@ -108,6 +150,61 @@ impl<K: Ord, V> PartitionedMap<K, V> {
         self.chunks[start..end]
             .iter()
             .flat_map(move |chunk| chunk.range(bounds.clone()))
+    }
+}
+
+impl<K: Ord, V: PartialEq> PartitionedMap<K, V> {
+    /// Walk the union of directory boundaries, skipping shared immutable ranges.
+    pub(crate) fn differing_entries<'a>(
+        &'a self,
+        after: &'a Self,
+    ) -> Vec<DifferingEntry<'a, K, V>> {
+        self.walk_differing_entries(
+            after,
+            #[cfg(test)]
+            &mut 0,
+        )
+    }
+
+    fn walk_differing_entries<'a>(
+        &'a self,
+        after: &'a Self,
+        #[cfg(test)] reads: &mut usize,
+    ) -> Vec<DifferingEntry<'a, K, V>> {
+        let mut differences = Vec::new();
+        let (mut left, mut right) = (0, 0);
+        loop {
+            let lower = match (self.starts.get(left), after.starts.get(right)) {
+                (Some(a), Some(b)) => a.min(b),
+                (Some(key), None) | (None, Some(key)) => key,
+                (None, None) => break,
+            };
+            left += usize::from(self.starts.get(left) == Some(lower));
+            right += usize::from(after.starts.get(right) == Some(lower));
+            let upper = match (self.starts.get(left), after.starts.get(right)) {
+                (Some(a), Some(b)) => Bound::Excluded(a.min(b)),
+                (Some(key), None) | (None, Some(key)) => Bound::Excluded(key),
+                (None, None) => Bound::Unbounded,
+            };
+            let before_chunk = left.checked_sub(1).map(|index| &self.chunks[index]);
+            let after_chunk = right.checked_sub(1).map(|index| &after.chunks[index]);
+            if matches!((before_chunk, after_chunk), (Some(a), Some(b)) if Arc::ptr_eq(a, b)) {
+                continue;
+            }
+            let bounds = (Bound::Included(lower), upper);
+            compare_entries(
+                before_chunk
+                    .into_iter()
+                    .flat_map(|chunk| chunk.range::<K, _>(bounds)),
+                after_chunk
+                    .into_iter()
+                    .flat_map(|chunk| chunk.range::<K, _>(bounds)),
+                &mut differences,
+                #[cfg(test)]
+                reads,
+            );
+        }
+        differences
     }
 }
 
@@ -475,5 +572,93 @@ mod tests {
         assert_eq!(shared + 1, total);
         assert!(base.contains(&5_000));
         assert!(!candidate.contains(&5_000));
+    }
+
+    fn assert_differences(before: &PartitionedMap<i32, i32>, after: &PartitionedMap<i32, i32>) {
+        for (before, after) in [(before, after), (after, before)] {
+            let keys = before.keys().chain(after.keys()).collect::<BTreeSet<_>>();
+            let expected = keys
+                .into_iter()
+                .filter_map(|key| {
+                    let a = before.get(key);
+                    let b = after.get(key);
+                    (a != b).then_some((key, a, b))
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(before.differing_entries(after), expected);
+        }
+    }
+
+    #[test]
+    fn differing_entries_identical_clone_reads_no_entries() {
+        let before = PartitionedMap::from_sorted_iter((0..10_000).map(|key| (key, key)));
+        let after = before.clone();
+        let mut reads = 0;
+        assert!(before.walk_differing_entries(&after, &mut reads).is_empty());
+        assert_eq!(reads, 0);
+        assert_differences(&before, &after);
+    }
+
+    #[test]
+    fn differing_entries_scalar_change_in_one_chunk() {
+        let before = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
+        let mut after = before.clone();
+        after.insert(200, -1);
+        assert_eq!(
+            before.differing_entries(&after),
+            [(&200, Some(&200), Some(&-1))]
+        );
+        assert_differences(&before, &after);
+    }
+
+    #[test]
+    fn differing_entries_insert_splits_chunk() {
+        let before = PartitionedMap::from_sorted_iter((0..512).map(|key| (key * 2, key)));
+        let mut after = before.clone();
+        after.insert(1, -1);
+        assert_eq!(after.chunks.len(), before.chunks.len() + 1);
+        assert_differences(&before, &after);
+    }
+
+    #[test]
+    fn differing_entries_removal_merges_chunks() {
+        let before = PartitionedMap::from_sorted_iter((0..192).map(|key| (key, key)));
+        let mut after = before.clone();
+        for key in 0..65 {
+            after.remove(&key);
+        }
+        assert_eq!(after.chunks.len() + 1, before.chunks.len());
+        assert_differences(&before, &after);
+    }
+
+    #[test]
+    fn differing_entries_equal_content_with_independent_layouts() {
+        let before = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
+        let independent = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
+        assert_eq!(before.shared_chunks(&independent).0, 0);
+        assert!(before.differing_entries(&independent).is_empty());
+        let mut after = PartitionedMap::default();
+        for key in 0..512 {
+            after.insert(key, key);
+        }
+        assert_ne!(before.chunks.len(), after.chunks.len());
+        assert!(before.differing_entries(&after).is_empty());
+        assert_differences(&before, &after);
+        after.insert(127, -1);
+        after.remove(&256);
+        assert_differences(&before, &after);
+    }
+
+    #[test]
+    fn differing_entries_different_lengths_and_disjoint_ranges() {
+        let before = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
+        for after in [
+            PartitionedMap::default(),
+            PartitionedMap::from_sorted_iter((-5..230).map(|key| (key, -key))),
+            PartitionedMap::from_sorted_iter((600..800).map(|key| (key, key))),
+        ] {
+            assert_differences(&before, &after);
+        }
+        assert_differences(&PartitionedMap::default(), &PartitionedMap::default());
     }
 }

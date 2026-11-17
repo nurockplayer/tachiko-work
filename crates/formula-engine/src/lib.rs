@@ -1848,6 +1848,25 @@ impl Calculation {
         &self.values
     }
 
+    /// Return changed formula values in `FieldRef` order.
+    ///
+    /// A key must be a formula in either calculation and have a value in both.
+    /// Shared immutable value partitions are skipped without reading entries.
+    #[must_use]
+    pub fn changed_formula_values(&self, after: &Self) -> Vec<(FieldRef, Number, Number)> {
+        self.values
+            .differing_entries(&after.values)
+            .into_iter()
+            .filter_map(|(field, before, value)| {
+                if self.graph.is_formula(field) || after.graph.is_formula(field) {
+                    Some((field.clone(), *before?, *value?))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Return every static formula dependency set, expanded per cell.
     ///
     /// The expansion costs O(formulas x rows); use [`Self::dependencies_of`]
