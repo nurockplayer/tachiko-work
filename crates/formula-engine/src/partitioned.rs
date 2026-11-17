@@ -594,7 +594,7 @@ mod tests {
         let before = PartitionedMap::from_sorted_iter((0..10_000).map(|key| (key, key)));
         let after = before.clone();
         let mut reads = 0;
-        assert!(before.walk_differing_entries(&after, &mut reads).is_empty());
+        assert_eq!(before.walk_differing_entries(&after, &mut reads), []);
         assert_eq!(reads, 0);
         assert_differences(&before, &after);
     }
@@ -636,13 +636,13 @@ mod tests {
         let before = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
         let independent = PartitionedMap::from_sorted_iter((0..512).map(|key| (key, key)));
         assert_eq!(before.shared_chunks(&independent).0, 0);
-        assert!(before.differing_entries(&independent).is_empty());
+        assert_eq!(before.differing_entries(&independent), []);
         let mut after = PartitionedMap::default();
         for key in 0..512 {
             after.insert(key, key);
         }
         assert_ne!(before.chunks.len(), after.chunks.len());
-        assert!(before.differing_entries(&after).is_empty());
+        assert_eq!(before.differing_entries(&after), []);
         assert_differences(&before, &after);
         after.insert(127, -1);
         after.remove(&256);
