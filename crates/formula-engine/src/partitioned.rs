@@ -407,7 +407,7 @@ mod tests {
             }
         }
         assert_eq!(map.remove(&9), None);
-        assert!(map.chunks.is_empty());
+        assert_eq!(map.chunks, [] as [Arc<BTreeMap<i32, i32>>; 0]);
     }
 
     #[test]
