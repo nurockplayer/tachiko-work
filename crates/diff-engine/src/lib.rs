@@ -397,22 +397,7 @@ pub fn diff_changes_scoped(
     // Compare all value ranges, but skip the immutable partitions both share.
     let impacted = before_calculation.changed_formula_values(after_calculation);
     #[cfg(test)]
-    {
-        let formulas = before_calculation
-            .formulas()
-            .chain(after_calculation.formulas())
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let old_impacted = formulas
-            .into_iter()
-            .filter_map(|formula| {
-                let before = before_calculation.value(&formula)?;
-                let after = after_calculation.value(&formula)?;
-                (before != after).then_some((formula, before, after))
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(impacted, old_impacted, "scoped formula value diff");
-    }
+    assert_matches_full_value_scan(&impacted, before_calculation, after_calculation);
     push_changed_formula_impacts(
         impacted,
         before_calculation,
@@ -422,6 +407,33 @@ pub fn diff_changes_scoped(
     );
 
     changes
+}
+
+/// Cross-checks the partition-aware value diff against a scan of every formula.
+#[cfg(test)]
+fn assert_matches_full_value_scan(
+    impacted: &[(FieldRef, Number, Number)],
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+) {
+    let formulas = before_calculation
+        .formulas()
+        .chain(after_calculation.formulas())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let old_impacted = formulas
+        .into_iter()
+        .filter_map(|formula| {
+            let before = before_calculation.value(&formula)?;
+            let after = after_calculation.value(&formula)?;
+            (before != after).then_some((formula, before, after))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        impacted,
+        old_impacted.as_slice(),
+        "scoped formula value diff"
+    );
 }
 
 /// Append one [`SemanticChange::FormulaImpact`] for every candidate whose
