@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
 
 export type FieldTarget = {
   entity: string;
@@ -401,6 +401,10 @@ export type PublicationProjection = {
    * a working-size session sets it, and not when `many` is set.
    */
   changed?: FieldProjection[];
+  /** Next client-held mapping after an imported worksheet lifecycle edit or Undo/Redo.
+   * Persist it alongside the project and send it back on Export/InspectProject/OpenProject.
+   */
+  import_metadata?: InteropMetadata;
 };
 
 export type ProjectExportProjection = {
