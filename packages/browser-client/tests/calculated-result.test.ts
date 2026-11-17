@@ -17,14 +17,16 @@ function transport() {
   return {
     client: new WorkerDesignerClient(() => worker),
     fields(calculated: unknown) {
-      receive!(new MessageEvent("message", {data: {
+      // Malformed calculated results are sent on purpose, so the reply is cast.
+      const data = {
         id: requestId, status: "ok", response: {type: "fields", payload: {
           revision: "resident/0", fields: [{
             target, address: "items.row.formula", stored: null, formula: {source: "2.5"},
             calculated, diagnostics: [], editable_scalar: null,
           }],
         }},
-      }}));
+      } as unknown as WorkerReply;
+      receive!(new MessageEvent("message", {data}));
     },
   };
 }
