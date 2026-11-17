@@ -107,7 +107,7 @@ fn changed_formula_values_filters_stored_nodes_and_accepts_formulas_on_either_si
         .fields;
     fields.insert("a".into(), Value::Number(number(2.0)));
     fields.insert("n".into(), Value::Formula(Expression::Number(number(3.0))));
-    fields.remove(&"c".into());
+    fields.remove("c");
     let before_calculation = calculate(&before).unwrap();
     let after_calculation = calculate(&after).unwrap();
     assert_eq!(
