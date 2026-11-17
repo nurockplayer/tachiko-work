@@ -6958,6 +6958,7 @@ impl DesignerRuntime {
             }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
+        let imported_before = self.imported.clone();
         let publication = self.publish_commands_with_imported(
             expected_revision,
             &forward,
@@ -6965,10 +6966,13 @@ impl DesignerRuntime {
             Some(&target_key),
         )?;
         self.duplicate_serial = ids.serial;
-        self.record_history_entry(HistoryEntry::new(
-            HistoryAction::Commands(forward),
-            HistoryAction::Commands(inverse),
-        ));
+        self.record_history_entry(
+            HistoryEntry::new(
+                HistoryAction::Commands(forward),
+                HistoryAction::Commands(inverse),
+            )
+            .with_imported(imported_before, self.imported.as_ref()),
+        );
         let collection = self
             .collection_specs
             .get(&target_key)

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use tachiko_storage::{decode_portable_package_v1, encode_roproj_v3};
 use tachiko_workspace_engine::Document;
 
@@ -6,9 +8,9 @@ use crate::interop_adapter::{
     export_xlsx, import_xlsx,
 };
 use crate::{
-    DesignerRuntime, FieldTarget, ImportFieldType, ImportSelection, InteropMetadata,
-    NewTableColumnInput, import_workbook, import_workbook_working_size, open_imported_project,
-    open_project,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ImportFieldType,
+    ImportSelection, InteropMetadata, NewTableColumnInput, import_workbook,
+    import_workbook_working_size, open_imported_project, open_project,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000859";
@@ -220,6 +222,36 @@ fn lifecycle_export_compares_identity_names_and_undo_restores_client_authority()
         runtime.export_workbook("resident/3", &client_metadata),
         Err(crate::DesignerError::ImportedSpreadsheetExport { .. })
     ));
+}
+
+#[test]
+fn imported_duplicate_undo_restores_client_authority() {
+    let (mut runtime, metadata) = imported(false);
+    let DesignerResponse::Duplicated(_) = runtime
+        .handle(DesignerRequest::DuplicateCollection {
+            expected_revision: "resident/0".to_owned(),
+            collection: "sheet_1".to_owned(),
+            name: "Input Copy".to_owned(),
+            column_names: BTreeMap::new(),
+        })
+        .unwrap()
+    else {
+        panic!("duplicate returns a duplicated projection");
+    };
+    assert!(runtime.imported.as_ref().unwrap().lifecycle_changed);
+    let undone = runtime.history_edit("resident/1", false).unwrap();
+    assert_eq!(undone.import_metadata.unwrap(), metadata);
+    assert!(!runtime.imported.as_ref().unwrap().lifecycle_changed);
+    let mut client_metadata = metadata;
+    client_metadata.sheets[0].name = "Client Input".into();
+    assert_eq!(
+        runtime
+            .export_workbook("resident/2", &client_metadata)
+            .unwrap()
+            .sheets[0]
+            .name,
+        "Client Input"
+    );
 }
 
 #[test]
