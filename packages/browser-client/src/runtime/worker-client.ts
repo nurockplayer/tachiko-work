@@ -919,9 +919,9 @@ function expectResponse(
     case "imported": validateTablePresence(response.payload.opened.table); break;
     case "imported_window": validateTablePresence(response.payload.opened.window); break;
     case "fields": response.payload.fields.forEach(validateFieldPresence); break;
-    case "published": response.payload.changed?.forEach(validateFieldPresence); break;
+    case "published": validatePublication(response.payload); break;
     case "duplicated":
-    case "keyed_grouped_sum_published": response.payload.publication.changed?.forEach(validateFieldPresence); break;
+    case "keyed_grouped_sum_published": validatePublication(response.payload.publication); break;
     case "field_explanation":
       validateFieldPresence(response.payload.value);
       response.payload.direct_dependencies.forEach(dependency => validateFieldPresence(dependency.value));
@@ -932,6 +932,39 @@ function expectResponse(
     case "capacity": validateCapacity(response.payload); break;
   }
   return "payload" in response ? response.payload : undefined;
+}
+
+function validatePublication(publication: PublicationProjection): void {
+  publication.changed?.forEach(validateFieldPresence);
+  if (publication.import_metadata !== undefined) validateImportMetadata(publication.import_metadata);
+}
+
+function validateImportMetadata(metadata: unknown): void {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const nullableString = (value: unknown): boolean => value === null || typeof value === "string";
+  const style = (value: unknown): boolean => record(value) &&
+    nullableString(value.number_format) && nullableString(value.fill) && nullableString(value.alignment) &&
+    typeof value.bold === "boolean" && typeof value.wrap === "boolean" && typeof value.border === "boolean";
+  if (!record(metadata) || (metadata.version !== 1 && metadata.version !== 2) || !Array.isArray(metadata.sheets)) {
+    throw new Error("Invalid Worker import metadata.");
+  }
+  const version = metadata.version;
+  for (const sheet of metadata.sheets as unknown[]) {
+    if (!record(sheet) || typeof sheet.schema_id !== "string" || typeof sheet.name !== "string" ||
+        typeof sheet.has_header !== "boolean" || !Array.isArray(sheet.columns)) {
+      throw new Error("Invalid Worker import metadata.");
+    }
+    const columns = sheet.columns as unknown[];
+    if (!columns.every(column => record(column) &&
+          typeof column.field_id === "string" && typeof column.name === "string" &&
+          (version === 2 || column.width === null || (typeof column.width === "number" && Number.isFinite(column.width)))) ||
+        (version === 1 && (!Array.isArray(sheet.rows) || !sheet.rows.every((row: unknown) =>
+          record(row) && typeof row.entity_id === "string" && Array.isArray(row.styles) &&
+          row.styles.length === columns.length && row.styles.every(style))))) {
+      throw new Error("Invalid Worker import metadata.");
+    }
+  }
 }
 
 const CAPACITY_LIMITS = [

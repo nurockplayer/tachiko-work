@@ -1021,6 +1021,16 @@ fn import_workbook_candidate(
             super::MAX_PROJECTION_BYTES,
         )?;
     }
+    runtime.attach_imported_metadata(&projection.metadata)?;
+    runtime.refresh_imported_opened(&mut projection.opened)?;
+    super::ensure_complete_projection_size(
+        "imported",
+        &projection,
+        match runtime.profile {
+            SessionProfile::TextCapacity => super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
+            SessionProfile::Ordinary | SessionProfile::WorkingSize => super::MAX_PROJECTION_BYTES,
+        },
+    )?;
     Ok((runtime, projection))
 }
 
@@ -1097,6 +1107,7 @@ fn import_workbook_working_size_candidate(
     super::interop_adapter::cap_ledger(&mut ledger);
     // The reply also carries the metadata and ledger, so the window gets what
     // is left of the one reply budget.
+    runtime.attach_imported_metadata(&metadata)?;
     let overhead =
         super::serialized_projection_bytes(&(&metadata, &ledger))? + super::REPLY_ENVELOPE_RESERVE;
     let maximum = super::MAX_TEXT_CAPACITY_PROJECTION_BYTES.saturating_sub(overhead);
@@ -4048,6 +4059,8 @@ impl DesignerRuntime {
         expected_revision: &str,
         metadata: &InteropMetadata,
     ) -> Result<SourceWorkbook, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let metadata = self.metadata_for_export(metadata)?;
         self.export_imported_workbook(expected_revision, metadata, ImportedOutput::Projection)
     }
 
