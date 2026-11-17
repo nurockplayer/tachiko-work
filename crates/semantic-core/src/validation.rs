@@ -91,12 +91,23 @@ pub fn validate_document_core(document: &Document) -> Vec<Diagnostic> {
     validate_document_internal(document, false)
 }
 
+/// Borrow calculated values without requiring a particular storage representation.
+pub trait FormulaValueLookup {
+    fn formula_value(&self, field: &FieldRef) -> Option<&Number>;
+}
+
+impl FormulaValueLookup for BTreeMap<FieldRef, Number> {
+    fn formula_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field)
+    }
+}
+
 /// Validate Number formula values against durable constraints after a complete
 /// calculation has supplied their final values.
 #[must_use]
 pub fn validate_complete_formula_constraints(
     document: &Document,
-    values: &BTreeMap<FieldRef, Number>,
+    values: &impl FormulaValueLookup,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for (entity_id, entity) in &document.entities {
@@ -112,7 +123,7 @@ pub fn validate_complete_formula_constraints(
                 entity_id,
                 field_id,
                 definition,
-                values.get(&field),
+                values.formula_value(&field),
             ) {
                 diagnostics.push(diagnostic);
             }
@@ -132,7 +143,7 @@ pub fn validate_complete_formula_constraints(
 pub fn validate_formula_value_constraint(
     document: &Document,
     field: &FieldRef,
-    values: &BTreeMap<FieldRef, Number>,
+    values: &impl FormulaValueLookup,
 ) -> Vec<Diagnostic> {
     let Some(entity) = document.entities.get(&field.entity) else {
         return Vec::new();
@@ -146,9 +157,14 @@ pub fn validate_formula_value_constraint(
     let Some(definition) = schema.fields.get(&field.field) else {
         return Vec::new();
     };
-    formula_value_constraint_diagnostic(&field.entity, &field.field, definition, values.get(field))
-        .into_iter()
-        .collect()
+    formula_value_constraint_diagnostic(
+        &field.entity,
+        &field.field,
+        definition,
+        values.formula_value(field),
+    )
+    .into_iter()
+    .collect()
 }
 
 fn formula_value_constraint_diagnostic(

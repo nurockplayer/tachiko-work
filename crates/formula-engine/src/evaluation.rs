@@ -7,7 +7,7 @@ use tachiko_semantic_core::{
     Entity, EntityId, Expression, FieldRef, FieldType, Number, Value,
 };
 
-use crate::{CalculationFailure, FailureMap, column_cells};
+use crate::{CalculationFailure, FailureMap, PartitionedMap, column_cells};
 
 #[cfg(test)]
 use conditional_walks::{bypass_caches, record_row, record_walk};
@@ -89,7 +89,7 @@ impl ColumnCache {
     fn criterion_index(
         &mut self,
         document: &Document,
-        values: &BTreeMap<FieldRef, Number>,
+        values: &PartitionedMap<FieldRef, Number>,
         column: &ColumnRef,
     ) {
         if self.indexes.contains_key(column) {
@@ -138,7 +138,7 @@ impl ColumnCache {
     fn lookup_index(
         &mut self,
         document: &Document,
-        values: &BTreeMap<FieldRef, Number>,
+        values: &PartitionedMap<FieldRef, Number>,
         column: &ColumnRef,
     ) {
         if self.lookup_indexes.contains_key(column) {
@@ -174,7 +174,7 @@ impl ColumnCache {
     pub(crate) fn fill(
         &mut self,
         document: &Document,
-        values: &BTreeMap<FieldRef, Number>,
+        values: &PartitionedMap<FieldRef, Number>,
         failures: &FailureMap,
         column: &ColumnRef,
     ) {
@@ -219,7 +219,7 @@ impl ColumnCache {
 pub(crate) struct Evaluation<'a> {
     pub(crate) document: &'a Document,
     pub(crate) owner: &'a FieldRef,
-    pub(crate) values: &'a BTreeMap<FieldRef, Number>,
+    pub(crate) values: &'a PartitionedMap<FieldRef, Number>,
     // Conditional aggregates memoise their result and index their criteria
     // columns as the pass goes, so the cache is this evaluation's alone.
     pub(crate) columns: &'a mut ColumnCache,
