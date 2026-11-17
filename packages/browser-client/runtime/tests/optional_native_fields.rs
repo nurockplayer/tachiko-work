@@ -471,6 +471,10 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
     let revision = j.table()["revision"].clone();
     let fields = j.ok(serde_json::from_str(&format!(r#"{{"type":"query_fields","expected_revision":{revision},"fields":[{{"entity":"sum","field":"total"}}]}}"#)).unwrap());
     assert_eq!(fields["fields"][0]["calculated"]["value"], 0.0);
+    assert_eq!(
+        fields["fields"][0]["calculated"]["result"],
+        serde_json::json!({"kind": "number", "value": 0.0})
+    );
     j.refused(serde_json::from_str(r#"{"type":"set_column_requiredness","collection":"items","field":"amount","required":true}"#).unwrap());
     if let Ok(path) = std::env::var("TACHIKO_OPTIONAL_TRANSCRIPT") {
         std::fs::write(

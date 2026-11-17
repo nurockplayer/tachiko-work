@@ -9,6 +9,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Added
 
+- Browser-client calculated Number outcomes include an additive tagged `result`;
+  legacy numeric payloads without it still decode (#842).
+
 - Add atomic `move_cells` for Cut → Paste as one revision and one Undo/Redo step, preserving formula dependencies (#813).
 
 - Add revision-bound selection statistics over resident cells for status bars (#811).

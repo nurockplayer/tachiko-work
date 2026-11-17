@@ -62,7 +62,7 @@ export type StoredValueProjection =
   | { kind: "reference"; entity: string };
 
 export type CalculationProjection =
-  | { status: "value"; value: number }
+  | { status: "value"; value: number; result?: StoredValueProjection }
   | { status: "failure"; code: string; message: string }
   | { status: "unavailable" };
 

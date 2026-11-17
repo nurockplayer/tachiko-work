@@ -563,7 +563,10 @@ mod tests {
     #[test]
     fn a_calculation_decides_over_a_stored_number() {
         let stored = StoredValueProjection::Number { value: 1.0 };
-        let value = CalculationProjection::Value { value: 2.0 };
+        let value = CalculationProjection::Value {
+            value: 2.0,
+            result: Some(crate::StoredValueProjection::Number { value: 2.0 }),
+        };
         let failure = CalculationProjection::Failure {
             code: "division_by_zero".to_owned(),
             message: "division by zero".to_owned(),

@@ -182,7 +182,10 @@ fn assert_dps(
     assert_eq!(
         projection.value.calculated,
         Some(CalculationProjection::Value {
-            value: damage / 2.0
+            value: damage / 2.0,
+            result: Some(tachiko_designer_runtime::StoredValueProjection::Number {
+                value: damage / 2.0
+            })
         })
     );
     assert_eq!(
@@ -249,7 +252,10 @@ fn chain_excludes_transitive_impacts_and_upstream_dependencies() {
     );
     assert_eq!(
         leaf.value.calculated,
-        Some(CalculationProjection::Value { value: 60.0 })
+        Some(CalculationProjection::Value {
+            value: 60.0,
+            result: Some(tachiko_designer_runtime::StoredValueProjection::Number { value: 60.0 })
+        })
     );
     assert_eq!(leaf.downstream_impacts, [] as [FieldTarget; 0]);
 }
