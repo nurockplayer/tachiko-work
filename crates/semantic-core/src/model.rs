@@ -391,11 +391,6 @@ pub struct Document {
 
 impl Document {
     #[must_use]
-    pub fn has_row_ranks(&self) -> bool {
-        self.entities.values().any(|entity| entity.rank.is_some())
-    }
-
-    #[must_use]
     pub fn empty(id: impl Into<DocumentId>, title: impl Into<String>) -> Self {
         Self {
             id: id.into(),

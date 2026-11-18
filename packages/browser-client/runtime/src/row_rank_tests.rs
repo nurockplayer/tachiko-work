@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    DesignerError, DesignerRuntime, ImportFieldType, ImportSelection, InteropMetadata,
+    SessionProfile, admit_imported_project_working_size, encode_portable_package_v1,
+    encode_project_bundle, import_workbook, inspect_project, inspect_project_working_size,
+    open_imported_project, open_local_document, open_local_document_working_size, open_portable_ro,
+    open_portable_ro_working_size, open_project, open_project_working_size, save_size,
+};
 use crate::interop_adapter::{
     CellStyle, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
 };
@@ -54,43 +60,47 @@ fn ranked_v3_runtime_admission_remains_refused_until_order_consumers_land() {
     let revision = resident.as_ref().unwrap().current_revision().to_owned();
     let scope = resident.as_ref().unwrap().occurrence_scope().to_owned();
     // Every replacing route must fail before publishing a new occurrence.
-    macro_rules! refused_without_replacement {
-        ($result:expr) => {
-            assert_rank_refusal($result);
-            let current = resident.as_ref().unwrap();
-            assert_eq!(current.current_revision(), revision);
-            assert_eq!(current.occurrence_scope(), scope);
-            assert_eq!(current.session.export_snapshot().document(), &original);
-        };
-    }
-    refused_without_replacement!(open_project(&mut resident, &bundle, NEXT_OCCURRENCE));
-    refused_without_replacement!(open_project_working_size(
+    let assert_unchanged = |resident: &Option<DesignerRuntime>| {
+        let current = resident.as_ref().unwrap();
+        assert_eq!(current.current_revision(), revision);
+        assert_eq!(current.occurrence_scope(), scope);
+        assert_eq!(current.session.export_snapshot().document(), &original);
+    };
+    assert_rank_refusal(open_project(&mut resident, &bundle, NEXT_OCCURRENCE));
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_project_working_size(
         &mut resident,
         &bundle,
-        NEXT_OCCURRENCE
+        NEXT_OCCURRENCE,
     ));
-    refused_without_replacement!(open_portable_ro(&mut resident, &portable, NEXT_OCCURRENCE));
-    refused_without_replacement!(open_portable_ro_working_size(
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_portable_ro(&mut resident, &portable, NEXT_OCCURRENCE));
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_portable_ro_working_size(
         &mut resident,
         &portable,
-        NEXT_OCCURRENCE
+        NEXT_OCCURRENCE,
     ));
-    refused_without_replacement!(open_local_document(
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_local_document(
         &mut resident,
         &portable,
-        NEXT_OCCURRENCE
+        NEXT_OCCURRENCE,
     ));
-    refused_without_replacement!(open_local_document_working_size(
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_local_document_working_size(
         &mut resident,
         &portable,
-        NEXT_OCCURRENCE
+        NEXT_OCCURRENCE,
     ));
-    refused_without_replacement!(open_imported_project(
+    assert_unchanged(&resident);
+    assert_rank_refusal(open_imported_project(
         &mut resident,
         &bundle,
         &metadata,
-        NEXT_OCCURRENCE
+        NEXT_OCCURRENCE,
     ));
+    assert_unchanged(&resident);
     assert_rank_refusal(admit_imported_project_working_size(
         &bundle,
         NEXT_OCCURRENCE,
