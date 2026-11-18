@@ -51,6 +51,7 @@ fn entity(id: &str, schema: &SchemaId, fields: BTreeMap<FieldId, Value>) -> (Ent
     (
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(id),
             schema: schema.clone(),

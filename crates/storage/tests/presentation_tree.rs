@@ -77,6 +77,7 @@ fn document() -> Document {
     document.entities.insert(
         EntityId::from("e1"),
         Entity {
+            rank: None,
             id: "e1".into(),
             key: "e1".into(),
             schema: "orders".into(),

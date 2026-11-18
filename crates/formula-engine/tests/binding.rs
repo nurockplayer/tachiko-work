@@ -59,6 +59,7 @@ fn document() -> Document {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("iron_sword"),
                 schema: schema_id,
@@ -199,6 +200,7 @@ fn projection_fails_with_stable_targets_instead_of_retargeting_reused_keys() {
     document.entities.insert(
         EntityId::from("replacement-stable"),
         Entity {
+            rank: None,
             id: EntityId::from("replacement-stable"),
             key: EntityKey::from("iron_sword"),
             schema: SchemaId::from("schema-stable"),

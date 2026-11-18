@@ -41,6 +41,7 @@ fn human_tracker_key_does_not_claim_stock_profile_or_block_generic_scalar_edit()
     document.entities.insert(
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from("entry"),
             schema: schema_id,

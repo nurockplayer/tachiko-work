@@ -42,6 +42,7 @@ fn date_document(value: &str) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("launch"),
             Entity {
+                rank: None,
                 id: "launch".into(),
                 key: "launch".into(),
                 schema: "event".into(),

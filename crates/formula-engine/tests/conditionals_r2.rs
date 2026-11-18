@@ -77,6 +77,7 @@ fn document() -> Document {
         fields,
     };
     let entity = Entity {
+        rank: None,
         id: EntityId::from("row"),
         key: EntityKey::from("row"),
         schema: SchemaId::from("schema"),

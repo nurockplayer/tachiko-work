@@ -66,6 +66,7 @@ fn row(
     (
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(id),
             schema: SchemaId::from("weapons"),

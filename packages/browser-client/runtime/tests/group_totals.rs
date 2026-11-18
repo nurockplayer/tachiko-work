@@ -60,6 +60,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
 
 fn entity_of(id: &str, fields: BTreeMap<FieldId, Value>) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from("rows"),

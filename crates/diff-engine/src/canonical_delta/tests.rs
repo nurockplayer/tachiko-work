@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
@@ -173,6 +173,7 @@ fn calculation_failure_is_reported_for_the_failing_side() {
     failed.entities.insert(
         "e".into(),
         Entity {
+            rank: None,
             id: "e".into(),
             key: "e".into(),
             schema: "s".into(),
@@ -205,6 +206,7 @@ fn same_field_text_transition_compares_schema_qualified_targets() {
     before.entities.insert(
         "e".into(),
         Entity {
+            rank: None,
             id: "e".into(),
             key: "e".into(),
             schema: SchemaId::from("old"),
@@ -435,6 +437,7 @@ fn value_document(value: &str) -> Document {
     document.entities.insert(
         "e".into(),
         Entity {
+            rank: None,
             id: "e".into(),
             key: "e".into(),
             schema: "s".into(),
@@ -579,6 +582,7 @@ fn compare_scoped(
 
 fn orders_entity(value: &str) -> Entity {
     Entity {
+        rank: None,
         id: "e".into(),
         key: "e".into(),
         schema: "orders".into(),
@@ -714,4 +718,69 @@ fn date_format_is_a_direct_field_fact_for_set_change_and_clear() {
             }]
         );
     }
+}
+
+#[test]
+fn rank_delta_contains_complete_create_delete_and_change_facts() {
+    use tachiko_semantic_core::RowRank;
+    let mut before = doc_with_schemas(&["s"]);
+    for id in ["a", "b"] {
+        before.entities.insert(
+            id.into(),
+            Entity {
+                id: id.into(),
+                key: id.into(),
+                schema: "s".into(),
+                rank: Some(RowRank::new("A").unwrap()),
+                fields: BTreeMap::new(),
+            },
+        );
+    }
+    let mut after = before.clone();
+    after.entities.get_mut("a").unwrap().rank = Some(RowRank::new("B").unwrap());
+    after.entities.remove("b");
+    let mut created = before.entities["b"].clone();
+    created.id = "c".into();
+    created.key = "c".into();
+    after.entities.insert(created.id.clone(), created);
+    let delta = canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after).unwrap();
+    assert!(matches!(delta.facts(), [
+        Fact::EntityRankChanged { entity, schema, before: Some(old), after: Some(new) },
+        Fact::EntityDeleted { definition: deleted, .. },
+        Fact::EntityCreated { definition: created, .. },
+    ] if entity.as_str() == "a" && schema.as_str() == "s"
+        && old.as_str() == "A" && new.as_str() == "B"
+        && deleted.rank == before.entities["b"].rank
+        && created.rank == after.entities["c"].rank));
+    let calculation_before = calculate(&before).unwrap();
+    let calculation_after = calculate(&after).unwrap();
+    let scoped = canonical_delta_scoped(
+        CANONICAL_SEMANTIC_DELTA_V2,
+        &before,
+        &after,
+        &calculation_before,
+        &calculation_after,
+        &DiffScope {
+            schemas: BTreeSet::default(),
+            entities: ["a".into(), "b".into(), "c".into()].into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(scoped, delta);
+    after.entities.get_mut("a").unwrap().rank = None;
+    assert!(
+        canonical_delta(CANONICAL_SEMANTIC_DELTA_V2, &before, &after)
+            .unwrap()
+            .facts()
+            .iter()
+            .any(|fact| matches!(fact, Fact::EntityRankChanged { after: None, .. }))
+    );
+    assert!(matches!(
+        crate::diff(&before, &after),
+        Err(crate::DiffError::UnsupportedRowRank)
+    ));
+    assert!(matches!(
+        crate::diff(&after, &before),
+        Err(crate::DiffError::UnsupportedRowRank)
+    ));
 }

@@ -225,6 +225,7 @@ fn document_fixture(
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 key: EntityKey::from(id.to_string()),
                 id,
                 schema: schema.clone(),

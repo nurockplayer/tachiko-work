@@ -48,6 +48,7 @@ fn fixture() -> DesignerRuntime {
     document.entities.insert(
         EntityId::from("r1"),
         Entity {
+            rank: None,
             id: EntityId::from("r1"),
             key: EntityKey::from("r1"),
             schema,

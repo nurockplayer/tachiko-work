@@ -74,6 +74,7 @@ fn schema(id: &str, fields: BTreeMap<FieldId, FieldDefinition>) -> Schema {
 
 fn plan_row(id: &str, fields: &[(&str, Value)]) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from("plan"),
@@ -192,6 +193,7 @@ fn document() -> Document {
             (
                 EntityId::from("summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("summary"),
                     key: EntityKey::from("summary"),
                     schema: SchemaId::from("summary"),

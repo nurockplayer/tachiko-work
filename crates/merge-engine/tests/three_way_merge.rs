@@ -34,6 +34,7 @@ fn balance_document(damage: f64, attack_interval: f64) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("iron_sword"),
             Entity {
+                rank: None,
                 id: EntityId::from("iron_sword"),
                 key: "iron_sword".into(),
                 schema: SchemaId::from("weapon"),
@@ -142,6 +143,7 @@ fn with_marker_schema(mut document: Document) -> Document {
 
 fn marker_entity(id: &str) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: id.into(),
         schema: SchemaId::from("marker"),

@@ -7,8 +7,8 @@ use tachiko_semantic_core::{
     Diagnostic, Document, DocumentId, EntityId, FieldConstraint, FieldDefinition, FieldId,
     FieldKey, FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionError,
     KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding,
-    SchemaId, SchemaKey, Value, validate_complete_formula_constraints, validate_document_core,
-    validate_keyed_grouped_sum_definitions,
+    RowRank, SchemaId, SchemaKey, Value, validate_complete_formula_constraints,
+    validate_document_core, validate_keyed_grouped_sum_definitions,
 };
 use thiserror::Error;
 
@@ -77,6 +77,7 @@ pub struct FieldDefinitionPayload {
 pub struct EntityDefinitionPayload {
     pub key: tachiko_semantic_core::EntityKey,
     pub schema: SchemaId,
+    pub rank: Option<RowRank>,
     pub fields: BTreeMap<FieldId, Value>,
 }
 
@@ -193,6 +194,12 @@ pub enum CanonicalDirectFact {
         before: tachiko_semantic_core::EntityKey,
         after: tachiko_semantic_core::EntityKey,
     },
+    EntityRankChanged {
+        entity: EntityId,
+        schema: SchemaId,
+        before: Option<RowRank>,
+        after: Option<RowRank>,
+    },
     EntitySchemaChanged {
         entity: EntityId,
         before: SchemaId,
@@ -282,6 +289,7 @@ impl CanonicalDirectFact {
             F::EntityDeleted { entity, .. } => (3, vec![entity.as_str()], 1),
             F::EntityKeyChanged { entity, .. } => (3, vec![entity.as_str()], 2),
             F::EntitySchemaChanged { entity, .. } => (3, vec![entity.as_str()], 3),
+            F::EntityRankChanged { entity, .. } => (3, vec![entity.as_str()], 4),
             F::EntityFieldValueCreated {
                 entity,
                 schema,
@@ -528,6 +536,7 @@ fn entity_payload(entity: &tachiko_semantic_core::Entity) -> EntityDefinitionPay
     EntityDefinitionPayload {
         key: entity.key.clone(),
         schema: entity.schema.clone(),
+        rank: entity.rank.clone(),
         fields: entity.fields.clone(),
     }
 }
@@ -769,6 +778,14 @@ fn compare_entity(
     facts: &mut Vec<CanonicalDirectFact>,
 ) {
     use CanonicalDirectFact as F;
+    if before.rank != after.rank {
+        facts.push(F::EntityRankChanged {
+            entity: id.clone(),
+            schema: after.schema.clone(),
+            before: before.rank.clone(),
+            after: after.rank.clone(),
+        });
+    }
     if before.key != after.key {
         facts.push(F::EntityKeyChanged {
             entity: id.clone(),

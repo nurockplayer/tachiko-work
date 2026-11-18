@@ -126,6 +126,7 @@ fn base_document() -> Document {
     document.entities.insert(
         EntityId::from("t1"),
         Entity {
+            rank: None,
             id: EntityId::from("t1"),
             key: EntityKey::from("t1"),
             schema: SchemaId::from("targets"),
@@ -138,6 +139,7 @@ fn base_document() -> Document {
         document.entities.insert(
             EntityId::from(id.as_str()),
             Entity {
+                rank: None,
                 id: EntityId::from(id.as_str()),
                 key: EntityKey::from(id.as_str()),
                 schema: SchemaId::from("rows"),

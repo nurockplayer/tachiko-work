@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Optional row ranks round-trip through .roproj/v3 and complete v2 delta/merge
+  evidence. Frozen writers and v1 history refuse ranked state; Designer admission
+  remains refused until stored-order consumers land (#871, #872). Positional
+  expressions remain pending.
+
 - Imported worksheet add, rename, delete and Undo/Redo publish the updated
   client-held import mapping. Added sheets stay last on reopen with that mapping
   and in XLSX export; stale export mappings are refused (#859).

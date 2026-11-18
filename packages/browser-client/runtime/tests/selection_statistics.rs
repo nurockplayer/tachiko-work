@@ -56,6 +56,7 @@ fn document(values: &[f64], columns: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: format!("row{index}").into(),
                     schema: "rows".into(),

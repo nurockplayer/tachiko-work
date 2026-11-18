@@ -35,6 +35,7 @@ fn schema(id: &str) -> Schema {
 
 fn row(id: &str, schema: &str, value: Option<Value>) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from(schema),

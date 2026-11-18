@@ -34,6 +34,7 @@ fn balance_document(damage: f64) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("sword"),
             Entity {
+                rank: None,
                 id: EntityId::from("sword"),
                 key: "sword".into(),
                 schema: SchemaId::from("weapon"),
@@ -450,6 +451,7 @@ fn shared_input_document(left: f64, right: f64) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("pair"),
             Entity {
+                rank: None,
                 id: EntityId::from("pair"),
                 key: "pair".into(),
                 schema: SchemaId::from("pair"),
@@ -473,6 +475,7 @@ fn shared_input_document(left: f64, right: f64) -> Document {
 /// A summary formula reads a whole plan column, so every edited row reaches it.
 fn column_total_document(rent: f64, ads: f64) -> Document {
     let plan_row = |id: &str, reserve: f64| Entity {
+        rank: None,
         id: EntityId::from(id),
         key: id.into(),
         schema: SchemaId::from("plan"),
@@ -512,6 +515,7 @@ fn column_total_document(rent: f64, ads: f64) -> Document {
             (
                 EntityId::from("summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("summary"),
                     key: "summary".into(),
                     schema: SchemaId::from("summary"),

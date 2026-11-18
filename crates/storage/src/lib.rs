@@ -134,6 +134,8 @@ pub enum FormatError {
     UnsupportedDateFormat,
     #[error("this frozen representation does not support durable field order; use .roproj/v3")]
     UnsupportedFieldOrder,
+    #[error("this frozen representation does not support row rank; use .roproj/v3")]
+    UnsupportedRowRank,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -166,6 +168,7 @@ pub enum FormatError {
 /// profile, or a representation error if conversion or canonical encoding
 /// fails.
 pub fn to_canonical_string(document: &Document) -> Result<String, FormatError> {
+    reject_row_ranks(document)?;
     reject_display_names(document)?;
     reject_date_formats(document)?;
     reject_field_constraints(document)?;
@@ -532,6 +535,13 @@ pub(crate) fn reject_number_formats(document: &Document) -> Result<(), FormatErr
     Ok(())
 }
 
+pub(crate) fn reject_row_ranks(document: &Document) -> Result<(), FormatError> {
+    if document.has_row_ranks() {
+        return Err(FormatError::UnsupportedRowRank);
+    }
+    Ok(())
+}
+
 pub(crate) fn reject_field_orders(document: &Document) -> Result<(), FormatError> {
     if document.has_field_orders() {
         return Err(FormatError::UnsupportedFieldOrder);
@@ -598,6 +608,7 @@ fn map_v1_encode_error(error: legacy_direct_ro::v1::CodecError) -> FormatError {
 
 fn map_v2_decode_error(error: V2CodecError) -> FormatError {
     match error {
+        V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
         V2CodecError::Json(source) => FormatError::InvalidRepresentation {
             message: source.to_string(),
             source: Some(source),
@@ -611,6 +622,7 @@ fn map_v2_decode_error(error: V2CodecError) -> FormatError {
 
 fn map_v2_encode_error(error: V2CodecError) -> FormatError {
     match error {
+        V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
         V2CodecError::Json(source) => FormatError::Json(source),
         V2CodecError::InvalidRepresentation(message) => FormatError::InvalidRepresentation {
             message,

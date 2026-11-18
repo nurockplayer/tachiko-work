@@ -144,6 +144,7 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
         (
             EntityId::from("area_designer"),
             Entity {
+                rank: None,
                 id: EntityId::from("area_designer"),
                 key: EntityKey::from("designer"),
                 schema: areas,
@@ -153,6 +154,7 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
         (
             EntityId::from("gap_authoring"),
             Entity {
+                rank: None,
                 id: EntityId::from("gap_authoring"),
                 key: EntityKey::from("schema_authoring"),
                 schema: product_gaps.clone(),
@@ -168,6 +170,7 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
         (
             EntityId::from("gap_persistence"),
             Entity {
+                rank: None,
                 id: EntityId::from("gap_persistence"),
                 key: EntityKey::from("create_only_persistence"),
                 schema: product_gaps,
@@ -183,6 +186,7 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
         (
             EntityId::from("note_beta"),
             Entity {
+                rank: None,
                 id: EntityId::from("note_beta"),
                 key: EntityKey::from("team_workspace_beta"),
                 schema: roadmap_notes.clone(),
@@ -195,6 +199,7 @@ fn product_gap_entities_without_formulas() -> BTreeMap<EntityId, Entity> {
         (
             EntityId::from("note_designer"),
             Entity {
+                rank: None,
                 id: EntityId::from("note_designer"),
                 key: EntityKey::from("designer_mvp"),
                 schema: roadmap_notes,
@@ -233,6 +238,7 @@ fn date_document() -> Document {
         entities: BTreeMap::from([(
             EntityId::from("launch"),
             Entity {
+                rank: None,
                 id: EntityId::from("launch"),
                 key: EntityKey::from("launch"),
                 schema: SchemaId::from("events"),

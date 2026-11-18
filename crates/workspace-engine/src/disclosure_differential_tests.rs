@@ -50,6 +50,7 @@ fn number_schema(id: &str, fields: &[&str]) -> Schema {
 
 fn entity(id: &str, schema: &str, fields: &[(&str, Value)]) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from(schema),

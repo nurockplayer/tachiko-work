@@ -53,6 +53,7 @@ fn document() -> Document {
         doc.entities.insert(
             id.into(),
             Entity {
+                rank: None,
                 id: id.into(),
                 key: id.into(),
                 schema: "s".into(),
@@ -803,6 +804,7 @@ fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
     base.entities.insert(
         "summary".into(),
         Entity {
+            rank: None,
             id: "summary".into(),
             key: "summary".into(),
             schema: "t".into(),

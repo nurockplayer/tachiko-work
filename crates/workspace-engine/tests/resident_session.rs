@@ -287,6 +287,7 @@ fn row_document(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("row-{index}")),
                 schema: SchemaId::from("rows"),
@@ -324,6 +325,7 @@ fn formula_document() -> Document {
     document.entities.insert(
         EntityId::from("sword"),
         Entity {
+            rank: None,
             id: "sword".into(),
             key: "sword".into(),
             schema: "weapons".into(),
@@ -1226,6 +1228,7 @@ fn appended_entity_invalidates_its_whole_row() {
     candidate.entities.insert(
         EntityId::from("row-new"),
         Entity {
+            rank: None,
             id: "row-new".into(),
             key: "row-new".into(),
             schema: SchemaId::from("rows"),

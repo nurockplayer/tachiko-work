@@ -126,6 +126,7 @@ fn chain_document(cycle: bool) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("oracle_chain_{index:08}")),
                     schema: schema_id.clone(),

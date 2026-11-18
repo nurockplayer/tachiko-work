@@ -58,6 +58,7 @@ fn fixture() -> Document {
     document.entities.insert(
         "e".into(),
         Entity {
+            rank: None,
             id: "e".into(),
             key: "entity".into(),
             schema: "s".into(),
@@ -80,6 +81,7 @@ fn fixture() -> Document {
     document.entities.insert(
         "q".into(),
         Entity {
+            rank: None,
             id: "q".into(),
             key: "other_entity".into(),
             schema: "other".into(),

@@ -13,7 +13,7 @@ use tachiko_semantic_core::{
     FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, KeyedGroupedSumDefinition,
     KeyedGroupedSumDefinitionError, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, MAX_CONDITIONAL_CRITERIA, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, PresentationError, PresentationStore, Schema, SchemaId,
+    MAX_EXPRESSION_NODES, Number, PresentationError, PresentationStore, RowRank, Schema, SchemaId,
     SchemaKey, Value, validate_document, validate_keyed_grouped_sum_definitions,
     validate_presentation,
 };
@@ -360,7 +360,15 @@ struct EntityV3 {
     id: String,
     key: String,
     schema: String,
+    #[serde(default, deserialize_with = "deserialize_rank")]
+    rank: Option<RowRank>,
     fields: BTreeMap<String, ValueV3>,
+}
+
+fn deserialize_rank<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<RowRank>, D::Error> {
+    RowRank::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -1126,6 +1134,7 @@ impl EntityV3 {
             id: EntityId::from(self.id),
             key: EntityKey::from(self.key),
             schema: SchemaId::from(self.schema),
+            rank: self.rank,
             fields,
         })
     }
@@ -1589,6 +1598,7 @@ impl EntityV3 {
             id: entity.id.to_string(),
             key: entity.key.to_string(),
             schema: entity.schema.to_string(),
+            rank: entity.rank.clone(),
             fields,
         }
     }
@@ -2083,6 +2093,9 @@ fn write_entity(output: &mut String, entity: &EntityV3) -> Result<(), FormatErro
     compact_member_string(output, "id", &entity.id, true)?;
     compact_member_string(output, "key", &entity.key, true)?;
     compact_member_string(output, "schema", &entity.schema, true)?;
+    if let Some(rank) = &entity.rank {
+        compact_member_string(output, "rank", rank.as_str(), true)?;
+    }
     compact_member_prefix(output, "fields")?;
     output.push('{');
     for (index, (id, value)) in entity.fields.iter().enumerate() {

@@ -732,6 +732,7 @@ fn entity_approx_bytes(entity: &Entity) -> usize {
     entity.id.as_str().len()
         + entity.key.as_str().len()
         + entity.schema.as_str().len()
+        + entity.rank.as_ref().map_or(0, |rank| rank.as_str().len())
         + entity
             .fields
             .iter()
@@ -6267,6 +6268,11 @@ fn reject_legacy_field_orders(
     candidate: &Document,
     body: &SemanticPatchBody,
 ) -> Result<(), PatchLifecycleError> {
+    if base.has_row_ranks() || candidate.has_row_ranks() {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedRowRank)),
+        });
+    }
     if base.has_field_orders()
         || candidate.has_field_orders()
         || body
@@ -6400,6 +6406,9 @@ fn constraint_affected_values(
 fn formula_projection_document(document: &Document) -> Document {
     let mut document = document.clone();
     document.keyed_grouped_sum_definitions.clear();
+    for entity in document.entities.values_mut() {
+        entity.rank = None;
+    }
     for schema in document.schemas.values_mut() {
         project_formula_schema(schema);
     }
@@ -6422,9 +6431,9 @@ fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) ->
     }
     for entity_id in &scope.entities {
         if let Some(entity) = document.entities.get(entity_id) {
-            projection
-                .entities
-                .insert(entity_id.clone(), entity.clone());
+            let mut entity = entity.clone();
+            entity.rank = None;
+            projection.entities.insert(entity_id.clone(), entity);
         }
     }
     projection
@@ -7035,6 +7044,7 @@ mod tests {
         document.entities.insert(
             EntityId::from("order"),
             Entity {
+                rank: None,
                 id: EntityId::from("order"),
                 key: EntityKey::from("order"),
                 schema: orders.clone(),
@@ -7050,6 +7060,7 @@ mod tests {
         document.entities.insert(
             EntityId::from("product"),
             Entity {
+                rank: None,
                 id: EntityId::from("product"),
                 key: EntityKey::from("product"),
                 schema: products.clone(),
@@ -7357,6 +7368,7 @@ mod tests {
         document.entities.insert(
             EntityId::from("unmatched-product"),
             Entity {
+                rank: None,
                 id: EntityId::from("unmatched-product"),
                 key: EntityKey::from("unmatched-product"),
                 schema: SchemaId::from("products"),
@@ -7838,6 +7850,7 @@ mod tests {
 
     fn entity_with(id: &str, fields: BTreeMap<FieldId, Value>) -> Entity {
         Entity {
+            rank: None,
             id: EntityId::from(id),
             key: EntityKey::from(id),
             schema: SchemaId::from("s"),

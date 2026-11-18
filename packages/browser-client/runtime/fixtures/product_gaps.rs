@@ -119,6 +119,7 @@ fn gap(
     (
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id.clone(),
             key: EntityKey::from(key),
             schema: schema.clone(),

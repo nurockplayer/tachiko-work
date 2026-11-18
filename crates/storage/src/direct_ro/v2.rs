@@ -15,6 +15,7 @@ pub(crate) const FORMAT_VERSION: u32 = 2;
 pub(crate) enum CodecError {
     Json(serde_json::Error),
     InvalidRepresentation(String),
+    UnsupportedRowRank,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -192,6 +193,9 @@ fn deserialize_round_digits<'de, D: serde::Deserializer<'de>>(
 
 impl DocumentV2 {
     pub(crate) fn from_semantic(document: &Document) -> Result<Self, CodecError> {
+        if document.has_row_ranks() {
+            return Err(CodecError::UnsupportedRowRank);
+        }
         if !document.keyed_grouped_sum_definitions.is_empty() {
             return invalid(
                 "direct .ro/v2 cannot encode saved keyed grouped-sum definitions; use .roproj/v2"
@@ -437,6 +441,7 @@ impl EntityV2 {
 
     fn into_semantic(self) -> Result<Entity, CodecError> {
         Ok(Entity {
+            rank: None,
             id: EntityId::from(self.id),
             key: EntityKey::from(self.key),
             schema: SchemaId::from(self.schema),

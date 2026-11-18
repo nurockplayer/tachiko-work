@@ -49,6 +49,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 EntityId::from("aria"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("aria"),
                     key: "aria".into(),
                     schema: SchemaId::from("character"),
@@ -61,6 +62,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 EntityId::from("sword"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("sword"),
                     key: "sword".into(),
                     schema: SchemaId::from("weapon"),

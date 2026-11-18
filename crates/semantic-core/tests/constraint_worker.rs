@@ -44,6 +44,7 @@ fn constrained_document(
             (
                 id.into(),
                 Entity {
+                    rank: None,
                     id: id.into(),
                     key: id.into(),
                     schema: "schema".into(),
@@ -198,6 +199,7 @@ fn direct_constraints_preserve_unicode_absence_inclusive_bounds_and_sorted_subje
     absent.entities.insert(
         "optional".into(),
         Entity {
+            rank: None,
             id: "optional".into(),
             key: "optional".into(),
             schema: "schema".into(),

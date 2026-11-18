@@ -32,6 +32,7 @@ fn definition(id: &str, field_type: FieldType) -> FieldDefinition {
 }
 fn entity(id: &str, name: &str) -> Entity {
     Entity {
+        rank: None,
         id: id.into(),
         key: id.into(),
         schema: "s".into(),

@@ -1036,6 +1036,7 @@ fn wq_document(shape: WqShape) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: schema_id.clone(),
@@ -1515,6 +1516,7 @@ fn wb_seeded_document(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: schema_id.clone(),

@@ -92,6 +92,7 @@ fn fixture() -> Document {
     document.entities.insert(
         "entity-a".into(),
         Entity {
+            rank: None,
             id: "entity-a".into(),
             key: "item".into(),
             schema: "schema".into(),

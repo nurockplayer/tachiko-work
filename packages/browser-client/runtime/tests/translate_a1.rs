@@ -65,6 +65,7 @@ fn fixture_document() -> Document {
             doc.entities.insert(
                 row.into(),
                 Entity {
+                    rank: None,
                     id: row.into(),
                     key: row.into(),
                     schema: schema.into(),

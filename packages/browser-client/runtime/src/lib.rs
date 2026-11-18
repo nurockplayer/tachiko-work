@@ -39,6 +39,8 @@ mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod row_rank_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod totals_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod working_size_tests;
@@ -1074,6 +1076,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_number_formats()
         || document.has_date_formats()
         || document.has_field_orders()
+        || document.has_row_ranks()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -3276,6 +3279,11 @@ impl DesignerRuntime {
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
+        if document.has_row_ranks() {
+            return Err(DesignerError::UnsupportedProject {
+                message: "Row rank requires stored-order consumers (PR1b); ranked input is not supported yet.".to_owned(),
+            });
+        }
         let (capacity_usage, working_admission) = match profile {
             // The same three checks `ensure_document_profile` runs for this
             // profile, in the same order, keeping the totals the first and
@@ -4391,6 +4399,11 @@ impl DesignerRuntime {
         if snapshot.document().has_number_formats() || snapshot.document().has_date_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
+        if snapshot.document().has_row_ranks() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "row rank requires exportProjectV3 or exportCanonicalTree".to_owned(),
             });
         }
         if snapshot.document().has_field_orders() {
@@ -6949,6 +6962,7 @@ impl DesignerRuntime {
             }
             let entity_key = native_table_key(&entity_key, "copied entity key")?;
             let mut copied = Entity {
+                rank: source.rank.clone(),
                 id: target_id.clone(),
                 key: EntityKey::from(entity_key),
                 schema: schema_id.clone(),
@@ -8095,6 +8109,7 @@ impl DesignerRuntime {
             (
                 EntityId::from("monthly_summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("monthly_summary"),
                     key: EntityKey::from("monthly_summary"),
                     schema: budget_summary,
@@ -10023,6 +10038,7 @@ fn budget_item(
     Ok((
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(id),
             schema,
@@ -12314,6 +12330,7 @@ fn tracker_row(
         {
             allocated.insert(id.clone());
             break Entity {
+                rank: None,
                 id,
                 key,
                 schema: SchemaId::from("tracker"),
@@ -12482,6 +12499,7 @@ fn native_table_row(
                 fields.insert(column.id.clone(), value);
             }
             return Ok(Entity {
+                rank: None,
                 id,
                 key,
                 schema: SchemaId::from(spec.summary.id.clone()),
