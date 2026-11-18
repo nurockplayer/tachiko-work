@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fmt::Write as _, fs, path::Path};
 
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core as semantic;
@@ -125,7 +125,7 @@ fn unranked_v3_and_seed_bytes_unchanged() {
     for line in manifest.lines() {
         let (hash, path) = line.split_once("  ").unwrap();
         assert_eq!(
-            format!("{:x}", Sha256::digest(fs::read(root.join(path)).unwrap())),
+            hex(&Sha256::digest(fs::read(root.join(path)).unwrap())),
             hash,
             "{path}"
         );
@@ -147,4 +147,11 @@ fn ranked_documents_refuse_frozen_writers_and_v1_history() {
         encode_roproj_v2(&document),
         Err(FormatError::UnsupportedRowRank)
     ));
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut output, byte| {
+        write!(output, "{byte:02x}").unwrap();
+        output
+    })
 }

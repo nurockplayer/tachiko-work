@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{CalculationError, calculate};
 use tachiko_semantic_core::{
@@ -761,7 +761,7 @@ fn rank_delta_contains_complete_create_delete_and_change_facts() {
         &calculation_before,
         &calculation_after,
         &DiffScope {
-            schemas: Default::default(),
+            schemas: BTreeSet::default(),
             entities: ["a".into(), "b".into(), "c".into()].into(),
         },
     )
