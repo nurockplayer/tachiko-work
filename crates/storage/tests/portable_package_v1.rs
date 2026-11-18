@@ -473,6 +473,7 @@ fn reference_document() -> Document {
             (
                 EntityId::from("target-a"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("target-a"),
                     key: EntityKey::from("target"),
                     schema: target_schema,
@@ -482,6 +483,7 @@ fn reference_document() -> Document {
             (
                 EntityId::from("owner-aa"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("owner-aa"),
                     key: EntityKey::from("owner"),
                     schema: owner_schema,

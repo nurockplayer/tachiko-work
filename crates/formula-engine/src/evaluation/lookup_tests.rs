@@ -46,6 +46,7 @@ fn a_thousand_lookup_formulas_share_one_index_each_pass() {
         doc.entities.insert(
             row.clone().into(),
             Entity {
+                rank: None,
                 id: row.clone().into(),
                 key: row.into(),
                 schema: "table".into(),
@@ -59,6 +60,7 @@ fn a_thousand_lookup_formulas_share_one_index_each_pass() {
         doc.entities.insert(
             owner.clone().into(),
             Entity {
+                rank: None,
                 id: owner.clone().into(),
                 key: owner.into(),
                 schema: "summary".into(),

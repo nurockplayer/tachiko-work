@@ -51,6 +51,7 @@ fn document(fields: Vec<(&str, FieldType, Value)>) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity-stable"),
             Entity {
+                rank: None,
                 id: EntityId::from("entity-stable"),
                 key: "entity".into(),
                 schema: SchemaId::from("schema-stable"),
@@ -542,6 +543,7 @@ fn generated_reference_document(targets: &[usize]) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity-stable"),
             Entity {
+                rank: None,
                 id: EntityId::from("entity-stable"),
                 key: "entity".into(),
                 schema: SchemaId::from("schema-stable"),
@@ -706,6 +708,7 @@ fn compatibility_projection_of_a_long_failed_chain_is_stack_safe() {
         entities: BTreeMap::from([(
             EntityId::from("entity-stable"),
             Entity {
+                rank: None,
                 id: EntityId::from("entity-stable"),
                 key: "entity".into(),
                 schema: SchemaId::from("schema-stable"),

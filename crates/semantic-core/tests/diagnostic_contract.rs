@@ -186,6 +186,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             EntityId::from("entity-a"),
             Entity {
+                rank: None,
                 id: "declared-entity".into(),
                 key: "duplicate-entity".into(),
                 schema: "schema-a".into(),
@@ -195,6 +196,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             EntityId::from("entity-b"),
             Entity {
+                rank: None,
                 id: "declared-entity".into(),
                 key: "duplicate-entity".into(),
                 schema: "schema-a".into(),

@@ -33,6 +33,7 @@ fn basic_document() -> Document {
         fields: BTreeMap::from([("value".into(), number_field("value"))]),
     };
     let entity = Entity {
+        rank: None,
         id: EntityId::from("row"),
         key: "row".into(),
         schema: "schema".into(),
@@ -208,6 +209,7 @@ fn schema_qualified_value_transition_preserves_unmaterialized_evidence() {
     base.entities.insert(
         "entity".into(),
         Entity {
+            rank: None,
             id: "entity".into(),
             key: "entity".into(),
             schema: "old".into(),
@@ -398,4 +400,68 @@ fn a_one_sided_move_of_a_new_field_survives_the_merge() {
         merged_order(merge_v2(&base, &base, &right)),
         Some(["added", "value", "other"].map(FieldId::from).to_vec())
     );
+}
+
+#[test]
+fn rank_merge_independent_equal_and_conflicting_changes() {
+    use tachiko_semantic_core::{RowRank, compare_row_order};
+    let mut base = basic_document();
+    let mut second = base.entities["row"].clone();
+    second.id = "second".into();
+    second.key = "second".into();
+    base.entities.insert(second.id.clone(), second);
+    let mut left = base.clone();
+    let mut right = base.clone();
+    left.entities.get_mut("row").unwrap().rank = Some(RowRank::new("A").unwrap());
+    right.entities.get_mut("second").unwrap().rank = Some(RowRank::new("A").unwrap());
+    let MergeOutcomeV2::Merged(candidate) = merge_v2(&base, &left, &right) else {
+        panic!("independent ranks must merge")
+    };
+    assert_eq!(candidate.entities["row"].rank, left.entities["row"].rank);
+    assert_eq!(
+        candidate.entities["second"].rank,
+        right.entities["second"].rank
+    );
+    assert!(compare_row_order(&candidate.entities["row"], &candidate.entities["second"]).is_lt());
+    assert!(compare_row_order(&left.entities["row"], &left.entities["second"]).is_lt());
+    right = left.clone();
+    let MergeOutcomeV2::Merged(candidate) = merge_v2(&base, &left, &right) else {
+        panic!("equal rank changes must merge")
+    };
+    assert_eq!(candidate.entities["row"].rank, left.entities["row"].rank);
+    right.entities.get_mut("row").unwrap().rank = Some(RowRank::new("B").unwrap());
+    let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, &left, &right) else {
+        panic!("unequal ranks must conflict")
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].target(), &ConflictTarget::Entity("row".into()));
+    assert_eq!(conflicts[0].facet(), ConflictFacetV2::Rank);
+    assert_eq!(conflicts[0].kind(), ConflictKind::ConcurrentChange);
+    assert_eq!(
+        conflicts[0].base(),
+        &ConflictFactV2::Present(MergeValueV2::Rank(None))
+    );
+    right = base.clone();
+    right.entities.remove("row");
+    for (l, r) in [(&left, &right), (&right, &left)] {
+        let MergeOutcomeV2::Conflicted(conflicts) = merge_v2(&base, l, r) else {
+            panic!("delete/rank change must conflict")
+        };
+        let conflict = &conflicts[0];
+        assert_eq!(conflict.kind(), ConflictKind::DeleteModify);
+        assert_eq!(conflict.facet(), ConflictFacetV2::Subject);
+        let evidence = if l.entities.contains_key("row") {
+            conflict.left()
+        } else {
+            conflict.right()
+        };
+        assert!(
+            matches!(evidence, ConflictFactV2::Present(MergeValueV2::EntitySubject(subject))
+            if subject.rank == left.entities["row"].rank)
+        );
+    }
+    assert!(matches!(
+        merge(&base, &left, &base),
+        MergeOutcome::UnsupportedRowRank
+    ));
 }

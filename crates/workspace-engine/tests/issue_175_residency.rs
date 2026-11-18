@@ -254,6 +254,7 @@ fn synthetic_document(entity_count: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("retained_{index:08}")),
                     schema: schema_id.clone(),
@@ -302,6 +303,7 @@ fn oracle_chain_document(entity_count: usize, cycle: bool) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("oracle_chain_{index:08}")),
                     schema: schema_id.clone(),

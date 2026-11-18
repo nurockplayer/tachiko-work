@@ -391,6 +391,11 @@ pub struct Document {
 
 impl Document {
     #[must_use]
+    pub fn has_row_ranks(&self) -> bool {
+        self.entities.values().any(|entity| entity.rank.is_some())
+    }
+
+    #[must_use]
     pub fn empty(id: impl Into<DocumentId>, title: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -525,6 +530,11 @@ impl FieldDefinition {
 
 impl Document {
     #[must_use]
+    pub fn has_row_ranks(&self) -> bool {
+        self.entities.values().any(|entity| entity.rank.is_some())
+    }
+
+    #[must_use]
     pub fn has_date_formats(&self) -> bool {
         self.schemas
             .values()
@@ -653,12 +663,71 @@ pub enum FieldType {
     Reference { schema: SchemaId },
 }
 
+/// A validated, opaque row-order fact (ADR-0048).
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+#[serde(transparent)]
+pub struct RowRank(String);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidRowRank;
+
+impl fmt::Display for InvalidRowRank {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("row rank must match [0-9A-Za-z]{1,64} and must not end in 0")
+    }
+}
+
+impl std::error::Error for InvalidRowRank {}
+
+impl RowRank {
+    /// Validate the durable rank at the construction boundary.
+    ///
+    /// # Errors
+    /// Returns `InvalidRowRank` for an invalid alphabet, length or final byte.
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidRowRank> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 64
+            || value.ends_with('0')
+            || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(InvalidRowRank);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for RowRank {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+/// Rank-present first, then unsigned rank bytes, then stable entity identity.
+#[must_use]
+pub fn compare_row_order(left: &Entity, right: &Entity) -> Ordering {
+    match (&left.rank, &right.rank) {
+        (Some(left), Some(right)) => left.as_str().as_bytes().cmp(right.as_str().as_bytes()),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+    .then_with(|| left.id.cmp(&right.id))
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entity {
     pub id: EntityId,
     pub key: EntityKey,
     pub schema: SchemaId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<RowRank>,
     pub fields: BTreeMap<FieldId, Value>,
 }
 

@@ -34,9 +34,9 @@ pub use model::{
     ColumnAddress, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
     ConditionalAggregate, Date, DatePartKind, Document, DocumentId, Entity, EntityId, EntityKey,
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, FormulaExpressionType, InvalidDate, InvalidNumber, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, Number, NumberFormat, NumberFormatError, NumberFormatKind, Schema,
-    SchemaId, SchemaKey, Value,
+    FieldType, FormulaExpressionType, InvalidDate, InvalidNumber, InvalidRowRank,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, NumberFormat, NumberFormatError,
+    NumberFormatKind, RowRank, Schema, SchemaId, SchemaKey, Value, compare_row_order,
 };
 pub use presentation::{
     BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,

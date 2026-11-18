@@ -685,6 +685,7 @@ fn oversized_post_edit_document() -> Document {
             document.entities.insert(
                 entity_id.clone(),
                 Entity {
+                    rank: None,
                     id: entity_id.clone(),
                     key: EntityKey::from(format!("row_{sheet}_{row}")),
                     schema: schema_id.clone(),

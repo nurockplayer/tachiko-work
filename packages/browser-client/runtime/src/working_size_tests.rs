@@ -206,6 +206,7 @@ fn text_grid(rows: usize, columns: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -398,6 +399,7 @@ fn populated_limit_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -1520,6 +1522,7 @@ fn shared_reference_grid(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -1669,6 +1672,7 @@ fn redraw_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("ledger"),
@@ -1685,6 +1689,7 @@ fn redraw_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("mk{row:05}")),
                 schema: SchemaId::from("mirror"),
@@ -2487,6 +2492,7 @@ fn fill_grid(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -2534,6 +2540,7 @@ fn two_collection_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -2546,6 +2553,7 @@ fn two_collection_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("mk{row:05}")),
                 schema: SchemaId::from("mirror"),
@@ -3146,6 +3154,7 @@ fn values_grid() -> Document {
     document.entities.insert(
         EntityId::from("t00000"),
         Entity {
+            rank: None,
             id: EntityId::from("t00000"),
             key: EntityKey::from("kt00000"),
             schema: SchemaId::from("refs"),
@@ -3225,6 +3234,7 @@ fn values_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{index:05}")),
                 schema: SchemaId::from("grid"),
@@ -3286,6 +3296,7 @@ fn long_identity_grid() -> Document {
     document.entities.insert(
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(long.clone()),
             schema: schema_id,
@@ -3518,6 +3529,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     document.entities.insert(
         EntityId::from("e00000"),
         Entity {
+            rank: None,
             id: EntityId::from("e00000"),
             key: EntityKey::from("ke00000"),
             schema: SchemaId::from("entries"),
@@ -3682,6 +3694,7 @@ fn wrap_document() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -4119,6 +4132,7 @@ fn number_grid_filled(rows: usize, columns: usize, filled: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),

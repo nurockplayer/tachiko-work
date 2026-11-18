@@ -38,6 +38,7 @@ fn document() -> Document {
     document.entities.insert(
         "e1".into(),
         Entity {
+            rank: None,
             id: "e1".into(),
             key: "e1".into(),
             schema: "orders".into(),
@@ -513,6 +514,7 @@ fn bounded_store(count: usize) -> (Document, PresentationStore) {
     document.entities.insert(
         "e1".into(),
         Entity {
+            rank: None,
             id: "e1".into(),
             key: "e1".into(),
             schema: "orders".into(),

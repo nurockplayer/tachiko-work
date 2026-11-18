@@ -64,6 +64,7 @@ fn document(rows: u32) -> Document {
         document.entities.insert(
             EntityId::from(id.clone()),
             Entity {
+                rank: None,
                 id: EntityId::from(id.clone()),
                 key: EntityKey::from(id),
                 schema: schema.clone(),

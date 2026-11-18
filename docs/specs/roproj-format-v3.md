@@ -223,13 +223,25 @@ bytes.
 
 ### Row rank and positional references — ADR-0048
 
-Implementation state: pending. Until the implementing PR lands, the writer can't
-emit these and a reader refuses them, as for any unknown member or tag.
+Implementation state: optional row rank storage and in-process v2 history are
+implemented. Positional expressions remain pending and readers refuse their
+unknown tags. Designer runtime admission continues to refuse ranked documents
+until the stored-order consumers land in PR1b (#872).
 
 [ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
 optional Entity member `rank`, after `schema` and before `fields`, omitted when
 absent. It matches `[0-9A-Za-z]{1,64}` and doesn't end in `0`; anything else fails
-admission. Bound Expression gains three forms:
+admission, including explicit `null`, empty strings, invalid alphabet, trailing
+`0`, and ranks longer than 64 bytes. Physical records and shards remain ordered
+and selected by EntityId; format version stays v3 with no migration edge.
+Unranked canonical trees, packages and pinned acceptance seeds keep their bytes.
+Direct-ro/v2 and roproj/v1/v2 writers refuse ranked state with a typed error.
+V2 delta records complete rank payloads and a before/after entity-rank fact at
+ordering slot `(3, EntityId, 4)`; v2 merge uses an entity `rank` facet at rank 3.
+See [semantic diff](semantic-diff-spec.md#row-rank-v2-amendment--adr-0048) and
+[conflict resolution](conflict-resolution.md#row-rank-v2-amendment--adr-0048).
+
+The still-pending Bound Expression extension defines three forms:
 
 ```json
 {"op":"range_aggregate","args":{"function":"sum","schema":"...","field":"...","first_row":1,"last_row":8}}

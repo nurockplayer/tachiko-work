@@ -78,6 +78,7 @@ fn document() -> Document {
             (
                 source_id.clone(),
                 Entity {
+                    rank: None,
                     id: source_id.clone(),
                     key: EntityKey::from("iron_sword"),
                     schema: schema_id.clone(),
@@ -90,6 +91,7 @@ fn document() -> Document {
             (
                 owner_id.clone(),
                 Entity {
+                    rank: None,
                     id: owner_id,
                     key: EntityKey::from("shop"),
                     schema: schema_id,

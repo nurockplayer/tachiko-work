@@ -52,6 +52,7 @@ fn native_presentation_is_projected_and_survives_xlsx() {
     document.schemas.insert(schema.id.clone(), schema);
     for id in ["row1", "row2"] {
         let entity = Entity {
+            rank: None,
             id: id.into(),
             key: EntityKey::from(id),
             schema: "table".into(),
@@ -1096,6 +1097,7 @@ fn stage5_palette_bound_drops_cell_and_validates() {
         document.entities.insert(
             id.clone().into(),
             Entity {
+                rank: None,
                 id: id.clone().into(),
                 key: id.clone().into(),
                 schema: "table".into(),

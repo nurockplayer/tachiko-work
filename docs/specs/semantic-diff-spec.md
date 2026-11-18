@@ -376,3 +376,22 @@ convergent mutation input; concrete implementations remain future queued work.
 ## Principle
 
 Git stores changes. Tachiko Work explains meaning.
+
+## Row-rank v2 amendment — ADR-0048
+
+Rank storage and in-process v2 history are implemented independently of the
+still-pending positional expressions. Complete entity create/delete payloads
+include `rank: Option<RowRank>`; absence is a direct unranked fact. A continuing
+entity emits `entity_rank_changed` with `EntityId`, the after-state `SchemaId`,
+and complete `before` / `after` optional ranks. Entity parent suppression still
+applies: a create/delete payload contains rank without a duplicate rank fact.
+
+The new fact sorts at `(3, EntityId, 4)`, after entity schema changes and before
+stored-field facts. Existing ordering slots stay fixed. Scoped canonical v2
+comparison retains rank-only edits. Frozen v1 diff refuses any ranked input;
+its DTOs and wire vocabulary stay unchanged.
+
+Human-facing v2 projections group changed row ranks by table, with a row count
+per table. Expansion uses the existing complete `CanonicalSemanticDelta::facts()`
+API. No new public rendering API or CLI flag is introduced. Canonical facts are
+never collapsed; grouping is presentation only.

@@ -59,6 +59,7 @@ fn fixture(dependent: bool) -> DesignerRuntime {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(id.to_string()),
                 schema: schema.clone(),

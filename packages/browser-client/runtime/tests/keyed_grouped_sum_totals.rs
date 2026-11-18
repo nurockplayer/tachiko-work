@@ -53,6 +53,7 @@ fn schema(name: &str, fields: &[&str]) -> Schema {
 
 fn entity(schema: &str, id: &str, values: &[(&str, Value)]) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from(schema),

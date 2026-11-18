@@ -495,6 +495,7 @@ pub fn synthetic_document(entity_count: usize) -> Result<Document, SpikeError> {
         entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key,
                 schema: schema_id.clone(),

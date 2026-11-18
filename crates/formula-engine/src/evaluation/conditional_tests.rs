@@ -168,6 +168,7 @@ fn summary_schema() -> Schema {
 
 fn row(id: &str, fields: &[(&str, Value)]) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from("row"),
@@ -180,6 +181,7 @@ fn row(id: &str, fields: &[(&str, Value)]) -> Entity {
 
 fn document(rows: Vec<Entity>, summary_fields: &[(&str, Value)]) -> Document {
     let mut summary = Entity {
+        rank: None,
         id: EntityId::from("summary"),
         key: EntityKey::from("summary"),
         schema: SchemaId::from("summary"),

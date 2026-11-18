@@ -1874,6 +1874,7 @@ fn build_import_sheet(
     for (row_index, cells) in source.rows.iter().enumerate() {
         let entity_id = EntityId::from(ids.generate(SemanticIdKind::Entity));
         let mut entity = Entity {
+            rank: None,
             id: entity_id.clone(),
             key: EntityKey::from(format!("sheet_{}_row_{}", index + 1, row_index + 1)),
             schema: schema_id.clone(),
@@ -2572,6 +2573,7 @@ mod extremum_tests {
         document.entities.insert(
             "row".into(),
             Entity {
+                rank: None,
                 id: "row".into(),
                 key: "row".into(),
                 schema: "items".into(),
@@ -5699,6 +5701,7 @@ mod import_dependency_tests {
             document.entities.insert(
                 id.into(),
                 Entity {
+                    rank: None,
                     id: id.into(),
                     key: id.into(),
                     schema: "sheet".into(),

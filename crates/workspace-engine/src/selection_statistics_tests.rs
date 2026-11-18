@@ -42,6 +42,7 @@ fn document(cells: Vec<(&str, FieldType, Option<Value>)>) -> Document {
     document.entities.insert(
         "e".into(),
         Entity {
+            rank: None,
             id: "e".into(),
             key: "row".into(),
             schema: "s".into(),
@@ -252,6 +253,7 @@ fn selection_statistics_mixed_collections_raw_formats_and_canonical_order() {
     doc.entities.insert(
         "z".into(),
         Entity {
+            rank: None,
             id: "z".into(),
             key: "other".into(),
             schema: "other".into(),

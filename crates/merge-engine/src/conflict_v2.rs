@@ -3,13 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
-    Document, DocumentId, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldType, Schema,
-    SchemaId, SchemaKey, Value,
+    Document, DocumentId, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId,
+    FieldKey, FieldType, RowRank, Schema, SchemaId, SchemaKey, Value,
 };
 
 use crate::{
-    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, EntitySubject, MergeCandidate,
-    MergeConflict, MergeOutcome, MergeValue, OptionalChoice, choose, choose_optional, merge,
+    ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, MergeCandidate, MergeConflict,
+    MergeOutcome, MergeValue, OptionalChoice, choose, choose_optional, merge,
 };
 
 /// The explicitly selected constraint-aware semantic conflict contract.
@@ -28,6 +28,7 @@ pub enum ConflictFacetV2 {
     Constraint,
     DisplayName,
     FieldOrder,
+    Rank,
 }
 
 impl ConflictFacetV2 {
@@ -51,7 +52,8 @@ impl ConflictFacetV2 {
             | (ConflictTarget::Entity(_), Self::Schema)
             | (ConflictTarget::Schema(_), Self::DisplayName) => Some(2),
             (ConflictTarget::Schema(_), Self::FieldOrder) => Some(6),
-            (ConflictTarget::SchemaField { .. }, Self::Requiredness) => Some(3),
+            (ConflictTarget::SchemaField { .. }, Self::Requiredness)
+            | (ConflictTarget::Entity(_), Self::Rank) => Some(3),
             (ConflictTarget::SchemaField { .. }, Self::Constraint) => Some(4),
             (ConflictTarget::SchemaField { .. }, Self::DisplayName) => Some(5),
             _ => None,
@@ -139,13 +141,33 @@ impl From<&FieldDefinition> for SchemaFieldSubjectV2 {
     }
 }
 
+/// Complete v2 entity evidence, including rank; frozen v1 stays unchanged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntitySubjectV2 {
+    pub key: EntityKey,
+    pub schema: SchemaId,
+    pub rank: Option<RowRank>,
+    pub fields: BTreeMap<FieldId, Value>,
+}
+
+impl From<&Entity> for EntitySubjectV2 {
+    fn from(entity: &Entity) -> Self {
+        Self {
+            key: entity.key.clone(),
+            schema: entity.schema.clone(),
+            rank: entity.rank.clone(),
+            fields: entity.fields.clone(),
+        }
+    }
+}
+
 /// Closed v2 fact values, including the atomic constraint facet.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MergeValueV2 {
     DocumentTitle(String),
     SchemaSubject(SchemaSubjectV2),
     SchemaFieldSubject(SchemaFieldSubjectV2),
-    EntitySubject(EntitySubject),
+    EntitySubject(EntitySubjectV2),
     SchemaId(SchemaId),
     SchemaKey(SchemaKey),
     EntityKey(tachiko_semantic_core::EntityKey),
@@ -156,6 +178,7 @@ pub enum MergeValueV2 {
     Constraint(FieldConstraint),
     DisplayName(Option<String>),
     FieldOrder(Option<Vec<FieldId>>),
+    Rank(Option<RowRank>),
 }
 
 /// Explicit v2 absence/presence evidence.
@@ -299,6 +322,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
             unreachable!("v2 rejects number formats before invoking v1")
         }
         MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
+        MergeOutcome::UnsupportedRowRank => unreachable!("v2 strips ranks before invoking v1"),
         MergeOutcome::UnsupportedFieldOrder => {
             unreachable!("v2 strips field orders before invoking v1")
         }
@@ -308,6 +332,8 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     };
 
     add_complete_subject_conflicts(base, left, right, &mut conflicts);
+    add_entity_subject_conflicts(base, left, right, &mut conflicts);
+    add_rank_conflicts(base, left, right, &mut conflicts);
     add_constraint_conflicts(base, left, right, &mut conflicts);
     add_name_conflicts(base, left, right, &mut conflicts);
     add_field_order_conflicts(base, left, right, &mut conflicts);
@@ -331,6 +357,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     apply_selected_constraints(base, left, right, &mut candidate);
     apply_selected_names(base, left, right, &mut candidate);
     apply_selected_field_orders(base, left, right, &mut candidate);
+    apply_selected_ranks(base, left, right, &mut candidate);
     MergeOutcomeV2::Merged(candidate)
 }
 
@@ -354,6 +381,9 @@ fn without_field_orders(document: &Document) -> Document {
     for schema in document.schemas.values_mut() {
         schema.field_order = None;
     }
+    for entity in document.entities.values_mut() {
+        entity.rank = None;
+    }
     document
 }
 
@@ -361,7 +391,9 @@ fn is_subject_conflict(conflict: &MergeConflict) -> bool {
     conflict.facet() == ConflictFacet::Subject
         && matches!(
             conflict.target(),
-            ConflictTarget::Schema(_) | ConflictTarget::SchemaField { .. }
+            ConflictTarget::Schema(_)
+                | ConflictTarget::SchemaField { .. }
+                | ConflictTarget::Entity(_)
         )
 }
 
@@ -441,7 +473,17 @@ fn upgrade_fact(
         ConflictFact::Present(value) => Some(match value {
             MergeValue::DocumentTitle(value) => MergeValueV2::DocumentTitle(value.clone()),
             MergeValue::SchemaSubject(_) | MergeValue::SchemaFieldSubject(_) => unreachable!(),
-            MergeValue::EntitySubject(value) => MergeValueV2::EntitySubject(value.clone()),
+            MergeValue::EntitySubject(_) => {
+                let ConflictTarget::Entity(entity_id) = target else {
+                    unreachable!("entity subject requires an entity target")
+                };
+                MergeValueV2::EntitySubject(EntitySubjectV2::from(
+                    source
+                        .entities
+                        .get(entity_id)
+                        .expect("present source entity"),
+                ))
+            }
             MergeValue::SchemaId(value) => MergeValueV2::SchemaId(value.clone()),
             MergeValue::SchemaKey(value) => MergeValueV2::SchemaKey(value.clone()),
             MergeValue::EntityKey(value) => MergeValueV2::EntityKey(value.clone()),
@@ -836,5 +878,95 @@ fn apply_selected_names(
                 |field| field.display_name.as_deref(),
             );
         }
+    }
+}
+
+fn entity_ids<'a>(
+    base: &'a Document,
+    left: &'a Document,
+    right: &'a Document,
+) -> BTreeSet<&'a EntityId> {
+    base.entities
+        .keys()
+        .chain(left.entities.keys())
+        .chain(right.entities.keys())
+        .collect()
+}
+
+fn add_entity_subject_conflicts(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    for id in entity_ids(base, left, right) {
+        let (b, l, r) = (
+            base.entities.get(id),
+            left.entities.get(id),
+            right.entities.get(id),
+        );
+        if subject_presence_conflicts(b, l, r) {
+            let subject =
+                |entity: &Entity| MergeValueV2::EntitySubject(EntitySubjectV2::from(entity));
+            conflicts.push(MergeConflictV2::new(
+                &base.id,
+                ConflictTarget::Entity(id.clone()),
+                ConflictFacetV2::Subject,
+                b.map(subject),
+                l.map(subject),
+                r.map(subject),
+            ));
+        }
+    }
+}
+
+fn add_rank_conflicts(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    for id in entity_ids(base, left, right) {
+        let (b, Some(l), Some(r)) = (
+            base.entities.get(id),
+            left.entities.get(id),
+            right.entities.get(id),
+        ) else {
+            // Delete/change is a complete entity-subject conflict.
+            continue;
+        };
+        let conflicting = b.map_or(l.rank != r.rank, |b| {
+            choose(&b.rank, &l.rank, &r.rank).is_none()
+        });
+        if conflicting {
+            conflicts.push(MergeConflictV2::new(
+                &base.id,
+                ConflictTarget::Entity(id.clone()),
+                ConflictFacetV2::Rank,
+                b.map(|entity| MergeValueV2::Rank(entity.rank.clone())),
+                Some(MergeValueV2::Rank(l.rank.clone())),
+                Some(MergeValueV2::Rank(r.rank.clone())),
+            ));
+        }
+    }
+}
+
+fn apply_selected_ranks(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    candidate: &mut MergeCandidate,
+) {
+    for (id, entity) in &mut candidate.document.entities {
+        entity.rank = match (
+            base.entities.get(id),
+            left.entities.get(id),
+            right.entities.get(id),
+        ) {
+            (Some(b), Some(l), Some(r)) => {
+                choose(&b.rank, &l.rank, &r.rank).expect("conflict-free rank")
+            }
+            (_, l, r) => l.or(r).and_then(|entity| entity.rank.clone()),
+        };
     }
 }

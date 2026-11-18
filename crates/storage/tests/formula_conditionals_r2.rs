@@ -96,6 +96,7 @@ fn document_with_conditional() -> Document {
     document.entities.insert(
         EntityId::from("row"),
         Entity {
+            rank: None,
             id: EntityId::from("row"),
             key: EntityKey::from("row"),
             schema: SchemaId::from("sheet"),

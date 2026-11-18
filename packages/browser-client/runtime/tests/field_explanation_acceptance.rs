@@ -62,6 +62,7 @@ fn document(fields: Vec<(&str, &str, FieldType, Value)>) -> Document {
     document.entities.insert(
         EntityId::from("weapon"),
         Entity {
+            rank: None,
             id: EntityId::from("weapon"),
             key: EntityKey::from("weapon"),
             schema,

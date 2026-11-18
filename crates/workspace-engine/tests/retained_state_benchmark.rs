@@ -134,6 +134,7 @@ fn synthetic_document(entity_count: usize) -> Document {
             let numeric_index = u32::try_from(index).unwrap();
             let id = EntityId::from(format!("synthetic-entity-{index:06}"));
             let entity = Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("entity_{index:04}")),
                 schema: schema_id.clone(),

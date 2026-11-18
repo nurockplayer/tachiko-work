@@ -165,6 +165,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("source"),
                 schema: schema_id,
@@ -243,6 +244,7 @@ fn date_document(value: Date) -> Document {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("event"),
                 schema: schema_id,
@@ -670,6 +672,7 @@ fn complete_oracle_record() -> Record {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("oracle-entity"),
                 schema: schema_id,
@@ -1114,6 +1117,7 @@ fn oracle_document() -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity"),
             Entity {
+                rank: None,
                 id: "entity".into(),
                 key: "entity".into(),
                 schema: "schema".into(),
@@ -1241,6 +1245,7 @@ fn validation_accumulation_record() -> Record {
     document.entities.insert(
         EntityId::from("orphan"),
         Entity {
+            rank: None,
             id: "orphan".into(),
             key: "orphan".into(),
             schema: "missing-schema".into(),
@@ -1387,6 +1392,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity"),
             Entity {
+                rank: None,
                 id: "entity".into(),
                 key: "entity".into(),
                 schema: "schema".into(),
@@ -1444,6 +1450,7 @@ fn rename_stability_record() -> Record {
     before.entities.insert(
         EntityId::from("second-stable"),
         Entity {
+            rank: None,
             id: "second-stable".into(),
             key: "source".into(),
             schema: "schema-stable".into(),
@@ -1591,6 +1598,7 @@ fn analysis_weapon(
         fields.insert(FieldId::from("tier"), Value::Number(number(tier)));
     }
     Entity {
+        rank: None,
         id: EntityId::from(entity),
         key: EntityKey::from(entity),
         schema: SchemaId::from("analysis-weapons"),
@@ -2874,6 +2882,7 @@ fn constraint_text_literal_record() -> Record {
     document.entities.insert(
         "entity".into(),
         Entity {
+            rank: None,
             id: "entity".into(),
             key: "item".into(),
             schema: "schema".into(),
@@ -2985,6 +2994,7 @@ fn case_record(index: u32) -> Record {
             document.entities.insert(
                 EntityId::from("replacement-stable"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("replacement-stable"),
                     key: EntityKey::from("source"),
                     schema: SchemaId::from("schema-stable"),

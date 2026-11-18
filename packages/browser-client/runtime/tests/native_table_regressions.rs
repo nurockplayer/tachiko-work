@@ -80,6 +80,7 @@ fn scalar_document(ids_resemble_legacy_native_table: bool, all_fields_required: 
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("existing_inventory_row"),
                 schema: schema_id,

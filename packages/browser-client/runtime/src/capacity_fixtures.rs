@@ -128,6 +128,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
         document.entities.insert(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -299,6 +300,7 @@ pub fn formula_sweep_document(
             document.entities.insert(
                 entity_id.clone(),
                 Entity {
+                    rank: None,
                     id: entity_id.clone(),
                     key: EntityKey::from(format!("t{table}-r{row:05}")),
                     schema: schema_id.clone(),

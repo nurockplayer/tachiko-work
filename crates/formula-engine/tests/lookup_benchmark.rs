@@ -64,6 +64,7 @@ fn document(rows: usize) -> Document {
             document.entities.insert(
                 id.clone().into(),
                 Entity {
+                    rank: None,
                     id: id.clone().into(),
                     key: id.into(),
                     schema: schema.into(),

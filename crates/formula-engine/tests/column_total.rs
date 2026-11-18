@@ -54,6 +54,7 @@ fn total(schema: &str, field: &str) -> Expression {
 
 fn plan_row(id: &str, key: &str, reserve: Value) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(key),
         schema: SchemaId::from("plan"),
@@ -109,6 +110,7 @@ fn document() -> Document {
             (
                 EntityId::from("summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("summary"),
                     key: EntityKey::from("summary"),
                     schema: SchemaId::from("summary"),

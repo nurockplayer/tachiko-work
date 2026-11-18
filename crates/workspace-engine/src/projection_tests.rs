@@ -37,6 +37,7 @@ fn document() -> Document {
     );
     // The stored id and the nested id disagree, so no address index can build.
     let entity = Entity {
+        rank: None,
         id: "other".into(),
         key: "row".into(),
         schema: "s".into(),

@@ -69,6 +69,7 @@ fn large_document() -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("record_{index:04}")),
                     schema: schema_id.clone(),
