@@ -125,7 +125,7 @@ fn unranked_v3_and_seed_bytes_unchanged() {
     for line in manifest.lines() {
         let (hash, path) = line.split_once("  ").unwrap();
         assert_eq!(
-            hex(&Sha256::digest(fs::read(root.join(path)).unwrap())),
+            encode_hex(&Sha256::digest(fs::read(root.join(path)).unwrap())),
             hash,
             "{path}"
         );
@@ -149,7 +149,7 @@ fn ranked_documents_refuse_frozen_writers_and_v1_history() {
     ));
 }
 
-fn hex(bytes: &[u8]) -> String {
+fn encode_hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::new(), |mut output, byte| {
         write!(output, "{byte:02x}").unwrap();
         output
