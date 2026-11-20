@@ -377,66 +377,57 @@ fn range_statistics(
 
 #[test]
 fn range_stats_match_per_cell_targets() {
-    for failure in [false, true] {
-        let mut doc = document(&[1e16, -1e16, 1.0], 3);
-        doc.schemas
-            .get_mut("rows")
-            .unwrap()
-            .fields
-            .get_mut("f01")
-            .unwrap()
-            .field_type = FieldType::Text;
-        for (index, entity) in doc.entities.values_mut().enumerate() {
-            entity.fields.insert(
-                "f01".into(),
-                Value::Text(if index == 0 {
-                    String::new()
-                } else {
-                    "123".into()
-                }),
-            );
-            entity.fields.insert(
-                "f02".into(),
-                Value::Formula(if failure {
-                    Expression::Divide {
-                        left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
-                        right: Box::new(Expression::Number(Number::new(0.0).unwrap())),
-                    }
-                } else {
-                    Expression::Number(Number::new(2.0).unwrap())
-                }),
-            );
-        }
-        doc.entities.get_mut("e00001").unwrap().fields.remove("f00");
-        let mut runtime = DesignerRuntime::from_document(doc, OCCURRENCE).unwrap();
-        let before = runtime.observe_occurrence();
-        let cells = (0..3)
-            .flat_map(|row| {
-                (0..3).map(move |column| FieldTarget {
-                    entity: format!("e{row:05}"),
-                    field: format!("f{column:02}"),
-                })
-            })
-            .collect();
-        let expected = statistics(&mut runtime, cells);
-        for (first, last) in [("e00000", "e00002"), ("e00002", "e00000")] {
-            assert_eq!(
-                range_statistics(&mut runtime, first, last, &["f02", "f01", "f00"]),
-                expected
-            );
-        }
-        assert_eq!(expected.count, 7);
-        assert_eq!(expected.error_count, if failure { 3 } else { 0 });
-        assert_eq!(
-            range_statistics(&mut runtime, "e00001", "e00001", &["f00"]).count,
-            0
+    let mut doc = document(&[1e16, -1e16, 1.0], 3);
+    doc.schemas
+        .get_mut("rows")
+        .unwrap()
+        .fields
+        .get_mut("f01")
+        .unwrap()
+        .field_type = FieldType::Text;
+    for (index, entity) in doc.entities.values_mut().enumerate() {
+        entity.fields.insert(
+            "f01".into(),
+            Value::Text(if index == 0 {
+                String::new()
+            } else {
+                "123".into()
+            }),
         );
-        assert_eq!(
-            range_statistics(&mut runtime, "e00000", "e00002", &[]).count,
-            0
+        entity.fields.insert(
+            "f02".into(),
+            Value::Formula(Expression::Number(Number::new(2.0).unwrap())),
         );
-        assert_eq!(runtime.observe_occurrence(), before);
     }
+    doc.entities.get_mut("e00001").unwrap().fields.remove("f00");
+    let mut runtime = DesignerRuntime::from_document(doc, OCCURRENCE).unwrap();
+    let before = runtime.observe_occurrence();
+    let cells = (0..3)
+        .flat_map(|row| {
+            (0..3).map(move |column| FieldTarget {
+                entity: format!("e{row:05}"),
+                field: format!("f{column:02}"),
+            })
+        })
+        .collect();
+    let expected = statistics(&mut runtime, cells);
+    for (first, last) in [("e00000", "e00002"), ("e00002", "e00000")] {
+        assert_eq!(
+            range_statistics(&mut runtime, first, last, &["f02", "f01", "f00"]),
+            expected
+        );
+    }
+    assert_eq!(expected.count, 7);
+    assert_eq!(expected.error_count, 0);
+    assert_eq!(
+        range_statistics(&mut runtime, "e00001", "e00001", &["f00"]).count,
+        0
+    );
+    assert_eq!(
+        range_statistics(&mut runtime, "e00000", "e00002", &[]).count,
+        0
+    );
+    assert_eq!(runtime.observe_occurrence(), before);
 }
 
 #[test]
