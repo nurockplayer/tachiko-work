@@ -178,3 +178,72 @@ const ordinary = ok({
 assert.equal(ordinary.table.collection.id.length > 0, true);
 assert.equal(wasm.tachiko_designer_request_limit(), 65_536);
 console.log("working_size actual WASM ABI: profile create, save, inspect, open, both portable routes, the spreadsheet import route and a large paste passed");
+
+// #839: the same compact selection works over the actual wasm32 request ABI.
+for (const [rowCount, working] of [[32, false], [10_000, true]]) {
+  const source = encoder.encode(`Left,Right\n${"2,4\n".repeat(rowCount)}`);
+  const loaded = spreadsheet({
+    type: "import", format: "csv", csv_options: {delimiter: ",", header: true},
+    selection: {column_types: [["number", "number"]], extra_columns: [[]]},
+    occurrence_id: "00000000-0000-4000-8000-000000000839", install: true,
+    ...(working ? {profile: "working_size"} : {}),
+  }, source);
+  assert.equal(loaded.status, "ok", JSON.stringify(loaded));
+  const initial = loaded.response.payload.opened;
+  const revision = initial.bootstrap.revision;
+  const collection = initial.bootstrap.default_collection;
+  const firstWindow = ok({type: "query_table_window", expected_revision: revision,
+    collection, start: 0, count: 32});
+  const lastWindow = ok({type: "query_table_window", expected_revision: revision,
+    collection, start: rowCount - 1, count: 1});
+  const fields = firstWindow.columns.map(column => column.id);
+  const targets = firstWindow.rows.flatMap(row => fields.map(field => ({entity: row.id, field})));
+  const perCell = {type: "query_selection_statistics", expected_revision: revision, targets};
+  assert.ok(encoder.encode(JSON.stringify(perCell)).length < 65_536);
+  const expected = ok(perCell);
+  const rangeRequest = {type: "query_selection_statistics", expected_revision: revision,
+    range: {collection, first: firstWindow.rows[31].id, last: firstWindow.rows[0].id, fields}};
+  assert.deepEqual(ok(rangeRequest), expected);
+  rangeRequest.range.first = lastWindow.rows[0].id;
+  assert.ok(encoder.encode(JSON.stringify(rangeRequest)).length < 1_024);
+  const all = ok(rangeRequest);
+  assert.equal(all.count, rowCount * 2);
+  assert.equal(all.numerical_count, rowCount * 2);
+  assert.equal(all.sum, rowCount * 6);
+  assert.equal(all.average, 3);
+  if (!working) {
+    assert.equal(wasm.tachiko_designer_request_limit(), 65_536);
+    const oversized = {...perCell, targets: Array.from({length: 2_000}, () => targets[0])};
+    assert.ok(encoder.encode(JSON.stringify(oversized)).length > 65_536);
+    assert.equal(request(oversized).error.code, "request_too_large");
+  }
+}
+
+// Stored-order anchors include a newly inserted row even when its id sorts last.
+const rangeTable = ok({type: "new_table",
+  occurrence_id: "00000000-0000-4000-8000-000000000840",
+  name: "Range order", columns: [{name: "Amount", field_type: "number"}]});
+const rangeCollection = rangeTable.bootstrap.default_collection;
+const amountField = rangeTable.table.columns[0].id;
+let rangeRevision = rangeTable.bootstrap.revision;
+for (const value of ["10", "20"]) {
+  rangeRevision = ok({type: "insert_row", expected_revision: rangeRevision,
+    collection: rangeCollection,
+    initializers: [{field: amountField, input: {kind: "number", input: value}}]}).resulting_revision;
+}
+const beforeInsert = ok({type: "query_table_window", expected_revision: rangeRevision,
+  collection: rangeCollection, start: 0, count: 2});
+rangeRevision = ok({type: "insert_row", expected_revision: rangeRevision,
+  collection: rangeCollection, position: {before: beforeInsert.rows[1].id},
+  initializers: [{field: amountField, input: {kind: "number", input: "99"}}]}).resulting_revision;
+const rangeWindow = ok({type: "query_table_window", expected_revision: rangeRevision,
+  collection: rangeCollection, start: 0, count: 3});
+assert.equal(rangeWindow.rows[0].id, beforeInsert.rows[0].id);
+assert.equal(rangeWindow.rows[2].id, beforeInsert.rows[1].id);
+const storedRange = ok({type: "query_selection_statistics", expected_revision: rangeRevision,
+  range: {collection: rangeCollection, first: beforeInsert.rows[1].id,
+    last: beforeInsert.rows[0].id, fields: [amountField]}});
+assert.equal(storedRange.count, 3);
+assert.equal(storedRange.sum, 129);
+assert.deepEqual(storedRange, ok({type: "query_selection_statistics", expected_revision: rangeRevision,
+  targets: rangeWindow.rows.map(row => ({entity: row.id, field: amountField}))}));

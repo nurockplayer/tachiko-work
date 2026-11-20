@@ -246,6 +246,16 @@ pub enum RowPosition {
     After(EntityId),
 }
 
+/// Inclusive row anchors in stored order, crossed with the selected fields.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionStatisticsRange {
+    pub collection: String,
+    pub first: EntityId,
+    pub last: EntityId,
+    pub fields: Vec<String>,
+}
+
 /// App-private requests accepted by the Designer runtime adapter.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -474,7 +484,10 @@ pub enum DesignerRequest {
     /// Statistics over distinct stable cells, using retained formula results.
     QuerySelectionStatistics {
         expected_revision: String,
-        targets: Vec<FieldTarget>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        targets: Option<Vec<FieldTarget>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<SelectionStatisticsRange>,
     },
     /// Number totals over the rows a stateless view shows, summed in
     /// collection order. `keep_entities` rows count even when filtered out,
@@ -4115,9 +4128,24 @@ impl DesignerRuntime {
             DesignerRequest::QuerySelectionStatistics {
                 expected_revision,
                 targets,
-            } => Ok(DesignerResponse::SelectionStatistics(
-                self.query_selection_statistics(&expected_revision, &targets)?,
-            )),
+                range,
+            } => {
+                self.check_revision(&expected_revision)?;
+                let targets = match (targets, range) {
+                    (Some(targets), None) => targets,
+                    (None, Some(range)) => self.selection_range_targets(&range)?,
+                    _ => {
+                        return Err(DesignerError::InvalidView {
+                            message:
+                                "selection statistics requires exactly one of targets or range"
+                                    .into(),
+                        });
+                    }
+                };
+                Ok(DesignerResponse::SelectionStatistics(
+                    self.query_selection_statistics(&expected_revision, &targets)?,
+                ))
+            }
             DesignerRequest::QueryViewTotals {
                 expected_revision,
                 collection,
@@ -5297,6 +5325,50 @@ impl DesignerRuntime {
             rows: members.len(),
             column_totals,
         })
+    }
+
+    fn selection_range_targets(
+        &self,
+        range: &SelectionStatisticsRange,
+    ) -> Result<Vec<FieldTarget>, DesignerError> {
+        let spec = self.collection_spec(&range.collection)?;
+        let invalid = |message| DesignerError::InvalidView { message };
+        let position = |anchor: &EntityId| {
+            spec.stored_indices.get(anchor).copied().ok_or_else(|| {
+                invalid(format!(
+                    "selection anchor {anchor} is not in collection {}",
+                    range.collection
+                ))
+            })
+        };
+        let first = position(&range.first)?;
+        let last = position(&range.last)?;
+        let mut fields = BTreeSet::new();
+        for field in &range.fields {
+            if !spec
+                .columns
+                .iter()
+                .any(|column| column.id.as_str() == field)
+            {
+                return Err(invalid(format!(
+                    "selection field {field} is not declared by its collection"
+                )));
+            }
+            if !fields.insert(field) {
+                return Err(invalid(format!(
+                    "selection field {field} is listed more than once"
+                )));
+            }
+        }
+        Ok(spec.entities[first.min(last)..=first.max(last)]
+            .iter()
+            .flat_map(|entity| {
+                range.fields.iter().map(move |field| FieldTarget {
+                    entity: entity.to_string(),
+                    field: field.clone(),
+                })
+            })
+            .collect())
     }
 
     fn query_selection_statistics(

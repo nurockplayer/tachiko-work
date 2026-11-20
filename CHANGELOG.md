@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Selection statistics accept compact inclusive stored-row ranges crossed with
+  field lists, preserving per-cell results while avoiding per-cell request bytes
+  for large selections (#839).
+
 - Native tables accept `insert_row.position` with a before/after row identity.
   Inserts, rank allocation and rebalancing publish as one Undo/Redo step,
   preserving exact prior optional ranks. Append and paste-created rows stay

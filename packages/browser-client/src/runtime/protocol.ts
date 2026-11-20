@@ -306,6 +306,13 @@ export type ColumnTotalsProjection = {
 };
 
 /** Statistics over distinct selected cells, with no scalar coercion. */
+export type SelectionStatisticsRange = {
+  collection: string;
+  first: string;
+  last: string;
+  fields: string[];
+};
+
 export type SelectionStatisticsProjection = {
   revision: string;
   count: number;
@@ -688,11 +695,13 @@ export type DesignerRequest =
       from?: FindPosition;
       direction: FindDirection;
     }
-  | {
+  | ({
       type: "query_selection_statistics";
       expected_revision: string;
-      targets: FieldTarget[];
-    }
+    } & (
+      | { targets: FieldTarget[]; range?: never }
+      | { range: SelectionStatisticsRange; targets?: never }
+    ))
   | {
       type: "query_column_totals";
       expected_revision: string;

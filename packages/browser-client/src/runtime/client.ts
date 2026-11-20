@@ -30,6 +30,7 @@ import type {
   FindPosition,
   ColumnTotalsProjection,
   SelectionStatisticsProjection,
+  SelectionStatisticsRange,
   GroupDimension,
   GroupScope,
   GroupTotalsProjection,
@@ -150,6 +151,11 @@ export interface DesignerClient {
   querySelectionStatistics(
     expectedRevision: string,
     targets: FieldTarget[],
+  ): Promise<SelectionStatisticsProjection>;
+  /** Inclusive anchors in stored row order crossed with the ordered fields. */
+  querySelectionRangeStatistics(
+    expectedRevision: string,
+    range: SelectionStatisticsRange,
   ): Promise<SelectionStatisticsProjection>;
   /** Number totals over exactly these entities; unknown, duplicate or foreign ids refuse. */
   queryColumnTotals(
