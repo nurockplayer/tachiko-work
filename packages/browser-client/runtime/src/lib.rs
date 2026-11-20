@@ -2462,7 +2462,9 @@ struct CollectionSpec {
     native_table_rows: bool,
     summary: CollectionSummary,
     columns: Vec<ColumnSpec>,
+    canonical_entities: Vec<tachiko_workspace_engine::EntityId>,
     entities: Vec<tachiko_workspace_engine::EntityId>,
+    stored_indices: BTreeMap<EntityId, usize>,
 }
 
 #[derive(Clone)]
@@ -2958,13 +2960,12 @@ fn compare_ordering(ordering: Ordering, op: ComparisonOperator) -> bool {
 
 /// Stable view order. Missing values sort last in both directions. Natural
 /// text byte ties break only after all requested keys tie, followed by ascending
-/// entity-id order, which is the order of [`CollectionSpec::entities`].
+/// stored position, which is the order of [`CollectionSpec::entities`].
 fn compare_view_rows(
     left: usize,
     right: usize,
     sort: &[ViewSortPlan],
     cells: &[Vec<Option<ViewValue>>],
-    entities: &[EntityId],
 ) -> Ordering {
     for key in sort {
         let ordering = match (&cells[left][key.ordinal], &cells[right][key.ordinal]) {
@@ -2997,7 +2998,7 @@ fn compare_view_rows(
             return ordering;
         }
     }
-    entities[left].cmp(&entities[right])
+    left.cmp(&right)
 }
 
 fn compare_view_values(left: &ViewValue, right: &ViewValue, text_order: ViewTextOrder) -> Ordering {
@@ -3279,11 +3280,6 @@ impl DesignerRuntime {
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
-        if document.has_row_ranks() {
-            return Err(DesignerError::UnsupportedProject {
-                message: "Row rank requires stored-order consumers (PR1b); ranked input is not supported yet.".to_owned(),
-            });
-        }
         let (capacity_usage, working_admission) = match profile {
             // The same three checks `ensure_document_profile` runs for this
             // profile, in the same order, keeping the totals the first and
@@ -4669,6 +4665,13 @@ impl DesignerRuntime {
             }
         };
         let column_totals = column_totals(spec, &rows);
+        // Resident replies are canonical. Fold first, then restore stored order.
+        let mut stored_rows = vec![None; rows.len()];
+        for row in rows {
+            let index = spec.stored_indices[row.id.as_str()];
+            stored_rows[index] = Some(row);
+        }
+        let rows = stored_rows.into_iter().flatten().collect();
         let projection = TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
@@ -4874,12 +4877,7 @@ impl DesignerRuntime {
             .map(|entity| FieldRef::new(entity.id.clone(), column.id.clone()))
             .collect::<Vec<_>>();
         let values = self.session.query_fields(&targets)?;
-        let row_of = entities
-            .value()
-            .iter()
-            .enumerate()
-            .map(|(row, entity)| (entity.id.as_str(), row))
-            .collect::<BTreeMap<_, _>>();
+        let row_of = &spec.stored_indices;
         let mut texts = vec![None; spec.entities.len()];
         for value in values.value() {
             let Some(row) = row_of.get(value.field.entity.as_str()).copied() else {
@@ -4999,12 +4997,7 @@ impl DesignerRuntime {
             }
         }
         let values = self.session.query_fields(&targets)?;
-        let row_of = entities
-            .value()
-            .iter()
-            .enumerate()
-            .map(|(row, entity)| (entity.id.as_str(), row))
-            .collect::<BTreeMap<_, _>>();
+        let row_of = &spec.stored_indices;
         let ordinal_of = fields
             .iter()
             .enumerate()
@@ -5064,7 +5057,7 @@ impl DesignerRuntime {
         let row_count = spec.entities.len();
         if plan.sort.is_empty() && plan.filters.is_empty() {
             // No filter can exclude a row and `spec.entities` is already the
-            // ascending entity-id order, so kept ids need no special handling.
+            // stored order, so kept ids need no special handling.
             return Ok((0..row_count).collect());
         }
         let keep = view
@@ -5084,12 +5077,7 @@ impl DesignerRuntime {
         }
         let values = self.session.query_fields(&targets)?;
         let mut cells: Vec<Vec<Option<ViewValue>>> = vec![vec![None; plan.fields.len()]; row_count];
-        let row_of = entities
-            .value()
-            .iter()
-            .enumerate()
-            .map(|(row, entity)| (entity.id.as_str(), row))
-            .collect::<BTreeMap<_, _>>();
+        let row_of = &spec.stored_indices;
         let ordinal_of = plan
             .fields
             .iter()
@@ -5116,9 +5104,7 @@ impl DesignerRuntime {
             }
         }
         if !plan.sort.is_empty() {
-            order.sort_by(|left, right| {
-                compare_view_rows(*left, *right, &plan.sort, &cells, &spec.entities)
-            });
+            order.sort_by(|left, right| compare_view_rows(*left, *right, &plan.sort, &cells));
         }
         Ok(order)
     }
@@ -5133,7 +5119,7 @@ impl DesignerRuntime {
         }
         let totals = {
             let spec = self.collection_spec(collection)?;
-            self.totals_for_entities(spec, &spec.entities)?
+            self.totals_for_entities(spec, &spec.canonical_entities)?
         };
         self.store_totals(collection, &totals);
         Ok(totals)
@@ -5275,7 +5261,7 @@ impl DesignerRuntime {
             }
         }
         let members = spec
-            .entities
+            .canonical_entities
             .iter()
             .filter(|id| requested.contains(*id))
             .cloned()
@@ -5356,12 +5342,11 @@ impl DesignerRuntime {
         let revision = self.current_revision().to_owned();
         let order = self.view_order(collection, view)?;
         let spec = self.collection_spec(collection)?;
-        let mut rows = order.to_vec();
-        rows.sort_unstable();
-        let members = rows
+        let mut members = order
             .iter()
             .map(|row| spec.entities[*row].clone())
             .collect::<Vec<_>>();
+        members.sort_unstable();
         // An order over every row is the window footer, so it may share its cache.
         let column_totals = if members.len() == spec.entities.len() {
             self.whole_collection_totals(collection, &members)?
@@ -6926,6 +6911,13 @@ impl DesignerRuntime {
             };
             entity_map.insert(source_id.clone(), target_id);
         }
+        let ordered_ids = entity_map.values().cloned().collect::<BTreeSet<_>>();
+        entity_map = source_spec
+            .entities
+            .iter()
+            .cloned()
+            .zip(ordered_ids)
+            .collect();
         let mut schema = Schema {
             // The copy keeps the source's projected column order.
             field_order: Some(
@@ -9131,7 +9123,7 @@ fn scope_members(
     scope: &GroupScope,
 ) -> Result<Vec<EntityId>, DesignerError> {
     let (entities, keep) = match scope {
-        GroupScope::All => return Ok(spec.entities.clone()),
+        GroupScope::All => return Ok(spec.canonical_entities.clone()),
         GroupScope::Entities { entities } => (entities, true),
         GroupScope::Except { entities } => (entities, false),
     };
@@ -9158,7 +9150,7 @@ fn scope_members(
         }
     }
     Ok(spec
-        .entities
+        .canonical_entities
         .iter()
         .filter(|id| requested.contains(*id) == keep)
         .cloned()
@@ -10949,12 +10941,24 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
         .schemas
         .values()
         .map(|schema| {
-            let entities = document
+            let canonical_entities = document
                 .entities
                 .values()
                 .filter(|entity| entity.schema == schema.id)
                 .map(|entity| entity.id.clone())
                 .collect::<Vec<_>>();
+            let mut entities = canonical_entities.clone();
+            entities.sort_by(|left, right| {
+                tachiko_workspace_engine::compare_row_order(
+                    &document.entities[left],
+                    &document.entities[right],
+                )
+            });
+            let stored_indices = entities
+                .iter()
+                .enumerate()
+                .map(|(index, id)| (id.clone(), index))
+                .collect();
             let summary = CollectionSummary {
                 id: schema.id.to_string(),
                 key: schema.key.to_string(),
@@ -11002,7 +11006,9 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         date_format: field.date_format,
                     })
                     .collect(),
+                    canonical_entities,
                     entities,
+                    stored_indices,
                 },
             )
         })
@@ -15544,7 +15550,9 @@ mod tests {
                 number_format: None,
                 date_format: None,
             }],
+            canonical_entities: Vec::new(),
             entities: Vec::new(),
+            stored_indices: BTreeMap::new(),
         }
     }
 

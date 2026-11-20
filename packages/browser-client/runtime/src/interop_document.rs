@@ -3505,7 +3505,11 @@ fn current_import_metadata(
         {
             ledger.push(FidelityFinding { category: FidelityCategory::Converted,
                 code: "imported_current_structure".into(), location: location.clone(),
-                message: "Surviving source columns and rows retain source order and identity-bound presentation. Added columns and rows append in current canonical order with default presentation; removed columns and deleted rows are omitted. Blank optional values are empty cells.".into(), blocking: false });
+                message: if document.entities.values().any(|entity| entity.schema == schema.id && entity.rank.is_some()) {
+                    "Ranked rows follow stored order with identity-bound presentation. Added columns and rows use default presentation; removed columns and deleted rows are omitted. Blank optional values are empty cells."
+                } else {
+                    "Surviving source columns and rows retain source order and identity-bound presentation. Added columns and rows append in current canonical order with default presentation; removed columns and deleted rows are omitted. Blank optional values are empty cells."
+                }.into(), blocking: false });
         }
         map_current_headers(
             schema,
@@ -3617,6 +3621,22 @@ fn validate_historical_envelope(
     Ok(())
 }
 
+/// Unranked sources retain their exact presentation, including reversed Tracker
+/// rows. A ranked collection uses semantic order with styles kept on identities.
+fn order_ranked_rows(document: &Document, rows: &mut [InteropRowMetadata]) {
+    if rows
+        .iter()
+        .any(|row| document.entities[row.entity_id.as_str()].rank.is_some())
+    {
+        rows.sort_by(|left, right| {
+            tachiko_workspace_engine::compare_row_order(
+                &document.entities[left.entity_id.as_str()],
+                &document.entities[right.entity_id.as_str()],
+            )
+        });
+    }
+}
+
 fn reconcile_import_rows(
     document: &Document,
     sheet: &mut InteropSheetMetadata,
@@ -3652,6 +3672,7 @@ fn reconcile_import_rows(
             styles: vec![CellStyle::default(); sheet.columns.len()],
         });
     }
+    order_ranked_rows(document, &mut sheet.rows);
     if profile == SessionProfile::WorkingSize {
         super::capacity::check_limit(
             super::CapacityLimit::TableFields,
@@ -3994,17 +4015,19 @@ fn validate_capacity_metadata(
         .values()
         .next()
         .ok_or_else(|| tracker_error("capacity schema is missing"))?;
+    let mut stored_rows = document.entities.values().collect::<Vec<_>>();
+    stored_rows.sort_by(|left, right| tachiko_workspace_engine::compare_row_order(left, right));
     if metadata.version != 1
         || metadata.sheets.len() != 1
         || !sheet
             .rows
             .iter()
             .map(|row| row.entity_id.as_str())
-            .eq(document.entities.keys().map(EntityId::as_str))
+            .eq(stored_rows.iter().map(|entity| entity.id.as_str()))
         || !capacity_columns_in_order(sheet, schema)
     {
         return Err(tracker_error(
-            "capacity metadata must preserve canonical row and column identity order",
+            "capacity metadata must cover row identities in stored order and preserve column order",
         ));
     }
     if !sheet.has_header
@@ -5005,16 +5028,25 @@ fn native_tracker_metadata(
                     width: None,
                 })
                 .collect(),
-            rows: presentation
-                .rows
-                .iter()
-                .map(|row| InteropRowMetadata {
-                    entity_id: row.entity_id.clone(),
-                    styles: row.styles.clone(),
-                })
-                .collect(),
+            rows: tracker_export_rows(document, presentation),
         }],
     })
+}
+
+fn tracker_export_rows(
+    document: &Document,
+    presentation: &NativeTrackerExportPresentation,
+) -> Vec<InteropRowMetadata> {
+    let mut rows = presentation
+        .rows
+        .iter()
+        .map(|row| InteropRowMetadata {
+            entity_id: row.entity_id.clone(),
+            styles: row.styles.clone(),
+        })
+        .collect::<Vec<_>>();
+    order_ranked_rows(document, &mut rows);
+    rows
 }
 
 fn validate_tracker_rows(

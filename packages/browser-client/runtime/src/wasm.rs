@@ -1330,3 +1330,202 @@ mod import_profile_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod import_capacity_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod row_rank_parity_tests {
+    use super::{
+        PROJECT, REQUEST, RESPONSE, tachiko_designer_portable_ro_open,
+        tachiko_designer_portable_ro_open_working_size, tachiko_designer_project_close,
+        tachiko_designer_project_export_v3, tachiko_designer_project_inspect,
+        tachiko_designer_project_inspect_working_size, tachiko_designer_project_open,
+        tachiko_designer_project_open_local_document,
+        tachiko_designer_project_open_local_document_working_size,
+        tachiko_designer_project_open_working_size, tachiko_designer_request_run,
+        tachiko_designer_spreadsheet_run,
+    };
+    use crate::host_bridge::DesignerHost;
+    use crate::row_rank_tests::ranked_document;
+    use serde_json::{Value, json};
+
+    const OCCURRENCE: &[u8] = b"00000000-0000-4000-8000-000000000872";
+
+    fn response() -> Value {
+        let reply: Value = RESPONSE.with(|slot| serde_json::from_slice(&slot.borrow()).unwrap());
+        assert_eq!(reply["status"], "ok", "{reply}");
+        reply
+    }
+
+    fn request(value: &Value) -> Vec<u8> {
+        let bytes = serde_json::to_vec(value).unwrap();
+        REQUEST.with(|slot| slot.borrow_mut().clone_from(&bytes));
+        tachiko_designer_request_run();
+        response();
+        bytes
+    }
+
+    #[test]
+    fn ranked_v3_wasm_bridge_admits_every_project_ingress() {
+        let tree = tachiko_storage::encode_roproj_v3(&ranked_document()).unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        let portable = crate::encode_portable_package_v1(&tree).unwrap();
+        let routes: [(extern "C" fn(), &[u8], bool); 8] = [
+            (tachiko_designer_project_open, &bundle, false),
+            (tachiko_designer_project_open_working_size, &bundle, true),
+            (tachiko_designer_portable_ro_open, &portable, false),
+            (
+                tachiko_designer_portable_ro_open_working_size,
+                &portable,
+                true,
+            ),
+            (
+                tachiko_designer_project_open_local_document,
+                &portable,
+                false,
+            ),
+            (
+                tachiko_designer_project_open_local_document_working_size,
+                &portable,
+                true,
+            ),
+            (tachiko_designer_project_inspect, &bundle, false),
+            (tachiko_designer_project_inspect_working_size, &bundle, true),
+        ];
+        for (route, bytes, working) in routes {
+            tachiko_designer_project_close();
+            REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+            PROJECT.with(|slot| *slot.borrow_mut() = bytes.to_vec());
+            route();
+            let reply = response();
+            let table = if working { "window" } else { "table" };
+            assert_eq!(reply["response"]["payload"][table]["rows"][0]["id"], "e03");
+        }
+        tachiko_designer_project_close();
+    }
+
+    #[test]
+    fn ranked_wasm_and_native_keep_positions_edits_save_and_export_bytes() {
+        tachiko_designer_project_close();
+        let tree = tachiko_storage::encode_roproj_v3(&ranked_document()).unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        let mut host = DesignerHost::new();
+        REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+        PROJECT.with(|slot| *slot.borrow_mut() = bundle.clone());
+        tachiko_designer_project_open();
+        assert_eq!(
+            RESPONSE.with(|slot| slot.borrow().clone()),
+            host.open_project(&bundle, OCCURRENCE)
+        );
+        for query in [
+            json!({"type":"query_table_window", "expected_revision":"resident/0", "collection":"rows", "view":{}, "start":0, "count":5}),
+            json!({"type":"locate_in_view", "expected_revision":"resident/0", "collection":"rows", "view":{}, "entity":"e03"}),
+            json!({"type":"find_in_view", "expected_revision":"resident/0", "collection":"rows", "view":{}, "query":"same", "fields":["label"], "from":null, "direction":"next"}),
+        ] {
+            let bytes = request(&query);
+            assert_eq!(
+                RESPONSE.with(|slot| slot.borrow().clone()),
+                host.request(&bytes)
+            );
+        }
+        let paste = request(
+            &json!({"type":"paste_cells", "expected_revision":"resident/0", "collection":"rows", "start_entity":"e03", "start_field":"label", "rows":[["first"],["second"]]}),
+        );
+        assert_eq!(
+            RESPONSE.with(|slot| slot.borrow().clone()),
+            host.request(&paste)
+        );
+        let copy = request(
+            &json!({"type":"copy_formula", "expected_revision":"resident/1", "source":{"entity":"e03","field":"calc"}, "destinations":[{"entity":"e02","field":"calc"}], "fixed_references":[], "relative_rows":true, "relative_columns":false}),
+        );
+        assert_eq!(
+            RESPONSE.with(|slot| slot.borrow().clone()),
+            host.request(&copy)
+        );
+        assert_exports_match_host(&mut host);
+        REQUEST.with(|slot| *slot.borrow_mut() = b"resident/2".to_vec());
+        tachiko_designer_project_export_v3();
+        response();
+        let saved = PROJECT.with(|slot| slot.borrow().clone());
+        assert_eq!(saved, host.export_project_v3(b"resident/2").bytes.unwrap());
+        tachiko_designer_project_close();
+        REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+        PROJECT.with(|slot| *slot.borrow_mut() = saved);
+        tachiko_designer_project_open();
+        response();
+        request(
+            &json!({"type":"query_table_window", "expected_revision":"resident/0", "collection":"rows", "view":{}, "start":0, "count":5}),
+        );
+        let window = response();
+        assert_eq!(window["response"]["payload"]["rows"][0]["id"], "e03");
+        assert_eq!(window["response"]["payload"]["rows"][0]["position"], 1);
+        tachiko_designer_project_close();
+    }
+
+    fn assert_exports_match_host(host: &mut DesignerHost) {
+        for format in ["xlsx", "csv"] {
+            let operation = serde_json::to_vec(&json!({"type":"export_native_tables", "expected_revision":"resident/2", "collection":"rows", "format":format})).unwrap();
+            REQUEST.with(|slot| slot.borrow_mut().clone_from(&operation));
+            PROJECT.with(|slot| slot.borrow_mut().clear());
+            tachiko_designer_spreadsheet_run();
+            response();
+            let native = host.spreadsheet(&operation, &[]);
+            assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), native.reply);
+            assert_eq!(
+                PROJECT.with(|slot| slot.borrow().clone()),
+                native.bytes.unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod ranked_import_ingress_tests {
+    use super::{
+        PROJECT, REQUEST, RESPONSE, tachiko_designer_project_close,
+        tachiko_designer_spreadsheet_run,
+    };
+    use crate::host_bridge::DesignerHost;
+    use crate::row_rank_tests::imported_fixture;
+    use serde_json::json;
+
+    #[test]
+    fn ranked_imported_wasm_inspect_and_open_match_native_in_both_profiles() {
+        let (runtime, metadata) = imported_fixture(false);
+        let tree = tachiko_storage::encode_roproj_v3_with_presentation(
+            runtime.session.document(),
+            &runtime.presentation,
+        )
+        .unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        for profile in [None, Some("working_size")] {
+            for operation in ["inspect_project", "open_project"] {
+                tachiko_designer_project_close();
+                let mut input =
+                    json!({"type": operation, "profile": profile, "metadata": metadata});
+                if operation == "open_project" {
+                    input["occurrence_id"] = json!("00000000-0000-4000-8000-000000000872");
+                }
+                let request = serde_json::to_vec(&input).unwrap();
+                REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+                PROJECT.with(|slot| *slot.borrow_mut() = bundle.clone());
+                tachiko_designer_spreadsheet_run();
+                let reply = RESPONSE.with(|slot| slot.borrow().clone());
+                let decoded: serde_json::Value = serde_json::from_slice(&reply).unwrap();
+                assert_eq!(decoded["status"], "ok", "{decoded}");
+                assert_eq!(
+                    reply,
+                    DesignerHost::new().spreadsheet(&request, &bundle).reply
+                );
+            }
+        }
+        tachiko_designer_project_close();
+    }
+}

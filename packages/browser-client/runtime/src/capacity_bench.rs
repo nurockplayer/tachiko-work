@@ -1774,3 +1774,80 @@ fn many_edit_includes_required_window_requery() {
     );
     assert!(requery.is_some(), "required window request was measured");
 }
+
+/// #809's ten-column, three-formula-column shape in both rank states. This
+/// supplements `working_size_qualification`'s thirty-column shape.
+#[test]
+#[ignore = "#809 row-order timings (budgets are judged on #809); run explicitly in release with --features capacity-bench"]
+fn stored_order_809_qualification() {
+    for ranked in [false, true] {
+        let name = if ranked { "809_ranked" } else { "809_unranked" };
+        let document = stored_order_809_document(ranked);
+        let (mut runtime, open) = observe(|| {
+            let mut runtime =
+                DesignerRuntime::from_document_working_size(document, WQ_OCCURRENCE).unwrap();
+            runtime.opened_window().unwrap();
+            runtime
+        });
+        wq_print(name, "open_ms", wq_millis(&open));
+        let index = runtime.collection_specs["grid"].entities.as_ptr();
+        let mut samples = Vec::new();
+        for iteration in 0..WQ_EDIT_COUNT {
+            let ((), sample) = observe(|| {
+                let revision = runtime.current_revision().to_owned();
+                runtime
+                    .edit_cells(
+                        &revision,
+                        &[CellEdit {
+                            target: wb_field("r09999", "c0"),
+                            input: ScalarEditInput::Number {
+                                input: (iteration + 100).to_string(),
+                            },
+                        }],
+                    )
+                    .unwrap();
+                let revision = runtime.current_revision().to_owned();
+                runtime
+                    .query_table_window(&revision, "grid", &TableView::default(), 0, 0, false)
+                    .unwrap();
+            });
+            assert_eq!(runtime.collection_specs["grid"].entities.as_ptr(), index);
+            samples.push(sample);
+        }
+        wq_print_latency(name, "edit_window", &samples);
+    }
+}
+
+fn stored_order_809_document(ranked: bool) -> Document {
+    let mut document = wq_document(WqShape::Formulas);
+    document
+        .schemas
+        .get_mut(&SchemaId::from("grid"))
+        .unwrap()
+        .fields
+        .retain(|id, _| {
+            id.as_str()
+                .strip_prefix('c')
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+                < 10
+        });
+    for (index, entity) in document.entities.values_mut().enumerate() {
+        if ranked {
+            entity.rank = Some(
+                tachiko_semantic_core::RowRank::new(format!("R{:05}Z", WQ_ROWS - index)).unwrap(),
+            );
+        }
+        for column in ["c7", "c8", "c9"] {
+            entity.fields.insert(
+                FieldId::from(column),
+                Value::Formula(Expression::Add {
+                    left: Box::new(Expression::SameRowReference(FieldId::from("c0"))),
+                    right: Box::new(Expression::SameRowReference(FieldId::from("c1"))),
+                }),
+            );
+        }
+    }
+    document
+}
