@@ -35,6 +35,66 @@ const OTHER_OCCURRENCE: &str = "00000000-0000-4000-8000-000000000679";
 const MAX_WORKING_STORED_TEXT_BYTES: usize = 32 * 1024 * 1024;
 const STORED_TEXT_ITEM_MAX: usize = 64 * 1024;
 
+#[test]
+fn open_reuses_calculation_without_changing_the_three_calculation_path() {
+    for (cycle, error) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut document = redraw_grid();
+        if cycle {
+            document
+                .entities
+                .get_mut(&EntityId::from("r00001"))
+                .unwrap()
+                .fields
+                .insert(
+                    FieldId::from("first"),
+                    Value::Formula(Expression::SameRowReference(FieldId::from("first"))),
+                );
+        }
+        if error {
+            document
+                .entities
+                .get_mut(&EntityId::from("r00000"))
+                .unwrap()
+                .fields
+                .insert(FieldId::from("divisor"), Value::Number(num(0.0)));
+        }
+        // The previous open path validated, projected sources, then rebuilt
+        // the resident session independently on the same document.
+        if let Err(expected) = super::validate(&document) {
+            let actual = expect_error(DesignerRuntime::from_document_working_size(
+                document, OCCURRENCE,
+            ));
+            let DesignerError::InvalidProjectWorkspace { source } = actual else {
+                panic!("expected the original validation refusal: {actual:?}");
+            };
+            assert_eq!(format!("{source:?}"), format!("{expected:?}"));
+            if cycle {
+                assert!(format!("{source:?}").contains("formula.cycle"));
+            }
+            if error {
+                assert!(format!("{source:?}").contains("formula.division_by_zero"));
+            }
+            continue;
+        }
+        assert!(!cycle && !error);
+        let sources = super::formula_sources(&document).unwrap();
+        let scope = super::document_scope(OCCURRENCE, &document).unwrap();
+        let old = super::ResidentWorkspaceSession::new(scope, document.clone());
+        let runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+        assert_eq!(runtime.formula_sources, sources);
+        assert_eq!(runtime.session.export_snapshot(), old.export_snapshot());
+        assert_eq!(
+            runtime.session.calculate_fields().unwrap(),
+            old.calculate_fields().unwrap()
+        );
+        assert_eq!(runtime.session.validation_report(), old.validation_report());
+        assert_eq!(
+            runtime.session.runtime_measurements(),
+            old.runtime_measurements()
+        );
+    }
+}
+
 /// The brief's fixture: 128 rows x 28 data columns plus three formula columns
 /// (rate, calc, total), so one added column reaches the 32-field limit.
 fn fixture() -> Document {

@@ -109,6 +109,61 @@ pub struct ResidentWorkspaceSession {
     preflight_succeeded: bool,
 }
 
+/// A validated open document whose derived state moves into its occurrence.
+///
+/// Owning the document keeps the calculation bound to the exact snapshot
+/// while the host checks its profile and chooses the occurrence scope.
+pub struct ValidatedResidentDocument {
+    document: Document,
+    retained: ResidentDerivedState,
+    calculation_work: IncrementalCalculationWork,
+}
+
+impl ValidatedResidentDocument {
+    /// Validate with the same gates and diagnostic ordering as [`super::validate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the existing definition or semantic validation failure.
+    pub fn new(document: Document) -> Result<Self, WorkspaceError> {
+        super::validate_keyed_grouped_sum_definitions(&document)?;
+        let (retained, calculation_work) = ResidentDerivedState::rebuild(&document);
+        if !retained.report().is_valid() {
+            return Err(invalid_document(
+                retained.validation_report,
+                ValidationRole::Current,
+            ));
+        }
+        Ok(Self {
+            document,
+            retained,
+            calculation_work,
+        })
+    }
+
+    /// Borrow the validated snapshot for host admission checks.
+    #[must_use]
+    pub const fn document(&self) -> &Document {
+        &self.document
+    }
+
+    /// Install the validated snapshot and its calculation without rebuilding.
+    #[must_use]
+    pub fn into_session(self, document_scope: DocumentScopeId) -> ResidentWorkspaceSession {
+        let preflight_succeeded = super::preflight_formula_projections(&self.document).is_ok();
+        ResidentWorkspaceSession {
+            document_scope,
+            occurrence: SessionOccurrence::next(),
+            document: self.document,
+            retained: self.retained,
+            revision: revision_for(0),
+            generation: 0,
+            measurements: ResidentRuntimeMeasurements::initial(self.calculation_work),
+            preflight_succeeded,
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     pub(crate) static PREPARATION_ENTITIES_INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

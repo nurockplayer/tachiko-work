@@ -63,6 +63,8 @@ use tachiko_storage::{
     decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
+#[cfg(test)]
+use tachiko_workspace_engine::validate;
 use tachiko_workspace_engine::{
     CalculationFailure, CellAlignment, CellStyle, ColumnRef, ConditionalAggregate, Date,
     DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
@@ -87,9 +89,9 @@ use tachiko_workspace_engine::{
     prune_presentation,
     resident_session::{
         DocumentWitness, ResidentProjectionInvalidation, ResidentSnapshot,
-        ResidentWorkspaceSession, TrustedPublicationTimeSource,
+        ResidentWorkspaceSession, TrustedPublicationTimeSource, ValidatedResidentDocument,
     },
-    validate, validate_presentation,
+    validate_presentation,
 };
 use thiserror::Error;
 
@@ -3305,15 +3307,17 @@ impl DesignerRuntime {
             SessionProfile::TextCapacity => ensure_capacity_document_encoding(&document)?,
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
         }
-        validate(&document).map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
-        let collection_specs = collection_specs(&document);
+        let validated = ValidatedResidentDocument::new(document)
+            .map_err(|source| DesignerError::InvalidProjectWorkspace { source })?;
+        let document = validated.document();
+        let collection_specs = collection_specs(document);
         let default_collection = select_default_collection(&collection_specs)?;
         let collections = collection_specs
             .values()
             .map(|collection| collection.summary.clone())
             .collect::<Vec<_>>();
         let title = document.title.clone();
-        let document_scope = document_scope(occurrence_id, &document)?;
+        let document_scope = document_scope(occurrence_id, document)?;
         ensure_static_profile(
             &title,
             &default_collection,
@@ -3321,10 +3325,10 @@ impl DesignerRuntime {
             &collection_specs,
             profile,
         )?;
-        let formula_sources = formula_sources(&document)?;
+        let session = validated.into_session(document_scope.clone());
+        let formula_sources = session.formula_source_projections()?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
-        let lifecycle = designer_lifecycle(&document_scope, &document, &principal)?;
-        let session = ResidentWorkspaceSession::new(document_scope.clone(), document);
+        let lifecycle = designer_lifecycle(&document_scope, session.document(), &principal)?;
         let runtime = Self {
             profile,
             capacity_usage,
