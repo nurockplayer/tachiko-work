@@ -46,6 +46,7 @@ fn formula_table(rows: usize) -> Document {
             id: id.as_str().into(),
             key: id.as_str().into(),
             schema: "s".into(),
+            rank: None,
             fields,
         };
         document.entities.insert(entity.id.clone(), entity);
