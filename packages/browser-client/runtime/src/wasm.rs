@@ -1357,7 +1357,7 @@ mod row_rank_parity_tests {
 
     fn request(value: &Value) -> Vec<u8> {
         let bytes = serde_json::to_vec(value).unwrap();
-        REQUEST.with(|slot| *slot.borrow_mut() = bytes.clone());
+        REQUEST.with(|slot| slot.borrow_mut().clone_from(&bytes));
         tachiko_designer_request_run();
         response();
         bytes
@@ -1469,7 +1469,7 @@ mod row_rank_parity_tests {
     fn assert_exports_match_host(host: &mut DesignerHost) {
         for format in ["xlsx", "csv"] {
             let operation = serde_json::to_vec(&json!({"type":"export_native_tables", "expected_revision":"resident/2", "collection":"rows", "format":format})).unwrap();
-            REQUEST.with(|slot| *slot.borrow_mut() = operation.clone());
+            REQUEST.with(|slot| slot.borrow_mut().clone_from(&operation));
             PROJECT.with(|slot| slot.borrow_mut().clear());
             tachiko_designer_spreadsheet_run();
             response();

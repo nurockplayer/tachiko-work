@@ -261,9 +261,6 @@ fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories(
     m.sheets[0].rows.pop();
     invalid.push(m);
     let mut m = metadata.clone();
-    m.sheets[0].rows.swap(0, 1);
-    invalid.push(m);
-    let mut m = metadata.clone();
     m.sheets[0].columns.swap(0, 1);
     invalid.push(m);
     let mut m = metadata.clone();
@@ -272,6 +269,13 @@ fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories(
     let mut m = metadata.clone();
     m.sheets[0].columns[0].field_id = "absent".into();
     invalid.push(m);
+    // Metadata validation checks identity coverage, not row order (#872): stored order comes from ranks.
+    let mut reordered = metadata.clone();
+    reordered.sheets[0].rows.swap(0, 1);
+    for carrier in carriers(&source) {
+        let mut empty = None;
+        assert!(open_imported_project(&mut empty, &carrier, &reordered, FRESH).is_ok());
+    }
     for carrier in carriers(&source) {
         for bad in &invalid {
             let mut empty = None;
