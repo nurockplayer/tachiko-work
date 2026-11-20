@@ -13,6 +13,9 @@ use thiserror::Error;
 
 mod canonical_delta;
 
+#[cfg(test)]
+mod scoped_formula_tests;
+
 pub use canonical_delta::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalDeltaError, CanonicalDirectFact, CanonicalSemanticDelta,
     DeltaInputSide, EntityDefinitionPayload, FieldDefinitionPayload,
@@ -392,17 +395,13 @@ pub fn diff_changes_scoped(
         None,
     );
 
-    // A formula's value can move without any field of the scope changing, as
-    // when an added row moves a column average, so the candidate set is the
-    // formula keys of the two calculations themselves. They are the same keys
-    // a document walk would collect, without the walk.
-    let formulas = before_calculation
-        .formulas()
-        .chain(after_calculation.formulas())
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    push_formula_impacts(
-        formulas,
+    // Values outside the scope can change (for example through column totals).
+    // Compare all value ranges, but skip the immutable partitions both share.
+    let impacted = before_calculation.changed_formula_values(after_calculation);
+    #[cfg(test)]
+    assert_matches_full_value_scan(&impacted, before_calculation, after_calculation);
+    push_changed_formula_impacts(
+        impacted,
         before_calculation,
         after_calculation,
         &changed_fields,
@@ -410,6 +409,33 @@ pub fn diff_changes_scoped(
     );
 
     changes
+}
+
+/// Cross-checks the partition-aware value diff against a scan of every formula.
+#[cfg(test)]
+fn assert_matches_full_value_scan(
+    impacted: &[(FieldRef, Number, Number)],
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+) {
+    let formulas = before_calculation
+        .formulas()
+        .chain(after_calculation.formulas())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let old_impacted = formulas
+        .into_iter()
+        .filter_map(|formula| {
+            let before = before_calculation.value(&formula)?;
+            let after = after_calculation.value(&formula)?;
+            (before != after).then_some((formula, before, after))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        impacted,
+        old_impacted.as_slice(),
+        "scoped formula value diff"
+    );
 }
 
 /// Append one [`SemanticChange::FormulaImpact`] for every candidate whose
@@ -430,6 +456,22 @@ fn push_formula_impacts(
         })
         .collect::<Vec<_>>();
 
+    push_changed_formula_impacts(
+        impacted,
+        before_calculation,
+        after_calculation,
+        changed_fields,
+        changes,
+    );
+}
+
+fn push_changed_formula_impacts(
+    impacted: Vec<(FieldRef, Number, Number)>,
+    before_calculation: &Calculation,
+    after_calculation: &Calculation,
+    changed_fields: &BTreeSet<FieldRef>,
+    changes: &mut Vec<SemanticChange>,
+) {
     // Only the formulas with a changed value need causes, and an edit reaching
     // none of them never pays for the walks.
     if impacted.is_empty() {

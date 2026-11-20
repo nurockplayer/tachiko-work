@@ -164,6 +164,11 @@ impl ValidatedResidentDocument {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static PREPARATION_ENTITIES_INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl ResidentWorkspaceSession {
     /// Start a resident occurrence at its initial internal revision.
     #[must_use]
@@ -577,9 +582,30 @@ impl ResidentWorkspaceSession {
     /// them to publication as a [`PreparedInstallation`].
     #[must_use]
     pub fn prepare_evaluation(&self, candidate: Document) -> PreparedEvaluation<'_> {
+        self.prepare_evaluation_scoped(candidate, None)
+    }
+
+    pub(crate) fn prepare_evaluation_scoped(
+        &self,
+        candidate: Document,
+        scope: Option<&BTreeSet<EntityId>>,
+    ) -> PreparedEvaluation<'_> {
         let base_calculation = self.retained.calculation_state.complete();
         let base_report_valid = self.retained.validation_report.is_valid();
-        let mut changes = projection_changes(&self.document, &candidate);
+        let mut changes = match scope {
+            Some(ids) => {
+                let ids = ids.iter().collect();
+                let changes = projection_changes_for_ids(&self.document, &candidate, &ids);
+                #[cfg(test)]
+                {
+                    let inspected = PREPARATION_ENTITIES_INSPECTED.with(std::cell::Cell::get);
+                    assert_eq!(changes, projection_changes(&self.document, &candidate));
+                    PREPARATION_ENTITIES_INSPECTED.with(|count| count.set(inspected));
+                }
+                changes
+            }
+            None => projection_changes(&self.document, &candidate),
+        };
         // The prepared path evaluates the candidate exactly once, as it did
         // through `semantic_validation`; the update is that one evaluation. It
         // rebuilds on its own whenever an incremental update cannot express the
@@ -1531,13 +1557,21 @@ fn projection_changes(before: &Document, after: &Document) -> ProjectionChanges 
         .keys()
         .chain(after.entities.keys())
         .collect::<BTreeSet<_>>();
+    projection_changes_for_ids(before, after, &entity_ids)
+}
+
+fn projection_changes_for_ids(
+    before: &Document,
+    after: &Document,
+    entity_ids: &BTreeSet<&EntityId>,
+) -> ProjectionChanges {
     let mut changes = ProjectionChanges::default();
-    collect_entity_projection_changes(before, after, &entity_ids, &mut changes);
-    collect_schema_projection_changes(before, after, &entity_ids, &mut changes);
+    collect_entity_projection_changes(before, after, entity_ids, &mut changes);
+    collect_schema_projection_changes(before, after, entity_ids, &mut changes);
     changes
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct ProjectionChanges {
     schemas: BTreeSet<SchemaId>,
     schema_fields: BTreeSet<(SchemaId, FieldId)>,
@@ -1575,6 +1609,8 @@ fn collect_entity_projection_changes(
     entity_ids: &BTreeSet<&EntityId>,
     changes: &mut ProjectionChanges,
 ) {
+    #[cfg(test)]
+    PREPARATION_ENTITIES_INSPECTED.with(|count| count.set(entity_ids.len()));
     instrumentation::record_publication_entities_inspected(
         u64::try_from(entity_ids.len()).unwrap_or(u64::MAX),
     );
