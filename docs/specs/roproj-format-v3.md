@@ -224,9 +224,15 @@ bytes.
 ### Row rank and positional references — ADR-0048
 
 Implementation state: optional row rank storage and in-process v2 history are
-implemented. Positional expressions remain pending and readers refuse their
-unknown tags. Designer runtime admission continues to refuse ranked documents
-until the stored-order consumers land in PR1b (#872).
+implemented. Designer admits ranked documents: table rows, bounded windows,
+locate, Find, view ties, rectangular paste, relative formula copy and native
+XLSX/CSV exports follow stored row order. Positions are one-based in that order;
+whole, selected and grouped totals still fold canonical EntityId order.
+Imported, Tracker and Budget exports use stored order when any collection row
+has a rank, keeping styles on entity identities and deriving formula addresses
+from the reordered rows. Collections without ranks retain their existing export
+presentation order and bytes, including reversed Tracker presentation.
+Positional expressions remain pending and readers refuse their unknown tags.
 
 [ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
 optional Entity member `rank`, after `schema` and before `fields`, omitted when

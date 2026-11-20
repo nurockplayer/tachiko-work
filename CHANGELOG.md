@@ -5,8 +5,10 @@ All notable changes to Tachiko Work are documented in this file.
 ## Unreleased
 
 - Optional row ranks round-trip through .roproj/v3 and complete v2 delta/merge
-  evidence. Frozen writers and v1 history refuse ranked state; Designer admission
-  remains refused until stored-order consumers land (#871, #872). Positional
+  evidence. Designer runtime rows, windows, locate, Find, paste/copy and XLSX/CSV
+  exports follow rank order, with canonical totals and identity-bound styles.
+  Unranked imported/Tracker/Budget exports preserve their existing order and bytes.
+  Frozen writers and v1 history refuse ranked state (#871, #872). Positional
   expressions remain pending.
 
 - Imported worksheet add, rename, delete and Undo/Redo publish the updated
