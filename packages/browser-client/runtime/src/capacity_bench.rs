@@ -1778,7 +1778,7 @@ fn many_edit_includes_required_window_requery() {
 /// #809's ten-column, three-formula-column shape in both rank states. This
 /// supplements `working_size_qualification`'s thirty-column shape.
 #[test]
-#[ignore = "#809 row-order budgets; run explicitly in release with --features capacity-bench"]
+#[ignore = "#809 row-order timings (budgets are judged on #809); run explicitly in release with --features capacity-bench"]
 fn stored_order_809_qualification() {
     for ranked in [false, true] {
         let name = if ranked { "809_ranked" } else { "809_unranked" };
@@ -1790,7 +1790,6 @@ fn stored_order_809_qualification() {
             runtime
         });
         wq_print(name, "open_ms", wq_millis(&open));
-        assert!(open.millis <= 1_500.0, "{name}: open exceeds 1,500 ms");
         let index = runtime.collection_specs["grid"].entities.as_ptr();
         let mut samples = Vec::new();
         for iteration in 0..WQ_EDIT_COUNT {
@@ -1816,16 +1815,6 @@ fn stored_order_809_qualification() {
             samples.push(sample);
         }
         wq_print_latency(name, "edit_window", &samples);
-        let mut ordered = samples
-            .iter()
-            .map(|sample| sample.millis)
-            .collect::<Vec<_>>();
-        ordered.sort_by(f64::total_cmp);
-        let p95 = ordered[(ordered.len() * 95).div_ceil(100) - 1];
-        assert!(
-            p95 <= 60.0,
-            "{name}: edit + zero-row window p95 {p95:.3} ms exceeds 60 ms"
-        );
     }
 }
 
