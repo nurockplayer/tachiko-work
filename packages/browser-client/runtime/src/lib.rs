@@ -63,6 +63,8 @@ use tachiko_storage::{
     decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
+#[cfg(test)]
+use tachiko_workspace_engine::validate;
 use tachiko_workspace_engine::{
     CalculationFailure, CellAlignment, CellStyle, ColumnRef, ConditionalAggregate, Date,
     DiagnosticCode, Document, Entity, EntityId, EntityKey, Expression, FieldDefinition, FieldId,
@@ -89,7 +91,7 @@ use tachiko_workspace_engine::{
         DocumentWitness, ResidentProjectionInvalidation, ResidentSnapshot,
         ResidentWorkspaceSession, TrustedPublicationTimeSource, ValidatedResidentDocument,
     },
-    validate, validate_presentation,
+    validate_presentation,
 };
 use thiserror::Error;
 
