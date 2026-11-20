@@ -207,6 +207,7 @@ fn insert_and_paste_row_refusals_leave_revision_and_history_unchanged() {
         let expected_revision = runtime.current_revision().to_owned();
         runtime
             .handle(DesignerRequest::InsertRow {
+                position: None,
                 expected_revision,
                 collection: collection.clone(),
                 initializers: vec![RowInitializer {
@@ -219,6 +220,7 @@ fn insert_and_paste_row_refusals_leave_revision_and_history_unchanged() {
     let expected_revision = runtime.current_revision().to_owned();
     runtime
         .handle(DesignerRequest::InsertRow {
+            position: None,
             expected_revision,
             collection: collection.clone(),
             initializers: vec![RowInitializer {
@@ -251,6 +253,7 @@ fn insert_and_paste_row_refusals_leave_revision_and_history_unchanged() {
     assert_capacity_refusal_is_atomic(
         &mut runtime,
         DesignerRequest::InsertRow {
+            position: None,
             expected_revision: revision.clone(),
             collection: collection.clone(),
             initializers: vec![RowInitializer {
@@ -424,6 +427,7 @@ fn csv_import_admits_8406_rows_and_refuses_8407_atomically() {
         host_reply(
             &mut host,
             &DesignerRequest::InsertRow {
+                position: None,
                 expected_revision: revision,
                 collection: opened.table.collection.key,
                 initializers: vec![RowInitializer {
@@ -610,6 +614,7 @@ fn capacity_projection_tracks_edit_undo_redo_and_stale_refusal() {
     let revision = runtime.current_revision().to_owned();
     runtime
         .handle(DesignerRequest::InsertRow {
+            position: None,
             expected_revision: revision,
             collection,
             initializers: vec![RowInitializer {
@@ -667,6 +672,7 @@ fn text_capacity_usage_refreshes_after_clear_undo_and_redo() {
         let expected_revision = runtime.current_revision().to_owned();
         runtime
             .handle(DesignerRequest::InsertRow {
+                position: None,
                 expected_revision,
                 collection: collection.clone(),
                 initializers: fields
@@ -781,6 +787,7 @@ fn text_capacity_insertion_honors_the_reported_row_limit() {
     // 200 rows is past the strict 128-row profile but inside the reported
     // limit, so one more row is admitted.
     let reply = runtime.handle(DesignerRequest::InsertRow {
+        position: None,
         expected_revision: capacity.revision,
         collection: imported.opened.bootstrap.default_collection.clone(),
         initializers: Vec::new(),

@@ -386,6 +386,14 @@ entity emits `entity_rank_changed` with `EntityId`, the after-state `SchemaId`,
 and complete `before` / `after` optional ranks. Entity parent suppression still
 applies: a create/delete payload contains rank without a duplicate rank fact.
 
+The in-process `SetEntityRank` command sets or clears the exact optional rank,
+with `SetEntityRank` operation-family Structure authority scoped to the entity
+and document Query disclosure. Positional insertion publishes these commands
+and the new entity together; one inverse removes the new entity and restores
+all previous optional ranks, including absence. Redo replays exact forward
+facts. First insertion and any rebalance retain every changed rank in v2
+evidence. The frozen v1 lifecycle refuses rank-bearing candidates.
+
 The new fact sorts at `(3, EntityId, 4)`, after entity schema changes and before
 stored-field facts. Existing ordering slots stay fixed. Scoped canonical v2
 comparison retains rank-only edits. Frozen v1 diff refuses any ranked input;

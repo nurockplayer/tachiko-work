@@ -54,7 +54,9 @@ fn insert(
             },
         })
         .collect::<Vec<_>>();
-    runtime.insert_row(&revision, collection, &inputs).unwrap()
+    runtime
+        .insert_row(None, &revision, collection, &inputs)
+        .unwrap()
 }
 
 #[test]
@@ -442,7 +444,9 @@ fn formula_capacity_refuses_insert_without_publication() {
     let mut runtime =
         DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000593").unwrap();
     let revision = runtime.current_revision().to_owned();
-    let error = runtime.insert_row(&revision, &collection, &[]).unwrap_err();
+    let error = runtime
+        .insert_row(None, &revision, &collection, &[])
+        .unwrap_err();
     assert!(
         matches!(error, DesignerError::CapacityExceeded(error) if error.limit == CapacityLimit::Formulas)
     );

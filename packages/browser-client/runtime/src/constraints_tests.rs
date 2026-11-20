@@ -72,6 +72,7 @@ impl Fixture {
         let revision = runtime.current_revision().to_owned();
         runtime
             .insert_row(
+                None,
                 &revision,
                 &collection,
                 &[
@@ -161,6 +162,7 @@ impl Fixture {
     fn add_row(&mut self, status: &str, amount: &str) -> String {
         let revision = self.runtime.current_revision().to_owned();
         published(self.runtime.handle(DesignerRequest::InsertRow {
+            position: None,
             expected_revision: revision,
             collection: self.collection.clone(),
             initializers: vec![
@@ -595,6 +597,7 @@ fn a_formula_that_pushes_a_dependent_field_out_of_range_names_that_field() {
     let revision = runtime.current_revision().to_owned();
     runtime
         .insert_row(
+            None,
             &revision,
             &collection,
             &[RowInitializer {

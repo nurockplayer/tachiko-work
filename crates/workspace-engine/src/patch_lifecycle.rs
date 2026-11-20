@@ -31,8 +31,8 @@ use thiserror::Error;
 use super::{
     ColumnCriterion, ColumnRef, ConditionalAggregate, Document, DocumentId, Entity, EntityId,
     EntityKey, Expression, FieldDefinition, FieldEditPlanning, FieldId, FieldKey, FieldRef,
-    FieldType, Number, PreparedEvaluation, PreparedInstallation, PreparedVerdict, SchemaId,
-    SemanticChange, ValidationReport, Value, WorkspaceError,
+    FieldType, Number, PreparedEvaluation, PreparedInstallation, PreparedVerdict, RowRank,
+    SchemaId, SemanticChange, ValidationReport, Value, WorkspaceError,
     apply_field_value_candidate_with_planning, finalize_edit_changes_with_validation,
     formula_inverse_restore_candidate_in_place, formula_restore_candidate_in_place,
     formula_update_candidate_in_place,
@@ -136,6 +136,7 @@ pub enum AuthorizationAction {
 #[serde(rename_all = "snake_case")]
 pub enum OperationFamily {
     AppendEntity,
+    SetEntityRank,
     RemoveEntity,
     SetFieldValue,
     FormulaReasoning,
@@ -347,6 +348,11 @@ pub enum SemanticCommand {
     AppendEntity {
         entity: Entity,
     },
+    /// Set or clear one entity's stored row-order fact (ADR-0048).
+    SetEntityRank {
+        entity: EntityId,
+        rank: Option<RowRank>,
+    },
     /// Remove one stable identity; the final batch must repair inbound references.
     RemoveEntity {
         entity: EntityId,
@@ -482,6 +488,9 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
             schema.as_str().len() + entity_id_list_approx_bytes(entities)
         }
         SemanticCommand::AppendEntity { entity } => entity_approx_bytes(entity),
+        SemanticCommand::SetEntityRank { entity, rank } => {
+            entity.as_str().len() + rank.as_ref().map_or(0, |rank| rank.as_str().len())
+        }
         SemanticCommand::RemoveEntity { entity } => entity.as_str().len(),
         SemanticCommand::AppendSchemaField {
             schema,
@@ -3604,6 +3613,7 @@ impl PatchLifecycle {
                 family: match command {
                     SemanticCommand::AppendCollection { .. }
                     | SemanticCommand::AppendEntity { .. } => OperationFamily::AppendEntity,
+                    SemanticCommand::SetEntityRank { .. } => OperationFamily::SetEntityRank,
                     SemanticCommand::RemoveCollection { .. }
                     | SemanticCommand::RemoveEntity { .. } => OperationFamily::RemoveEntity,
                     SemanticCommand::AppendSchemaField { .. }
@@ -4349,6 +4359,26 @@ impl PatchLifecycle {
                         &mut append_entities,
                         &mut writes,
                     )?;
+                }
+                SemanticCommand::SetEntityRank { entity, rank } => {
+                    let record = candidate.entities.get_mut(entity).ok_or_else(|| {
+                        WorkspaceError::MissingEntityId {
+                            entity: entity.clone(),
+                        }
+                    })?;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SetEntityRank,
+                        mutation_class: MutationClass::Structure,
+                        scope: ScopedSemanticSubject::new(
+                            self.document_scope.clone(),
+                            self.document.clone(),
+                            SemanticScope::Entity {
+                                entity: entity.clone(),
+                                schema: record.schema.clone(),
+                            },
+                        ),
+                    });
+                    record.rank.clone_from(rank);
                 }
                 SemanticCommand::RemoveEntity { entity } => {
                     let record = candidate.entities.get(entity).ok_or_else(|| {
@@ -5565,7 +5595,8 @@ impl PatchBodyIndex {
                         .or_default()
                         .insert(OperationFamily::FormulaInverseRestore);
                 }
-                SemanticCommand::SetFieldConstraint { .. }
+                SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetFieldConstraint { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
@@ -5663,6 +5694,10 @@ impl<'a> DisclosureDerivation<'a> {
         command: &SemanticCommand,
     ) -> Result<(), PatchLifecycleError> {
         match command {
+            SemanticCommand::SetEntityRank { .. } => {
+                self.insert_document_disclosure(OperationFamily::SetEntityRank);
+                Ok(())
+            }
             SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
                 self.insert_document_disclosure(OperationFamily::AppendEntity);
                 Ok(())
@@ -6793,7 +6828,8 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
                     },
                 );
             }
-            SemanticCommand::RemoveCollection { .. }
+            SemanticCommand::SetEntityRank { .. }
+            | SemanticCommand::RemoveCollection { .. }
             | SemanticCommand::AppendEntity { .. }
             | SemanticCommand::RemoveEntity { .. }
             | SemanticCommand::RenameSchemaField { .. }

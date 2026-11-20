@@ -236,6 +236,13 @@ TextCapacity imported-metadata rows must cover every collection row identity
 and match stored order (`compare_row_order`). Without ranks this is the existing
 EntityId order, so reordered metadata remains refused; with ranks, EntityId order
 is refused when it differs from stored order.
+Positional `insert_row` assigns ranks to all existing rows on the first insert
+in an unranked table, then allocates between neighbours. Equal neighbour ranks
+or the 64-byte allocation limit rebalance the table within that same command.
+Beginning/end and the ranked/unranked boundary follow the same stored order.
+Append and paste-created rows stay last; an unranked append that already sorts
+last leaves ranks absent. Undo restores exact previous optional ranks and
+removes the inserted entity; Redo reapplies the recorded forward facts.
 Positional expressions remain pending and readers refuse their unknown tags.
 
 [ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
