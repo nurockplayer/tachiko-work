@@ -65,6 +65,7 @@ fn entity(
     document.entities.insert(
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id.clone(),
             key: EntityKey::from(id),
             schema: schema.clone(),

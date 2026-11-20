@@ -465,6 +465,7 @@ fn long_text_document() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),

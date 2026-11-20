@@ -7,7 +7,7 @@ use tachiko_semantic_core::{
     Entity, EntityId, Expression, FieldRef, FieldType, Number, Value,
 };
 
-use crate::{CalculationFailure, FailureMap, PartitionedMap, column_cells};
+use crate::{CalculationFailure, FailureMap, ValueStore, column_cells};
 
 #[cfg(test)]
 use conditional_walks::{bypass_caches, record_row, record_walk};
@@ -89,7 +89,7 @@ impl ColumnCache {
     fn criterion_index(
         &mut self,
         document: &Document,
-        values: &PartitionedMap<FieldRef, Number>,
+        values: &impl ValueStore,
         column: &ColumnRef,
     ) {
         if self.indexes.contains_key(column) {
@@ -109,7 +109,7 @@ impl ColumnCache {
             let cell = match value {
                 Value::Number(_) | Value::Formula(_) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.get(&reference) else {
+                    let Some(value) = values.formula_value(&reference) else {
                         // The walk fails at this row whatever its key says.
                         index.scan = true;
                         continue;
@@ -135,12 +135,7 @@ impl ColumnCache {
         self.indexes.insert(column.clone(), index);
     }
 
-    fn lookup_index(
-        &mut self,
-        document: &Document,
-        values: &PartitionedMap<FieldRef, Number>,
-        column: &ColumnRef,
-    ) {
+    fn lookup_index(&mut self, document: &Document, values: &impl ValueStore, column: &ColumnRef) {
         if self.lookup_indexes.contains_key(column) {
             return;
         }
@@ -152,7 +147,7 @@ impl ColumnCache {
             let cell = match entity.fields.get(&column.field) {
                 Some(Value::Number(_) | Value::Formula(_)) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.get(&reference) else {
+                    let Some(value) = values.formula_value(&reference) else {
                         continue;
                     };
                     CriterionCell::Number(value.get())
@@ -174,7 +169,7 @@ impl ColumnCache {
     pub(crate) fn fill(
         &mut self,
         document: &Document,
-        values: &PartitionedMap<FieldRef, Number>,
+        values: &impl ValueStore,
         failures: &FailureMap,
         column: &ColumnRef,
     ) {
@@ -189,7 +184,7 @@ impl ColumnCache {
             if first_failed.is_none() && failures.contains_key(&reference) {
                 first_failed = Some(reference.clone());
             }
-            match values.get(&reference) {
+            match values.formula_value(&reference) {
                 Some(value) => {
                     present.push(value.get());
                     total += value.get();
@@ -216,16 +211,16 @@ impl ColumnCache {
     }
 }
 
-pub(crate) struct Evaluation<'a> {
+pub(crate) struct Evaluation<'a, V: ValueStore> {
     pub(crate) document: &'a Document,
     pub(crate) owner: &'a FieldRef,
-    pub(crate) values: &'a PartitionedMap<FieldRef, Number>,
+    pub(crate) values: &'a V,
     // Conditional aggregates memoise their result and index their criteria
     // columns as the pass goes, so the cache is this evaluation's alone.
     pub(crate) columns: &'a mut ColumnCache,
 }
 
-impl Evaluation<'_> {
+impl<V: ValueStore> Evaluation<'_, V> {
     // Static dependencies still govern scheduling, cycles, and invalidation.
     // Failure propagation follows only the branches that are actually read;
     // a column read names its first failed cell in entity order. The
@@ -741,7 +736,7 @@ impl Evaluation<'_> {
         {
             if entity.fields.contains_key(&column.field) {
                 let reference = FieldRef::new(entity.id.clone(), column.field.clone());
-                let Some(value) = self.values.get(&reference) else {
+                let Some(value) = self.values.formula_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -791,7 +786,7 @@ impl Evaluation<'_> {
             // Excel compares a blank referenced cell as zero.
             None => Ok(CriterionTest::equal_number(0.0)),
             Some(Value::Number(_) | Value::Formula(_)) => {
-                let Some(value) = self.values.get(reference) else {
+                let Some(value) = self.values.formula_value(reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference.clone()]),
                     });
@@ -816,7 +811,7 @@ impl Evaluation<'_> {
             None => Ok(None),
             Some(Value::Number(_) | Value::Formula(_)) => {
                 let reference = FieldRef::new(entity.id.clone(), field.clone());
-                let Some(value) = self.values.get(&reference) else {
+                let Some(value) = self.values.formula_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -864,7 +859,7 @@ impl Evaluation<'_> {
     }
 
     fn reference(&self, reference: &FieldRef) -> Result<Number, CalculationFailure> {
-        if let Some(value) = self.values.get(reference) {
+        if let Some(value) = self.values.formula_value(reference) {
             return Ok(*value);
         }
         if self

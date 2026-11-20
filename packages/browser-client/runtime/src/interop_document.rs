@@ -1021,6 +1021,8 @@ fn import_workbook_candidate(
             super::MAX_PROJECTION_BYTES,
         )?;
     }
+    runtime.attach_imported_metadata(&projection.metadata);
+    projection.opened.bootstrap = runtime.bootstrap_projection();
     Ok((runtime, projection))
 }
 
@@ -1097,6 +1099,7 @@ fn import_workbook_working_size_candidate(
     super::interop_adapter::cap_ledger(&mut ledger);
     // The reply also carries the metadata and ledger, so the window gets what
     // is left of the one reply budget.
+    runtime.attach_imported_metadata(&metadata);
     let overhead =
         super::serialized_projection_bytes(&(&metadata, &ledger))? + super::REPLY_ENVELOPE_RESERVE;
     let maximum = super::MAX_TEXT_CAPACITY_PROJECTION_BYTES.saturating_sub(overhead);
@@ -1871,6 +1874,7 @@ fn build_import_sheet(
     for (row_index, cells) in source.rows.iter().enumerate() {
         let entity_id = EntityId::from(ids.generate(SemanticIdKind::Entity));
         let mut entity = Entity {
+            rank: None,
             id: entity_id.clone(),
             key: EntityKey::from(format!("sheet_{}_row_{}", index + 1, row_index + 1)),
             schema: schema_id.clone(),
@@ -2569,6 +2573,7 @@ mod extremum_tests {
         document.entities.insert(
             "row".into(),
             Entity {
+                rank: None,
                 id: "row".into(),
                 key: "row".into(),
                 schema: "items".into(),
@@ -4048,6 +4053,8 @@ impl DesignerRuntime {
         expected_revision: &str,
         metadata: &InteropMetadata,
     ) -> Result<SourceWorkbook, DesignerError> {
+        self.check_revision(expected_revision)?;
+        let metadata = self.metadata_for_export(metadata)?;
         self.export_imported_workbook(expected_revision, metadata, ImportedOutput::Projection)
     }
 
@@ -5694,6 +5701,7 @@ mod import_dependency_tests {
             document.entities.insert(
                 id.into(),
                 Entity {
+                    rank: None,
                     id: id.into(),
                     key: id.into(),
                     schema: "sheet".into(),

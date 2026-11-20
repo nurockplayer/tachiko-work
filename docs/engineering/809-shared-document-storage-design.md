@@ -322,7 +322,7 @@ Its recorded native invocation is `cargo test --release --manifest-path
 packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench
 capacity_809_formula_table -- --ignored --test-threads=1 --nocapture`.
 Run only on an approved remote Rust runner for this 16 GB host; no cargo on the
-host or in orb-test for this task. No benchmark, tests or workflow dispatch is
+host or in tachi-run for this task. No benchmark, tests or workflow dispatch is
 part of this documentation PR.
 
 For performance-changing rows, compare before/after on the same runner/build,

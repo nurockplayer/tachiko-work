@@ -57,6 +57,7 @@ fn document() -> Document {
     ]);
     let settings_fields = BTreeMap::from([(FieldId::from("rate"), number_field("rate"))]);
     let plan = |id: &str, key: &str, expense: f64| Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(key),
         schema: SchemaId::from("plan"),
@@ -97,6 +98,7 @@ fn document() -> Document {
             (
                 EntityId::from("global"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("global"),
                     key: EntityKey::from("global"),
                     schema: SchemaId::from("settings"),

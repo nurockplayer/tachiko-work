@@ -113,6 +113,7 @@ fn document() -> Document {
             (
                 EntityId::from("row"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("row"),
                     key: "row".into(),
                     schema: source_schema,
@@ -138,6 +139,7 @@ fn document() -> Document {
             (
                 EntityId::from("target-row"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("target-row"),
                     key: "target-row".into(),
                     schema: SchemaId::from("target"),
@@ -150,6 +152,7 @@ fn document() -> Document {
             (
                 EntityId::from("target-row-2"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("target-row-2"),
                     key: "target-row-2".into(),
                     schema: SchemaId::from("target"),

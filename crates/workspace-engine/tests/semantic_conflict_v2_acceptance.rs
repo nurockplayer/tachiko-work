@@ -50,6 +50,7 @@ fn document() -> Document {
     document.entities.insert(
         "entity".into(),
         Entity {
+            rank: None,
             id: "entity".into(),
             key: "row".into(),
             schema: "schema".into(),

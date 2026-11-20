@@ -19,6 +19,8 @@ pub use capacity::{
 };
 #[cfg(test)]
 mod authored_input_tests;
+#[cfg(test)]
+mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
 #[cfg(test)]
@@ -36,6 +38,8 @@ mod formula_new_row_tests;
 mod number_format_tests;
 #[cfg(test)]
 mod optional_date_boolean_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod row_rank_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod totals_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -89,6 +93,9 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+mod imported_lifecycle;
+#[cfg(test)]
+mod imported_lifecycle_tests;
 pub mod interop_adapter;
 mod interop_date_format;
 mod interop_document;
@@ -1069,6 +1076,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_number_formats()
         || document.has_date_formats()
         || document.has_field_orders()
+        || document.has_row_ranks()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -1463,8 +1471,15 @@ pub struct FormulaProjection {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CalculationProjection {
-    Value { value: f64 },
-    Failure { code: String, message: String },
+    Value {
+        value: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<StoredValueProjection>,
+    },
+    Failure {
+        code: String,
+        message: String,
+    },
     Unavailable,
 }
 
@@ -1480,12 +1495,18 @@ impl<'de> Deserialize<'de> for CalculationProjection {
             .ok_or_else(|| serde::de::Error::custom("calculation status must be a string"))?;
         match status {
             "value" => {
-                let value = raw.get("value").cloned().ok_or_else(|| {
-                    serde::de::Error::custom("calculation value projection is missing value")
-                })?;
-                serde_json::from_value(value)
-                    .map(|value| Self::Value { value })
-                    .map_err(serde::de::Error::custom)
+                #[derive(Deserialize)]
+                struct ValuePayload {
+                    value: f64,
+                    #[serde(default)]
+                    result: Option<StoredValueProjection>,
+                }
+                let payload: ValuePayload =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::Value {
+                    value: payload.value,
+                    result: payload.result,
+                })
             }
             "failure" => {
                 let code = raw.get("code").cloned().ok_or_else(|| {
@@ -1511,7 +1532,7 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value } => Some(*value),
+            Self::Value { value, .. } => Some(*value),
             Self::Failure { .. } | Self::Unavailable => None,
         }
     }
@@ -1690,6 +1711,9 @@ pub struct PublicationProjection {
     /// working-size session sets it, and not when `many` is set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed: Vec<FieldProjection>,
+    /// Next client-held import mapping after a worksheet lifecycle edit or history step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<InteropMetadata>,
 }
 
 /// The reply's "re-query instead" marker: no target list, no changed cells.
@@ -1747,6 +1771,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
                 .collect(),
             many: false,
             changed: Vec::new(),
+            import_metadata: None,
         }
     }
 }
@@ -2347,6 +2372,7 @@ pub struct DesignerRuntime {
     /// must go through [`DesignerRuntime::set_presentation`] or
     /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
+    imported: Option<imported_lifecycle::ImportedState>,
 }
 
 /// Most bytes a working-size session's undo and redo history holds together.
@@ -2359,6 +2385,10 @@ struct HistoryEntry {
     inverse: HistoryAction,
     /// Approximate bytes both directions hold; fixed when the entry is made.
     weight: usize,
+    imported: Option<(
+        imported_lifecycle::ImportedState,
+        imported_lifecycle::ImportedState,
+    )>,
 }
 
 impl HistoryEntry {
@@ -2368,6 +2398,7 @@ impl HistoryEntry {
             forward,
             inverse,
             weight,
+            imported: None,
         }
     }
 }
@@ -3248,6 +3279,11 @@ impl DesignerRuntime {
         occurrence_id: &str,
         profile: SessionProfile,
     ) -> Result<Self, DesignerError> {
+        if document.has_row_ranks() {
+            return Err(DesignerError::UnsupportedProject {
+                message: "Row rank requires stored-order consumers (PR1b); ranked input is not supported yet.".to_owned(),
+            });
+        }
         let (capacity_usage, working_admission) = match profile {
             // The same three checks `ensure_document_profile` runs for this
             // profile, in the same order, keeping the totals the first and
@@ -3319,6 +3355,7 @@ impl DesignerRuntime {
             opened_from_v3: false,
             presentation: PresentationStore::default(),
             presentation_saved_bytes: 0,
+            imported: None,
         };
         Ok(runtime)
     }
@@ -4333,7 +4370,7 @@ impl DesignerRuntime {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
-            if let Some(CalculationProjection::Value { value }) = &mut field.calculated {
+            if let Some(CalculationProjection::Value { value, .. }) = &mut field.calculated {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
         }
@@ -4362,6 +4399,11 @@ impl DesignerRuntime {
         if snapshot.document().has_number_formats() || snapshot.document().has_date_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
+        if snapshot.document().has_row_ranks() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "row rank requires exportProjectV3 or exportCanonicalTree".to_owned(),
             });
         }
         if snapshot.document().has_field_orders() {
@@ -5979,6 +6021,7 @@ impl DesignerRuntime {
             affected_calculations: Vec::new(),
             many: false,
             changed: Vec::new(),
+            import_metadata: None,
         })
     }
 
@@ -6295,7 +6338,7 @@ impl DesignerRuntime {
             schema: schema_id,
             display_name: schema.display_name.clone(),
         }];
-        self.record_edit(expected, forward, inverse)
+        self.record_imported_table_edit(expected, forward, inverse)
     }
 
     fn rename_column(
@@ -6648,18 +6691,22 @@ impl DesignerRuntime {
             entities: entities.iter().map(|entity| entity.id.clone()).collect(),
         }];
         let inverse = vec![SemanticCommand::AppendCollection { schema, entities }];
+        let imported_before = self.imported.clone();
         let publication = self.publish_commands(expected, &forward)?;
         self.default_collection.clone_from(&new_default);
-        self.record_history_entry(HistoryEntry::new(
-            HistoryAction::TableCommands {
-                commands: forward,
-                default_collection: new_default,
-            },
-            HistoryAction::TableCommands {
-                commands: inverse,
-                default_collection: old_default,
-            },
-        ));
+        self.record_history_entry(
+            HistoryEntry::new(
+                HistoryAction::TableCommands {
+                    commands: forward,
+                    default_collection: new_default,
+                },
+                HistoryAction::TableCommands {
+                    commands: inverse,
+                    default_collection: old_default,
+                },
+            )
+            .with_imported(imported_before, self.imported.as_ref()),
+        );
         Ok(publication)
     }
 
@@ -6738,12 +6785,17 @@ impl DesignerRuntime {
             schema: schema.id,
             entities: Vec::new(),
         }];
-        let publication = self.publish_commands(expected, &forward)?;
+        let imported_before = self.imported.clone();
+        let publication =
+            self.publish_commands_with_imported(expected, &forward, None, Some(&key))?;
         self.duplicate_serial = serial;
-        self.record_history_entry(HistoryEntry::new(
-            HistoryAction::Commands(forward),
-            HistoryAction::Commands(inverse),
-        ));
+        self.record_history_entry(
+            HistoryEntry::new(
+                HistoryAction::Commands(forward),
+                HistoryAction::Commands(inverse),
+            )
+            .with_imported(imported_before, self.imported.as_ref()),
+        );
         let collection = self
             .collection_specs
             .get(&key)
@@ -6910,6 +6962,7 @@ impl DesignerRuntime {
             }
             let entity_key = native_table_key(&entity_key, "copied entity key")?;
             let mut copied = Entity {
+                rank: source.rank.clone(),
                 id: target_id.clone(),
                 key: EntityKey::from(entity_key),
                 schema: schema_id.clone(),
@@ -6934,12 +6987,21 @@ impl DesignerRuntime {
             }
             _ => unreachable!("duplicate collection always creates an append command"),
         };
-        let publication = self.publish_commands(expected_revision, &forward)?;
+        let imported_before = self.imported.clone();
+        let publication = self.publish_commands_with_imported(
+            expected_revision,
+            &forward,
+            None,
+            Some(&target_key),
+        )?;
         self.duplicate_serial = ids.serial;
-        self.record_history_entry(HistoryEntry::new(
-            HistoryAction::Commands(forward),
-            HistoryAction::Commands(inverse),
-        ));
+        self.record_history_entry(
+            HistoryEntry::new(
+                HistoryAction::Commands(forward),
+                HistoryAction::Commands(inverse),
+            )
+            .with_imported(imported_before, self.imported.as_ref()),
+        );
         let collection = self
             .collection_specs
             .get(&target_key)
@@ -7393,11 +7455,21 @@ impl DesignerRuntime {
         })
     }
 
-    #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
     fn publish_commands(
         &mut self,
         expected_revision: &str,
         commands: &[SemanticCommand],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.publish_commands_with_imported(expected_revision, commands, None, None)
+    }
+
+    #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
+    fn publish_commands_with_imported(
+        &mut self,
+        expected_revision: &str,
+        commands: &[SemanticCommand],
+        restored_import: Option<&imported_lifecycle::ImportedState>,
+        added_collection: Option<&str>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
@@ -7416,6 +7488,22 @@ impl DesignerRuntime {
                 source: Box::new(source),
             })?;
         let candidate = prepared.document();
+        let imported = match restored_import {
+            Some(state) => Some(state.clone()),
+            None => self.plan_imported_state(candidate, commands)?,
+        };
+        if let Some(imported) = imported.as_ref().filter(|_| restored_import.is_none()) {
+            self.preflight_imported_reply(&imported.metadata, |candidate| {
+                let publication = candidate.publish_commands("resident/0", commands)?;
+                Ok(match added_collection {
+                    Some(key) => DesignerResponse::Duplicated(DuplicateCollectionProjection {
+                        publication,
+                        collection: candidate.collection_specs[key].summary.clone(),
+                    }),
+                    None => DesignerResponse::Published(publication),
+                })
+            })?;
+        }
         // A batch that only replaces stored values on entities the base holds
         // derives the candidate's totals from the base's instead of walking it.
         let working_edit = match self.profile {
@@ -7670,6 +7758,10 @@ impl DesignerRuntime {
             (SessionProfile::WorkingSize, None)
             | (SessionProfile::Ordinary | SessionProfile::TextCapacity, Some(_) | None) => None,
         };
+        let mapping_changed = imported.is_some();
+        if let Some(imported) = imported {
+            self.imported = Some(imported);
+        }
         if !capacity_text_edit && !value_only {
             match &working_edit {
                 // The delta above already produced this edit's exact totals,
@@ -7681,6 +7773,7 @@ impl DesignerRuntime {
                         .values()
                         .map(|spec| spec.summary.clone())
                         .collect();
+                    self.order_imported_collections();
                 }
                 None => self.refresh_structure(),
             }
@@ -7704,7 +7797,12 @@ impl DesignerRuntime {
                 SessionProfile::WorkingSize => self.lifecycle.discard_settled_records(1),
             }
         }
-        Ok(self.published_projection(&invalidation))
+        let mut publication = self.published_projection(&invalidation);
+        if mapping_changed {
+            publication.import_metadata =
+                self.imported.as_ref().map(|state| state.metadata.clone());
+        }
+        Ok(publication)
     }
 
     fn preflight_capacity_scalar(
@@ -7750,6 +7848,7 @@ impl DesignerRuntime {
             .values()
             .map(|spec| spec.summary.clone())
             .collect();
+        self.order_imported_collections();
     }
 
     fn max_table_rows(&self) -> usize {
@@ -8010,6 +8109,7 @@ impl DesignerRuntime {
             (
                 EntityId::from("monthly_summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("monthly_summary"),
                     key: EntityKey::from("monthly_summary"),
                     schema: budget_summary,
@@ -8233,13 +8333,38 @@ impl DesignerRuntime {
         .cloned()
         .ok_or_else(|| tracker_error("no operation is available in this history direction"))?;
         let action = if redo { &entry.forward } else { &entry.inverse };
-        let result = match action {
-            HistoryAction::Commands(commands) => self.publish_commands(expected, commands),
+        let imported = entry
+            .imported
+            .as_ref()
+            .map(|(before, after)| if redo { after } else { before });
+        if let Some(state) = imported.or_else(|| {
+            self.imported
+                .as_ref()
+                .filter(|state| state.lifecycle_changed)
+        }) {
+            self.preflight_imported_reply(&state.metadata, |candidate| {
+                let mut detached_entry = entry.clone();
+                detached_entry.imported = None;
+                if redo {
+                    candidate.redo.push(detached_entry);
+                } else {
+                    candidate.undo.push(detached_entry);
+                }
+                candidate
+                    .history_edit("resident/0", redo)
+                    .map(DesignerResponse::Published)
+            })?;
+        }
+        let mut result = match action {
+            HistoryAction::Commands(commands) => {
+                self.publish_commands_with_imported(expected, commands, imported, None)
+            }
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
-                let result = self.publish_commands(expected, commands)?;
+                let result =
+                    self.publish_commands_with_imported(expected, commands, imported, None)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
@@ -8256,6 +8381,14 @@ impl DesignerRuntime {
                 self.restore_formula_inverse(expected, target, *value)
             }
         }?;
+        if entry.imported.is_some()
+            || self
+                .imported
+                .as_ref()
+                .is_some_and(|state| state.lifecycle_changed)
+        {
+            result.import_metadata = self.imported.as_ref().map(|state| state.metadata.clone());
+        }
         if redo {
             self.redo.pop();
             self.undo.push(entry);
@@ -8874,7 +9007,7 @@ impl NumberTotal {
 
     fn add(&mut self, field: &FieldProjection) {
         match (&field.calculated, &field.stored) {
-            (Some(CalculationProjection::Value { value }), _)
+            (Some(CalculationProjection::Value { value, .. }), _)
             | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
             (
                 Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
@@ -9538,7 +9671,7 @@ pub(crate) fn admit_imported_project(
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
         let gate = document.clone();
-        let (candidate, opened) = admit_v3_document(document, occurrence_id)?;
+        let (candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
         match candidate.profile {
             SessionProfile::TextCapacity => {
                 interop_document::validate_saved_open_capacity_metadata(&gate, metadata)?;
@@ -9550,6 +9683,8 @@ pub(crate) fn admit_imported_project(
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+        candidate.attach_imported_metadata(metadata);
+        opened.bootstrap = candidate.bootstrap_projection();
         return Ok((candidate, opened));
     }
 
@@ -9564,9 +9699,11 @@ pub(crate) fn admit_imported_project(
         Ok((candidate, opened))
     })();
     match ordinary {
-        Ok((mut candidate, opened)) => {
+        Ok((mut candidate, mut opened)) => {
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
+            candidate.attach_imported_metadata(metadata);
+            opened.bootstrap = candidate.bootstrap_projection();
             Ok((candidate, opened))
         }
         Err(error)
@@ -9577,7 +9714,7 @@ pub(crate) fn admit_imported_project(
             // both pass may an eligible non-v3 candidate retry the complete
             // admission in the enlarged profile.
             interop_document::validate_saved_open_capacity_metadata(&document, metadata)?;
-            let (mut candidate, opened) = DesignerRuntime::from_document_profile_with_opened(
+            let (mut candidate, mut opened) = DesignerRuntime::from_document_profile_with_opened(
                 document,
                 occurrence_id,
                 SessionProfile::TextCapacity,
@@ -9586,6 +9723,8 @@ pub(crate) fn admit_imported_project(
             ensure_opened_wire_projection_size(&opened, SessionProfile::TextCapacity)?;
             candidate.opened_from_v3 = false;
             candidate.set_presentation(presentation)?;
+            candidate.attach_imported_metadata(metadata);
+            opened.bootstrap = candidate.bootstrap_projection();
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -9616,6 +9755,7 @@ pub(crate) fn admit_imported_project_working_size(
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
+    candidate.attach_imported_metadata(metadata);
     let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
@@ -9898,6 +10038,7 @@ fn budget_item(
     Ok((
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(id),
             schema,
@@ -11681,6 +11822,7 @@ fn ensure_static_profile(
         affected_calculations,
         many: false,
         changed: Vec::new(),
+        import_metadata: None,
     };
     ensure_projection_size_with_limit(
         &publication,
@@ -11999,9 +12141,10 @@ const fn scalar_kind(value: Option<&Value>) -> Option<ScalarKind> {
 
 fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationProjection {
     match outcome {
-        FormulaCalculationOutcome::Value(value) => {
-            CalculationProjection::Value { value: value.get() }
-        }
+        FormulaCalculationOutcome::Value(value) => CalculationProjection::Value {
+            value: value.get(),
+            result: None,
+        },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),
             message: calculation_failure_message(failure).to_owned(),
@@ -12187,6 +12330,7 @@ fn tracker_row(
         {
             allocated.insert(id.clone());
             break Entity {
+                rank: None,
                 id,
                 key,
                 schema: SchemaId::from("tracker"),
@@ -12355,6 +12499,7 @@ fn native_table_row(
                 fields.insert(column.id.clone(), value);
             }
             return Ok(Entity {
+                rank: None,
                 id,
                 key,
                 schema: SchemaId::from(spec.summary.id.clone()),
@@ -12790,7 +12935,10 @@ mod tests {
         );
         assert_eq!(
             explanation.value.calculated,
-            Some(super::CalculationProjection::Value { value: 1360.0 })
+            Some(super::CalculationProjection::Value {
+                value: 1360.0,
+                result: None
+            })
         );
         let dependencies = &explanation.direct_dependencies;
         assert_eq!(dependencies.len(), 2);
@@ -15446,7 +15594,10 @@ mod tests {
             total_row(
                 "b",
                 None,
-                Some(super::CalculationProjection::Value { value: 1.5 }),
+                Some(super::CalculationProjection::Value {
+                    value: 1.5,
+                    result: None,
+                }),
             ),
             blank.clone(),
         ];

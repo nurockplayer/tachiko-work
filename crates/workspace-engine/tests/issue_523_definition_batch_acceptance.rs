@@ -107,6 +107,7 @@ fn keyed_grouped_sum_document() -> Document {
     document.entities.insert(
         EntityId::from("order"),
         Entity {
+            rank: None,
             id: EntityId::from("order"),
             key: EntityKey::from("order"),
             schema: orders.clone(),
@@ -122,6 +123,7 @@ fn keyed_grouped_sum_document() -> Document {
     document.entities.insert(
         EntityId::from("product"),
         Entity {
+            rank: None,
             id: EntityId::from("product"),
             key: EntityKey::from("product"),
             schema: products.clone(),

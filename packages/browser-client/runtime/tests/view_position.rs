@@ -50,6 +50,7 @@ fn entity(id: &str, values: Vec<(&str, Value)>) -> (EntityId, Entity) {
     (
         EntityId::from(id),
         Entity {
+            rank: None,
             id: EntityId::from(id),
             key: EntityKey::from(id),
             schema: SchemaId::from("rows"),

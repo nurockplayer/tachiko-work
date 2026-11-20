@@ -260,6 +260,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         undo: Vec::new(),
         redo: Vec::new(),
         pending_cleanup: None,
+        imported: None,
         duplicate_serial: 0,
         opened_from_v3: false,
         presentation: crate::PresentationStore::default(),
@@ -1035,6 +1036,7 @@ fn wq_document(shape: WqShape) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: schema_id.clone(),
@@ -1514,6 +1516,7 @@ fn wb_seeded_document(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: schema_id.clone(),

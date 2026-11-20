@@ -61,6 +61,7 @@ fn security_document(note: &str) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("goblin"),
             Entity {
+                rank: None,
                 id: EntityId::from("goblin"),
                 key: "goblin".into(),
                 schema: SchemaId::from("enemy"),

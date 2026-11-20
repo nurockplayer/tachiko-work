@@ -56,6 +56,7 @@ fn entity(
     fields: impl IntoIterator<Item = (&'static str, Value)>,
 ) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: human_key(id).into(),
         schema: SchemaId::from(schema),

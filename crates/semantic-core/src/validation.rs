@@ -1954,6 +1954,7 @@ mod issue_175_research {
             document.entities.insert(
                 EntityId::from("entity-store-id"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("entity-declared-id"),
                     key: "Invalid Entity Key".into(),
                     schema: SchemaId::from("schema-store-id"),
@@ -2043,6 +2044,7 @@ mod issue_175_research {
             document.entities.insert(
                 EntityId::from("entity"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("entity"),
                     key: "item".into(),
                     schema: SchemaId::from("schema"),

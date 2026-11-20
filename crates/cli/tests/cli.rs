@@ -172,6 +172,7 @@ fn balance_document(damage: f64) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("sword"),
             Entity {
+                rank: None,
                 id: EntityId::from("sword"),
                 key: "sword".into(),
                 schema: SchemaId::from("weapon"),

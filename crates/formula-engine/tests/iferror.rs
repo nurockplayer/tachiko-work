@@ -56,6 +56,7 @@ fn document() -> Document {
     document.entities.insert(
         EntityId::from("r"),
         Entity {
+            rank: None,
             id: EntityId::from("r"),
             key: EntityKey::from("r"),
             schema: SchemaId::from("r"),

@@ -33,6 +33,7 @@ fn public_identifier_predicate_matches_human_key_validation() {
         document.entities.insert(
             EntityId::from("entity stable id"),
             Entity {
+                rank: None,
                 id: EntityId::from("entity stable id"),
                 key: EntityKey::from(identifier),
                 schema: "missing but opaque".into(),

@@ -815,6 +815,7 @@ fn working_size_output_bytes_refusal_matches_host_and_wasm() {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(id.as_str()),
                 schema: SchemaId::from("tracker"),
@@ -876,6 +877,7 @@ fn tracker_document_with_rows(count: usize) -> crate::Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(id.as_str()),
                 schema: SchemaId::from("tracker"),

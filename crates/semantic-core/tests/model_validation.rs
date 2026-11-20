@@ -44,6 +44,7 @@ fn valid_document() -> Document {
     };
 
     let sword = Entity {
+        rank: None,
         id: EntityId::from("sword"),
         key: "sword".into(),
         schema: SchemaId::from("weapon"),
@@ -145,6 +146,7 @@ fn reference_to_wrong_schema_is_rejected() {
     document.entities.insert(
         EntityId::from("hero"),
         Entity {
+            rank: None,
             id: EntityId::from("hero"),
             key: "hero".into(),
             schema: SchemaId::from("character"),

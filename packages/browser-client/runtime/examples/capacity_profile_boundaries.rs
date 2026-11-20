@@ -51,6 +51,7 @@ fn document(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("s"),

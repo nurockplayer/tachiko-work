@@ -422,6 +422,7 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
     doc.entities.insert(
         "a".into(),
         Entity {
+            rank: None,
             id: "a".into(),
             key: "a".into(),
             schema: "items".into(),
@@ -440,6 +441,7 @@ fn runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_histo
     doc.entities.insert(
         "sum".into(),
         Entity {
+            rank: None,
             id: "sum".into(),
             key: "sum".into(),
             schema: "summary".into(),

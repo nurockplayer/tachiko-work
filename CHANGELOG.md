@@ -4,10 +4,22 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Optional row ranks round-trip through .roproj/v3 and complete v2 delta/merge
+  evidence. Frozen writers and v1 history refuse ranked state; Designer admission
+  remains refused until stored-order consumers land (#871, #872). Positional
+  expressions remain pending.
+
+- Imported worksheet add, rename, delete and Undo/Redo publish the updated
+  client-held import mapping. Added sheets stay last on reopen with that mapping
+  and in XLSX export; stale export mappings are refused (#859).
+
 - Compact explicit XLSX header prefixes with accurate data-row refusals, keep worksheet finding keys intact, and export all seven TextCapacity Date formats including blanks (#819, #831, #782).
 - Preserve XLSX import formula caches for selected-type conflicts and non-English date patterns, export English month names with an explicit locale, disclose width rounding/clamping, and reject non-Boolean presentation rules (#802, #785, #782, #784, #724).
 
 ### Added
+
+- Browser-client calculated outcomes carry an optional tagged `result` for
+  non-Number outcomes; absent means Number (#842).
 
 - Add atomic `move_cells` for Cut → Paste as one revision and one Undo/Redo step, preserving formula dependencies (#813).
 

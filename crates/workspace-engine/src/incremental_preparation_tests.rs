@@ -81,6 +81,7 @@ fn literal(value: f64) -> Expression {
 
 fn row(id: &str, schema: &str, fields: BTreeMap<FieldId, Value>) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from(schema),

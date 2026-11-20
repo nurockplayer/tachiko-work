@@ -80,6 +80,7 @@ fn document_with_order(reverse: bool) -> Document {
         entities: BTreeMap::from([(
             EntityId::from("sword"),
             Entity {
+                rank: None,
                 id: EntityId::from("sword"),
                 key: "sword".into(),
                 schema: SchemaId::from("weapon"),

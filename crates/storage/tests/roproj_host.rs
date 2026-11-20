@@ -1110,6 +1110,7 @@ fn bounded_document() -> Document {
             (
                 EntityId::from("entity-a"),
                 Entity {
+                    rank: None,
                     id: "entity-a".into(),
                     key: "alpha".into(),
                     schema: "schema-a".into(),
@@ -1122,6 +1123,7 @@ fn bounded_document() -> Document {
             (
                 EntityId::from("entity-b"),
                 Entity {
+                    rank: None,
                     id: "entity-b".into(),
                     key: "beta".into(),
                     schema: "schema-a".into(),
@@ -1183,6 +1185,7 @@ fn numeric_bridge_document() -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity-numeric"),
             Entity {
+                rank: None,
                 id: "entity-numeric".into(),
                 key: "numeric".into(),
                 schema: "schema-numeric".into(),

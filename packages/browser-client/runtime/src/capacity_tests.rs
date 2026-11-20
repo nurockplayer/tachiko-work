@@ -514,6 +514,7 @@ fn v3_reopen_refusal_preserves_the_resident_occurrence_and_history() {
     for row in 0..=crate::interop_adapter::MAX_TEXT_CAPACITY_ROWS {
         let id = super::EntityId::from(format!("capacity_row_{row}"));
         let entity = super::Entity {
+            rank: None,
             id: id.clone(),
             key: super::EntityKey::from(format!("capacity_row_{row}")),
             schema: schema.clone(),
@@ -547,6 +548,7 @@ fn v3_reopen_refusal_preserves_the_resident_occurrence_and_history() {
         accepted_document.entities.insert(
             id.clone(),
             super::Entity {
+                rank: None,
                 id: id.clone(),
                 key: super::EntityKey::from(format!("capacity_row_{row}")),
                 schema: schema.clone(),
@@ -845,6 +847,7 @@ fn stock_tracker_keeps_its_128_row_limit_when_reopened() {
         document.entities.insert(
             id.clone(),
             super::Entity {
+                rank: None,
                 id,
                 key: super::EntityKey::from(format!("tracker_row_{row}")),
                 schema: schema.clone(),

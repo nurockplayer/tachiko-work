@@ -36,6 +36,7 @@ fn balance_document() -> Document {
         ]),
     };
     let weapon = Entity {
+        rank: None,
         id: EntityId::from("sword"),
         key: "sword".into(),
         schema: SchemaId::from("weapon"),
@@ -402,6 +403,7 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
         entities: BTreeMap::from([(
             EntityId::from("chain"),
             Entity {
+                rank: None,
                 id: EntityId::from("chain"),
                 key: "chain".into(),
                 schema: SchemaId::from("chain"),
@@ -546,6 +548,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
             entities: BTreeMap::from([(
                 EntityId::from("node"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("node"),
                     key: "source".into(),
                     schema: SchemaId::from("schema"),
@@ -739,6 +742,7 @@ fn assert_reaching_fields_matches(calculation: &Calculation, document: &Document
 /// `unused` reaches nothing.
 fn fan_out_document() -> Document {
     let entity = Entity {
+        rank: None,
         id: EntityId::from("node"),
         key: "node".into(),
         schema: SchemaId::from("node"),
@@ -807,6 +811,7 @@ fn column_total_document() -> Document {
         fields: BTreeMap::from([(FieldId::from("total"), number_field("total"))]),
     };
     let plan_row = |id: &str, reserve: f64| Entity {
+        rank: None,
         id: EntityId::from(id),
         key: id.into(),
         schema: SchemaId::from("plan"),
@@ -825,6 +830,7 @@ fn column_total_document() -> Document {
             (
                 EntityId::from("summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("summary"),
                     key: "summary".into(),
                     schema: SchemaId::from("summary"),
@@ -859,6 +865,7 @@ fn same_row_document() -> Document {
         fields: BTreeMap::from([(FieldId::from("rate"), number_field("rate"))]),
     };
     let plan_row = |id: &str, expense: f64| Entity {
+        rank: None,
         id: EntityId::from(id),
         key: id.into(),
         schema: SchemaId::from("plan"),
@@ -886,6 +893,7 @@ fn same_row_document() -> Document {
             (
                 EntityId::from("global"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("global"),
                     key: "global".into(),
                     schema: SchemaId::from("global"),

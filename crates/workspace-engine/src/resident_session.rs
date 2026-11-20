@@ -1539,6 +1539,11 @@ fn collect_entity_projection_changes(
                     .chain(after_entity.fields.keys())
                     .cloned()
                     .collect::<BTreeSet<_>>();
+                let rank_changed = before_entity.rank != after_entity.rank;
+                if rank_changed {
+                    changes.entities.insert(entity_id.clone());
+                    changes.unaddressable_calculation_change = true;
+                }
                 let presentation_changed = before_entity.key != after_entity.key;
                 let schema_changed = before_entity.schema != after_entity.schema;
                 if presentation_changed || schema_changed || before_entity.id != after_entity.id {
@@ -1798,6 +1803,45 @@ mod selection_statistics_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rank_only_changes_enter_scoped_evidence_and_invalidate_structure() {
+        use tachiko_semantic_core::{Entity, RowRank, Schema};
+        let mut before = Document::empty("doc", "Ranks");
+        before.schemas.insert(
+            "s".into(),
+            Schema {
+                id: "s".into(),
+                key: "s".into(),
+                display_name: None,
+                field_order: None,
+                fields: BTreeMap::new(),
+            },
+        );
+        before.entities.insert(
+            "row".into(),
+            Entity {
+                id: "row".into(),
+                key: "row".into(),
+                schema: "s".into(),
+                rank: None,
+                fields: BTreeMap::new(),
+            },
+        );
+        assert!(crate::runtime_export(&before).is_ok());
+        let mut after = before.clone();
+        after.entities.get_mut("row").unwrap().rank = Some(RowRank::new("A").unwrap());
+        let changes = projection_changes(&before, &after);
+        assert_eq!(
+            changes.diff_scope().entities,
+            [EntityId::from("row")].into()
+        );
+        assert!(changes.unaddressable_calculation_change);
+        assert!(matches!(
+            crate::runtime_export(&after),
+            Err(crate::WorkspaceError::UnsupportedRowRankRepresentation)
+        ));
+    }
 
     struct FixedTime;
 
