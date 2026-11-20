@@ -240,8 +240,11 @@ Positional `insert_row` assigns ranks to all existing rows on the first insert
 in an unranked table, then allocates between neighbours. Equal neighbour ranks
 or the 64-byte allocation limit rebalance the table within that same command.
 Beginning/end and the ranked/unranked boundary follow the same stored order.
-Append and paste-created rows stay last; an unranked append that already sorts
-last leaves ranks absent. Undo restores exact previous optional ranks and
+In a collection with any ranked row, append and paste-created rows allocate
+ranks after the last stored row, rebalancing when necessary. In an entirely
+unranked collection, append and paste-created rows never write ranks; existing
+EntityId order and save/export bytes remain unchanged even when a new ID sorts
+before an existing row. Only explicit positional insertion ranks an unranked table. Undo restores exact previous optional ranks and
 removes the inserted entity; Redo reapplies the recorded forward facts.
 Positional expressions remain pending and readers refuse their unknown tags.
 

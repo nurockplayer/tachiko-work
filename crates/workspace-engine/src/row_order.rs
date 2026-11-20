@@ -24,17 +24,7 @@ pub fn plan_insertion(
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| compare_row_order(left, right));
     let unranked = rows.iter().all(|row| row.rank.is_none());
-    if !positional
-        && unranked
-        && rows
-            .last()
-            .into_iter()
-            .map(|row| &row.id)
-            .chain(new_rows.iter().map(|row| &row.id))
-            .collect::<Vec<_>>()
-            .windows(2)
-            .all(|pair| pair[0] < pair[1])
-    {
+    if !positional && unranked {
         return (Vec::new(), Vec::new());
     }
     let left = index.checked_sub(1).map(|index| rows[index]);
@@ -83,7 +73,7 @@ fn between(lower: Option<&RowRank>, upper: Option<&RowRank>) -> Option<RowRank> 
             62
         };
         if high > low + 1 {
-            result.push(char::from(DIGITS[(low + high) / 2]));
+            result.push(char::from(DIGITS[usize::midpoint(low, high)]));
             return Some(RowRank::new(result).expect("allocated rank is valid"));
         }
         result.push(char::from(DIGITS[low]));

@@ -7,7 +7,8 @@ All notable changes to Tachiko Work are documented in this file.
 - Native tables accept `insert_row.position` with a before/after row identity.
   Inserts, rank allocation and rebalancing publish as one Undo/Redo step,
   preserving exact prior optional ranks. Append and paste-created rows stay
-  last; unranked append-only documents retain their save/export bytes (#873).
+  last in ranked collections; unranked collections retain their existing
+  EntityId order and save/export bytes without writing ranks (#873).
 
 - Optional row ranks round-trip through .roproj/v3 and complete v2 delta/merge
   evidence. Designer runtime rows, windows, locate, Find, paste/copy and XLSX/CSV

@@ -2,10 +2,10 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 use super::{
-    DesignerRequest, DesignerRuntime, Document, Entity, EntityId, EntityKey, Expression,
-    FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FindDirection, FindInViewInput,
-    Number, RowInitializer, RowPosition, ScalarEditInput, Schema, SchemaId, SchemaKey, TableView,
-    Value, open_project,
+    DesignerError, DesignerRequest, DesignerRuntime, Document, Entity, EntityId, EntityKey,
+    Expression, FieldDefinition, FieldId, FieldKey, FieldRef, FieldType, FindDirection,
+    FindInViewInput, Number, RowInitializer, RowPosition, ScalarEditInput, Schema, SchemaId,
+    SchemaKey, TableView, Value, open_project,
 };
 use tachiko_workspace_engine::{FieldConstraint, RowRank};
 
@@ -182,17 +182,18 @@ fn insert_before_after_and_append_preserve_initializers() {
     assert_eq!((found.entity, found.position), (id.clone(), 2));
 }
 
-fn assert_refused(runtime: &mut DesignerRuntime, request: DesignerRequest) {
+fn assert_refused(runtime: &mut DesignerRuntime, request: DesignerRequest) -> DesignerError {
     let before = runtime.session.document().clone();
     let revision = runtime.current_revision().to_owned();
     let history_size = (runtime.undo.len(), runtime.redo.len(), runtime.row_serial);
-    assert!(runtime.handle(request).is_err());
+    let error = runtime.handle(request).unwrap_err();
     assert_eq!(runtime.session.document(), &before);
     assert_eq!(runtime.current_revision(), revision);
     assert_eq!(
         (runtime.undo.len(), runtime.redo.len(), runtime.row_serial),
         history_size
     );
+    error
 }
 
 #[test]
@@ -305,8 +306,18 @@ fn insert_between_equal_or_exhausted_ranks_rebalances_and_redoes() {
 #[test]
 fn insert_preserves_capacity_and_required_field_refusals() {
     for count in [2, super::MAX_TABLE_ROWS] {
-        let mut runtime = open(fixture(count));
-        assert_refused(
+        let mut document = fixture(count);
+        document
+            .schemas
+            .get_mut(&SchemaId::from("rows"))
+            .unwrap()
+            .fields
+            .retain(|id, _| id.as_str() == "label");
+        for row in document.entities.values_mut() {
+            row.fields.retain(|id, _| id.as_str() == "label");
+        }
+        let mut runtime = open(document);
+        let error = assert_refused(
             &mut runtime,
             DesignerRequest::InsertRow {
                 expected_revision: "resident/0".into(),
@@ -315,10 +326,20 @@ fn insert_preserves_capacity_and_required_field_refusals() {
                 initializers: if count == 2 {
                     vec![]
                 } else {
-                    inputs("overflow")
+                    vec![RowInitializer {
+                        field: "label".into(),
+                        input: ScalarEditInput::Text {
+                            value: "overflow".into(),
+                        },
+                    }]
                 },
             },
         );
+        if count == super::MAX_TABLE_ROWS {
+            assert!(matches!(error, DesignerError::CapacityExceeded(error)
+                if error.limit == super::CapacityLimit::TableRows
+                    && error.maximum == count && error.attempted == count + 1));
+        }
     }
 }
 
@@ -475,7 +496,7 @@ fn ranked_edges_and_ranked_unranked_boundary_allocate_without_reordering_old_row
 }
 
 #[test]
-fn append_with_an_earlier_identity_ranks_the_unranked_tail_atomically() {
+fn append_with_an_earlier_identity_preserves_unranked_order_and_undo() {
     let mut document = fixture(1);
     let mut row = document.entities.remove(&EntityId::from("e0000")).unwrap();
     row.id = EntityId::from("z_last");
@@ -487,17 +508,33 @@ fn append_with_an_earlier_identity_ranks_the_unranked_tail_atomically() {
     document.entities.insert(row.id.clone(), row);
     let mut runtime = open(document.clone());
     insert(&mut runtime, None, "appended");
-    assert_eq!(labels(&runtime), ["e0000", "appended"]);
+    assert_eq!(labels(&runtime), ["appended", "e0000"]);
     assert!(
         runtime
             .session
             .document()
             .entities
             .values()
-            .all(|row| row.rank.is_some())
+            .all(|row| row.rank.is_none())
     );
     history(&mut runtime, false);
     assert_eq!(runtime.session.document(), &document);
     history(&mut runtime, true);
-    assert_eq!(labels(&runtime), ["e0000", "appended"]);
+    assert_eq!(labels(&runtime), ["appended", "e0000"]);
+    let appended = runtime.session.document().clone();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .paste_cells(&revision, "rows", None, "label", &[vec!["pasted".into()]])
+        .unwrap();
+    assert_eq!(labels(&runtime), ["appended", "pasted", "e0000"]);
+    assert!(
+        runtime
+            .session
+            .document()
+            .entities
+            .values()
+            .all(|row| row.rank.is_none())
+    );
+    history(&mut runtime, false);
+    assert_eq!(runtime.session.document(), &appended);
 }

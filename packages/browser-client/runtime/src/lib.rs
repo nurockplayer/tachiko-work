@@ -7670,9 +7670,9 @@ impl DesignerRuntime {
         // one call. Other command families retain the existing lifecycle.
         let v2_evidence_transition = document_requires_v2_evidence(self.session.document())
             || commands.iter().any(|command| match command {
-                SemanticCommand::SetEntityRank { .. } => true,
                 SemanticCommand::AppendEntity { entity } => entity.rank.is_some(),
-                SemanticCommand::SetSchemaDisplayName { .. }
+                SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
