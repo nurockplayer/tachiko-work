@@ -65,6 +65,7 @@ pub mod formula_operations;
 pub mod keyed_grouped_sum_operations;
 pub mod patch_lifecycle;
 pub mod resident_session;
+pub mod row_order;
 
 /// Research-only access to the accepted complete calculation oracle for Issue
 /// #175 cross-crate admission parity tests.

@@ -1287,7 +1287,7 @@ fn qualify_working_size_edits(shape: WqShape, runtime: &mut DesignerRuntime) {
             input: "7".to_owned(),
         },
     }];
-    let (inserted, sample) = observe(|| runtime.insert_row(&revision, "grid", &initializers));
+    let (inserted, sample) = observe(|| runtime.insert_row(None, &revision, "grid", &initializers));
     match inserted {
         Ok(_) => wq_print(name, "insert_row_ms", wq_millis(&sample)),
         Err(error) => wq_refused(name, "insert_row", &error),

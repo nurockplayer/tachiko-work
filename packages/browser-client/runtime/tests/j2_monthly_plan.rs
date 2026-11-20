@@ -253,6 +253,7 @@ fn insert(
     published(
         runtime,
         DesignerRequest::InsertRow {
+            position: None,
             expected_revision: expected.to_owned(),
             collection: collection.to_owned(),
             initializers,

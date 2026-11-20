@@ -317,6 +317,21 @@ An optional added column needs no `initializers`; a supplied subset fills only
 those entities. `insert_row` may omit optional initializers, leaving those slots
 blank. Required initializers remain mandatory; neither path invents defaults.
 
+`insert_row` also accepts optional `position: {before: entityId}` or
+`position: {after: entityId}` through `trackerCommand`. The anchor must belong
+to the named collection. Both keys, an unknown anchor, or a foreign anchor
+refuse without publication or history changes. Omission appends as before.
+Revision, capacity, required-field and formula-fill admission are unchanged.
+Ranks and the new row publish together, with one Undo restoring exact prior
+ranks (including absence) and one Redo replaying the forward facts. Window,
+locate, Find, save/reopen and XLSX/CSV export follow that stored order.
+Tracker `append_row` keeps its existing profile and refusal contract.
+
+```ts
+await client.trackerCommand({type: "insert_row", expected_revision: revision,
+  collection: collectionKey, position: {before: rowId}, initializers: []});
+```
+
 Use stable IDs and the current revision from projections:
 
 ```ts

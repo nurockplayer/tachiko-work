@@ -43,6 +43,7 @@ fn insert_named_row(runtime: &mut DesignerRuntime, collection: &str, name_field:
     let revision = runtime.current_revision().to_owned();
     runtime
         .insert_row(
+            None,
             &revision,
             collection,
             &[RowInitializer {
@@ -355,6 +356,7 @@ fn imported_optional_date_and_boolean_columns_project_as_a_native_table() {
     let revision = runtime.current_revision().to_owned();
     runtime
         .handle(DesignerRequest::InsertRow {
+            position: None,
             expected_revision: revision,
             collection: collection.clone(),
             initializers: vec![RowInitializer {

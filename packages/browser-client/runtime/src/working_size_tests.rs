@@ -416,7 +416,7 @@ fn working_size_admits_ten_thousand_rows_and_refuses_the_next() {
         DesignerRuntime::from_document_working_size(text_grid(10_000, 1), OCCURRENCE).unwrap();
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
     let current = revision(&runtime);
-    let error = runtime.insert_row(&current, "grid", &[]).unwrap_err();
+    let error = runtime.insert_row(None, &current, "grid", &[]).unwrap_err();
     assert_capacity_refusal(&error, CapacityLimit::TableRows, 10_000, 10_001);
     assert_eq!(runtime.current_revision(), current);
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
@@ -952,6 +952,7 @@ fn every_command_succeeds_and_keeps_the_working_size_profile() {
     let current = revision(&runtime);
     runtime
         .insert_row(
+            None,
             &current,
             "grid",
             &[RowInitializer {
@@ -1353,7 +1354,9 @@ fn new_table_with_the_working_size_profile_replies_a_zero_row_window() {
     let mut runtime = resident.unwrap();
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
     let current = revision(&runtime);
-    let inserted = runtime.insert_row(&current, &collection, &[]).unwrap();
+    let inserted = runtime
+        .insert_row(None, &current, &collection, &[])
+        .unwrap();
     assert_ne!(inserted.resulting_revision, current);
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
 
@@ -2294,6 +2297,7 @@ fn a_removed_rows_cells_are_not_changed_cells() {
     // An inserted row's cells are changed cells.
     let publication = match runtime
         .handle(DesignerRequest::InsertRow {
+            position: None,
             expected_revision: runtime.current_revision().to_owned(),
             collection: "ledger".to_owned(),
             initializers: vec![RowInitializer {
@@ -4472,7 +4476,7 @@ fn a_value_edit_derives_the_same_totals_as_a_full_walk() {
             }
             91..=94 => {
                 let current = revision(&runtime);
-                runtime.insert_row(&current, "grid", &[]).unwrap();
+                runtime.insert_row(None, &current, "grid", &[]).unwrap();
             }
             95..=97 => remove_a_safe_row(&mut runtime, &protected),
             98 if columns_added < 3 => {

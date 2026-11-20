@@ -133,6 +133,7 @@ fn row_entry_stores_canonical_values_from_authored_spellings() {
     let revision = runtime.current_revision().to_owned();
     runtime
         .insert_row(
+            None,
             &revision,
             &collection,
             &[

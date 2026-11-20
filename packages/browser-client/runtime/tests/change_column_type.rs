@@ -70,6 +70,7 @@ fn insert(runtime: &mut DesignerRuntime, initializers: Vec<RowInitializer>) {
     publish(
         runtime,
         DesignerRequest::InsertRow {
+            position: None,
             expected_revision: revision,
             collection: "items".to_owned(),
             initializers,

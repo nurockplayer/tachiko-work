@@ -783,6 +783,10 @@ mod reference {
         disclosures: &mut BTreeSet<DisclosureRequirement>,
     ) -> Result<(), PatchLifecycleError> {
         match command {
+            SemanticCommand::SetEntityRank { .. } => {
+                insert_document_disclosure(lifecycle, OperationFamily::SetEntityRank, disclosures);
+                Ok(())
+            }
             SemanticCommand::AppendCollection { .. } | SemanticCommand::AppendEntity { .. } => {
                 insert_document_disclosure(lifecycle, OperationFamily::AppendEntity, disclosures);
                 Ok(())

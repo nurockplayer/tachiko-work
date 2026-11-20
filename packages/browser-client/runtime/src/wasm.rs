@@ -1364,6 +1364,58 @@ mod row_rank_parity_tests {
     }
 
     #[test]
+    fn positional_insert_wasm_bridge_matches_native_and_undo_redo() {
+        tachiko_designer_project_close();
+        let mut document = ranked_document();
+        for row in document.entities.values_mut() {
+            row.rank = None;
+        }
+        let tree = tachiko_storage::encode_roproj_v3(&document).unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        let mut host = DesignerHost::new();
+        REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+        PROJECT.with(|slot| slot.borrow_mut().clone_from(&bundle));
+        tachiko_designer_project_open();
+        assert_eq!(
+            RESPONSE.with(|slot| slot.borrow().clone()),
+            host.open_project(&bundle, OCCURRENCE)
+        );
+        for operation in [
+            json!({"type":"insert_row", "expected_revision":"resident/0", "collection":"rows", "position":{"before":"e02"}, "initializers":[{"field":"label","input":{"kind":"text","value":"before"}}]}),
+            json!({"type":"insert_row", "expected_revision":"resident/1", "collection":"rows", "position":{"after":"e02"}, "initializers":[{"field":"label","input":{"kind":"text","value":"after"}}]}),
+            json!({"type":"undo", "expected_revision":"resident/2"}),
+            json!({"type":"redo", "expected_revision":"resident/3"}),
+            json!({"type":"query_table_window", "expected_revision":"resident/4", "collection":"rows", "view":{}, "start":0, "count":7}),
+        ] {
+            let bytes = request(&operation);
+            assert_eq!(
+                RESPONSE.with(|slot| slot.borrow().clone()),
+                host.request(&bytes)
+            );
+        }
+        let window = response();
+        let rows = window["response"]["payload"]["rows"].as_array().unwrap();
+        assert_eq!(rows[2]["id"], "e02");
+        assert_eq!(rows[2]["position"], 3);
+        assert!(
+            rows[1]["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("native_table_row")
+        );
+        assert!(
+            rows[3]["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("native_table_row")
+        );
+        tachiko_designer_project_close();
+    }
+
+    #[test]
     fn ranked_v3_wasm_bridge_admits_every_project_ingress() {
         let tree = tachiko_storage::encode_roproj_v3(&ranked_document()).unwrap();
         let bundle = crate::encode_project_bundle(

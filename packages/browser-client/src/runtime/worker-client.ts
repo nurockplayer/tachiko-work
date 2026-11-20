@@ -239,7 +239,7 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "rename_table", expected_revision: expectedRevision, collection, name});
   }
 
-  /** Return complete entity and schema presentation invalidation from Rust. */
+  /** Forward typed commands, including insert_row position, unchanged to Rust. */
   async trackerCommand(request: TrackerCommand): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command(request));
   }

@@ -744,6 +744,7 @@ fn working_metadata_v2_wire_parity_and_reopen() {
             .unwrap();
         runtime
             .handle(DesignerRequest::InsertRow {
+                position: None,
                 expected_revision: runtime.current_revision().to_owned(),
                 collection: schema,
                 initializers: vec![],

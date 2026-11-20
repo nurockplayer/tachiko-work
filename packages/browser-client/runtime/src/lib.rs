@@ -4,6 +4,8 @@
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
 mod move_cells;
+#[cfg(test)]
+mod positional_insert_tests;
 mod translate_a1;
 pub use translate_a1::{
     A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
@@ -236,6 +238,14 @@ pub enum GroupScope {
     Except { entities: Vec<String> },
 }
 
+/// Anchor identity in the target collection's stored order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowPosition {
+    Before(EntityId),
+    After(EntityId),
+}
+
 /// App-private requests accepted by the Designer runtime adapter.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -381,6 +391,8 @@ pub enum DesignerRequest {
         entities: Vec<String>,
     },
     InsertRow {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<RowPosition>,
         expected_revision: String,
         collection: String,
         initializers: Vec<RowInitializer>,
@@ -3480,7 +3492,8 @@ impl DesignerRuntime {
                     }
                     targets.insert((field.entity.clone(), field.field.clone()));
                 }
-                SemanticCommand::AppendCollection { .. }
+                SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::AppendCollection { .. }
                 | SemanticCommand::RemoveCollection { .. }
                 | SemanticCommand::AppendEntity { .. }
                 | SemanticCommand::RemoveEntity { .. }
@@ -3995,10 +4008,12 @@ impl DesignerRuntime {
                 self.remove_rows(&expected_revision, &entities)?,
             )),
             DesignerRequest::InsertRow {
+                position,
                 expected_revision,
                 collection,
                 initializers,
             } => Ok(DesignerResponse::Published(self.insert_row(
+                position.as_ref(),
                 &expected_revision,
                 &collection,
                 &initializers,
@@ -7659,7 +7674,9 @@ impl DesignerRuntime {
         // one call. Other command families retain the existing lifecycle.
         let v2_evidence_transition = document_requires_v2_evidence(self.session.document())
             || commands.iter().any(|command| match command {
-                SemanticCommand::SetSchemaDisplayName { .. }
+                SemanticCommand::AppendEntity { entity } => entity.rank.is_some(),
+                SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
@@ -8470,6 +8487,7 @@ impl DesignerRuntime {
 
     fn insert_row(
         &mut self,
+        position: Option<&RowPosition>,
         expected: &str,
         collection: &str,
         initializers: &[RowInitializer],
@@ -8501,36 +8519,21 @@ impl DesignerRuntime {
                 "native table schema is not a scalar row profile",
             ));
         }
-        let fills = column_fill_formulas(snapshot.document(), &spec);
-        let columns = spec
-            .columns
-            .iter()
-            .map(|column| (column.id.clone(), column))
-            .collect::<BTreeMap<_, _>>();
-        let mut values = BTreeMap::new();
-        for initializer in initializers {
-            let column = columns
-                .get(&FieldId::from(initializer.field.clone()))
-                .ok_or_else(|| {
-                    table_error("initializers must name each declared column exactly once")
-                })?;
-            if values.contains_key(&column.id) {
-                return Err(table_error(
-                    "initializers must name each declared column exactly once",
-                ));
+        let index = match position {
+            None => spec.entities.len(),
+            Some(RowPosition::Before(anchor) | RowPosition::After(anchor)) => {
+                let index = spec
+                    .entities
+                    .iter()
+                    .position(|id| id == anchor)
+                    .ok_or_else(|| {
+                        table_error("insertion anchor is unavailable in this collection")
+                    })?;
+                index + usize::from(matches!(position, Some(RowPosition::After(_))))
             }
-            values.insert(
-                column.id.clone(),
-                parse_column_initializer(&column.field_type, &initializer.input)?,
-            );
-        }
-        if spec.columns.iter().any(|column| {
-            column.required && !values.contains_key(&column.id) && !fills.contains_key(&column.id)
-        }) {
-            return Err(table_error(
-                "initializers must name each declared column exactly once",
-            ));
-        }
+        };
+        let fills = column_fill_formulas(snapshot.document(), &spec);
+        let values = row_initializer_values(&spec, initializers, &fills)?;
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let mut entity =
@@ -8546,12 +8549,18 @@ impl DesignerRuntime {
             std::slice::from_mut(&mut entity),
             &[typed],
         );
-        let entity_id = entity.id.clone();
-        let publication = self.record_edit(
-            expected,
-            vec![SemanticCommand::AppendEntity { entity }],
-            vec![SemanticCommand::RemoveEntity { entity: entity_id }],
-        )?;
+        let (mut forward, mut inverse) = tachiko_workspace_engine::row_order::plan_insertion(
+            snapshot.document(),
+            &schema.id,
+            std::slice::from_mut(&mut entity),
+            index,
+            position.is_some(),
+        );
+        inverse.push(SemanticCommand::RemoveEntity {
+            entity: entity.id.clone(),
+        });
+        forward.push(SemanticCommand::AppendEntity { entity });
+        let publication = self.record_edit(expected, forward, inverse)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -8764,6 +8773,17 @@ impl DesignerRuntime {
             }
         }
         fill_new_rows(document, &edited, &fills, &mut new_rows, &typed_rows);
+        if !new_rows.is_empty() {
+            let (ranks, undo_ranks) = tachiko_workspace_engine::row_order::plan_insertion(
+                document,
+                &new_rows[0].schema.clone(),
+                &mut new_rows,
+                spec.entities.len(),
+                false,
+            );
+            forward.extend(ranks);
+            inverse.extend(undo_ranks);
+        }
         for entity in new_rows {
             inverse.push(SemanticCommand::RemoveEntity {
                 entity: entity.id.clone(),
@@ -11986,6 +12006,7 @@ fn designer_lifecycle_profile(
             ),
             (OperationFamily::FormulaUpdate, MutationClass::Formula),
             (OperationFamily::AppendEntity, MutationClass::Structure),
+            (OperationFamily::SetEntityRank, MutationClass::Structure),
             (OperationFamily::AppendEntity, MutationClass::Schema),
             (OperationFamily::AppendEntity, MutationClass::Formula),
             (OperationFamily::RemoveEntity, MutationClass::Structure),
@@ -12472,6 +12493,43 @@ fn fill_new_rows(
             }
         }
     }
+}
+
+fn row_initializer_values(
+    spec: &CollectionSpec,
+    initializers: &[RowInitializer],
+    fills: &BTreeMap<FieldId, Expression>,
+) -> Result<BTreeMap<FieldId, Value>, DesignerError> {
+    let columns = spec
+        .columns
+        .iter()
+        .map(|column| (column.id.clone(), column))
+        .collect::<BTreeMap<_, _>>();
+    let mut values = BTreeMap::new();
+    for initializer in initializers {
+        let column = columns
+            .get(&FieldId::from(initializer.field.clone()))
+            .ok_or_else(|| {
+                table_error("initializers must name each declared column exactly once")
+            })?;
+        if values.contains_key(&column.id) {
+            return Err(table_error(
+                "initializers must name each declared column exactly once",
+            ));
+        }
+        values.insert(
+            column.id.clone(),
+            parse_column_initializer(&column.field_type, &initializer.input)?,
+        );
+    }
+    if spec.columns.iter().any(|column| {
+        column.required && !values.contains_key(&column.id) && !fills.contains_key(&column.id)
+    }) {
+        return Err(table_error(
+            "initializers must name each declared column exactly once",
+        ));
+    }
+    Ok(values)
 }
 
 fn native_table_row(
@@ -13671,6 +13729,7 @@ mod tests {
         assert!(matches!(
             runtime
                 .handle(DesignerRequest::InsertRow {
+                    position: None,
                     expected_revision: runtime.current_revision().to_owned(),
                     collection: "orders".to_owned(),
                     initializers,
@@ -14962,7 +15021,7 @@ mod tests {
         let before = runtime.export_test_project("resident/0").unwrap().bytes;
         let initializers = row_initializers(&runtime);
         let error = runtime
-            .insert_row("resident/0", "orders", &initializers)
+            .insert_row(None, "resident/0", "orders", &initializers)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -14984,7 +15043,7 @@ mod tests {
         let expected = runtime.current_revision().to_owned();
         let initializers = row_initializers(&runtime);
         runtime
-            .insert_row(&expected, "orders", &initializers)
+            .insert_row(None, &expected, "orders", &initializers)
             .unwrap();
         let revision = runtime.current_revision().to_owned();
         let before = runtime.export_test_project(&revision).unwrap().bytes;
@@ -15077,7 +15136,7 @@ mod tests {
             .unwrap();
         let initializers = row_initializers(&insert_runtime);
         let error = insert_runtime
-            .insert_row("resident/1", "orders", &initializers)
+            .insert_row(None, "resident/1", "orders", &initializers)
             .unwrap_err();
         assert!(matches!(
             error,

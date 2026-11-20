@@ -664,6 +664,7 @@ fn remove_last_name_then_ordinary_edit_uses_retained_profile() {
     );
     runtime
         .insert_row(
+            None,
             "resident/1",
             "orders",
             &[super::RowInitializer {
@@ -691,6 +692,7 @@ fn undo_redo_last_name_transition_then_ordinary_edit() {
     assert_eq!(runtime.session.export_snapshot().document(), &removed);
     runtime
         .insert_row(
+            None,
             "resident/3",
             "orders",
             &[super::RowInitializer {
