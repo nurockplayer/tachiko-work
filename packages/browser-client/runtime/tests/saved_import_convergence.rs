@@ -16,7 +16,7 @@ use tachiko_designer_runtime::{
 use tachiko_storage::{CanonicalRoProjectV1, decode_roproj_v1, from_bytes};
 use tachiko_workspace_engine::{
     Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId, FieldKey,
-    FieldType, Schema, SchemaId, SchemaKey, Value,
+    FieldType, RowRank, Schema, SchemaId, SchemaKey, Value,
 };
 const ORIGINAL: &str = "00000000-0000-4000-8000-000000000161";
 const FRESH: &str = "00000000-0000-4000-8000-000000000162";
@@ -261,6 +261,9 @@ fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories(
     m.sheets[0].rows.pop();
     invalid.push(m);
     let mut m = metadata.clone();
+    m.sheets[0].rows.swap(0, 1);
+    invalid.push(m);
+    let mut m = metadata.clone();
     m.sheets[0].columns.swap(0, 1);
     invalid.push(m);
     let mut m = metadata.clone();
@@ -269,13 +272,6 @@ fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories(
     let mut m = metadata.clone();
     m.sheets[0].columns[0].field_id = "absent".into();
     invalid.push(m);
-    // Metadata validation checks identity coverage, not row order (#872): stored order comes from ranks.
-    let mut reordered = metadata.clone();
-    reordered.sheets[0].rows.swap(0, 1);
-    for carrier in carriers(&source) {
-        let mut empty = None;
-        assert!(open_imported_project(&mut empty, &carrier, &reordered, FRESH).is_ok());
-    }
     for carrier in carriers(&source) {
         for bad in &invalid {
             let mut empty = None;
@@ -299,6 +295,31 @@ fn invalid_saved_metadata_refuses_before_replacement_and_retains_both_histories(
             assert_histories(retained, &states);
         }
     }
+}
+
+#[test]
+fn ranked_import_metadata_in_stored_order_opens() {
+    let (source, mut metadata) = capacity_imported(66);
+    let mut candidate = document(&source);
+    let first = metadata.sheets[0].rows.last().unwrap().entity_id.clone();
+    candidate.entities.get_mut(first.as_str()).unwrap().rank = Some(RowRank::new("A").unwrap());
+    metadata.sheets[0].rows.rotate_right(1);
+    let carrier = independently_frame_v3(&candidate);
+    let mut resident = None;
+    let opened = open_imported_project(&mut resident, &carrier, &metadata, FRESH).unwrap();
+    assert_eq!(opened.table.rows[0].id, first);
+}
+
+#[test]
+fn ranked_import_metadata_in_entity_id_order_is_refused() {
+    let (source, metadata) = capacity_imported(66);
+    let mut candidate = document(&source);
+    let first = metadata.sheets[0].rows.last().unwrap().entity_id.clone();
+    candidate.entities.get_mut(first.as_str()).unwrap().rank = Some(RowRank::new("A").unwrap());
+    let carrier = independently_frame_v3(&candidate);
+    let mut resident = None;
+    assert!(open_imported_project(&mut resident, &carrier, &metadata, FRESH).is_err());
+    assert!(resident.is_none());
 }
 
 fn dedup(

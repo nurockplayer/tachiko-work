@@ -8,6 +8,8 @@ All notable changes to Tachiko Work are documented in this file.
   evidence. Designer runtime rows, windows, locate, Find, paste/copy and XLSX/CSV
   exports follow rank order, with canonical totals and identity-bound styles.
   Unranked imported/Tracker/Budget exports preserve their existing order and bytes.
+  TextCapacity import metadata must cover all row identities in stored order;
+  unranked row-order refusals remain unchanged.
   Frozen writers and v1 history refuse ranked state (#871, #872). Positional
   expressions remain pending.
 

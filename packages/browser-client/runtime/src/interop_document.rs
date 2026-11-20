@@ -4015,19 +4015,19 @@ fn validate_capacity_metadata(
         .values()
         .next()
         .ok_or_else(|| tracker_error("capacity schema is missing"))?;
+    let mut stored_rows = document.entities.values().collect::<Vec<_>>();
+    stored_rows.sort_by(|left, right| tachiko_workspace_engine::compare_row_order(left, right));
     if metadata.version != 1
         || metadata.sheets.len() != 1
-        || sheet.rows.len() != document.entities.len()
-        || sheet
+        || !sheet
             .rows
             .iter()
             .map(|row| row.entity_id.as_str())
-            .collect::<BTreeSet<_>>()
-            != document.entities.keys().map(EntityId::as_str).collect()
+            .eq(stored_rows.iter().map(|entity| entity.id.as_str()))
         || !capacity_columns_in_order(sheet, schema)
     {
         return Err(tracker_error(
-            "capacity metadata must cover row identities and preserve column order",
+            "capacity metadata must cover row identities in stored order and preserve column order",
         ));
     }
     if !sheet.has_header

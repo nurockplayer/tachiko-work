@@ -232,6 +232,10 @@ Imported, Tracker and Budget exports use stored order when any collection row
 has a rank, keeping styles on entity identities and deriving formula addresses
 from the reordered rows. Collections without ranks retain their existing export
 presentation order and bytes, including reversed Tracker presentation.
+TextCapacity imported-metadata rows must cover every collection row identity
+and match stored order (`compare_row_order`). Without ranks this is the existing
+EntityId order, so reordered metadata remains refused; with ranks, EntityId order
+is refused when it differs from stored order.
 Positional expressions remain pending and readers refuse their unknown tags.
 
 [ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
