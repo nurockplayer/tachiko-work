@@ -364,6 +364,7 @@ impl DefinitionV2 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV2, FormatError> {
+    super::super::reject_row_ranks(document)?;
     super::super::reject_display_names(document)?;
     super::super::reject_field_constraints(document)?;
     super::super::reject_number_formats(document)?;
@@ -875,6 +876,7 @@ impl EntityV2 {
             })
             .collect::<Result<_, FormatError>>()?;
         Ok(Entity {
+            rank: None,
             id: EntityId::from(self.id),
             key: EntityKey::from(self.key),
             schema: SchemaId::from(self.schema),

@@ -62,7 +62,7 @@ fn tax_value(runtime: &DesignerRuntime, collection: &str, tax: &str, row: usize)
         .find(|field| field.target.field == tax)
         .unwrap();
     match field.calculated {
-        Some(CalculationProjection::Value { value }) => Some(value),
+        Some(CalculationProjection::Value { value, .. }) => Some(value),
         ref other => panic!("expected a calculated value, got {other:?}"),
     }
 }

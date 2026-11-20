@@ -1112,6 +1112,7 @@ fn constraint_review_tracks_candidate_values_formula_results_and_stable_order() 
     document.entities.insert(
         "a_item".into(),
         Entity {
+            rank: None,
             id: "a_item".into(),
             key: "a_item".into(),
             schema: "weapons".into(),
@@ -1135,6 +1136,7 @@ fn constraint_review_tracks_candidate_values_formula_results_and_stable_order() 
     document.entities.insert(
         "z_item".into(),
         Entity {
+            rank: None,
             id: "z_item".into(),
             key: "z_item".into(),
             schema: "weapons".into(),
@@ -1432,6 +1434,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
         document.entities.insert(
             id.into(),
             Entity {
+                rank: None,
                 id: id.into(),
                 key: id.into(),
                 schema: "items".into(),
@@ -1670,6 +1673,7 @@ fn single_item_document() -> Document {
     document.entities.insert(
         "item".into(),
         Entity {
+            rank: None,
             id: "item".into(),
             key: "item".into(),
             schema: "items".into(),

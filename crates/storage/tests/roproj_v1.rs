@@ -926,6 +926,7 @@ fn character_document() -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity-a"),
             Entity {
+                rank: None,
                 id: EntityId::from("entity-a"),
                 key: "hero".into(),
                 schema: SchemaId::from("schema-character"),
@@ -989,6 +990,7 @@ fn full_shape_document() -> Document {
         ),
     ]);
     let entity_a = Entity {
+        rank: None,
         id: EntityId::from("entity-a"),
         key: "alpha".into(),
         schema: SchemaId::from("schema-record"),
@@ -1010,6 +1012,7 @@ fn full_shape_document() -> Document {
         ]),
     };
     let entity_b = Entity {
+        rank: None,
         id: EntityId::from("entity-b"),
         key: "beta".into(),
         schema: SchemaId::from("schema-record"),

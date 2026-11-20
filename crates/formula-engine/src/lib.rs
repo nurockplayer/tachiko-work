@@ -1963,11 +1963,11 @@ fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     let (nodes, formulas, graph) = collect_calculation_nodes(document);
     let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &graph, &mut failures);
-    let mut values = PartitionedMap::from_sorted_iter(initial_values(&nodes, &failures));
+    let mut values = initial_values(&nodes, &failures);
     evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
-        values,
+        values: PartitionedMap::from_sorted_iter(values),
         failures,
         graph,
     }
@@ -2045,20 +2045,91 @@ struct DependencyGraph {
         PartitionedMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
 }
 
+#[derive(Default)]
+struct GraphBuilder {
+    reference_uses: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    column_uses: BTreeMap<FieldRef, BTreeSet<ColumnRef>>,
+    cell_readers: BTreeMap<FieldRef, BTreeSet<FieldRef>>,
+    column_readers: BTreeMap<ColumnRef, BTreeSet<FieldRef>>,
+    column_slots: BTreeMap<ColumnRef, BTreeSet<FieldRef>>,
+    slot_columns: BTreeMap<FieldRef, ColumnRef>,
+    entity_schemas: BTreeMap<tachiko_semantic_core::EntityId, tachiko_semantic_core::SchemaId>,
+}
+
+impl GraphBuilder {
+    fn insert_edges(
+        &mut self,
+        document: &Document,
+        formula: &FieldRef,
+        references: BTreeSet<FieldRef>,
+        columns: BTreeSet<ColumnRef>,
+    ) {
+        for reference in &references {
+            self.cell_readers
+                .entry(reference.clone())
+                .or_default()
+                .insert(formula.clone());
+        }
+        for column in &columns {
+            self.column_readers
+                .entry(column.clone())
+                .or_default()
+                .insert(formula.clone());
+            if !self.column_slots.contains_key(column) {
+                let slots: BTreeSet<_> = document
+                    .entities
+                    .iter()
+                    .filter(|(_, entity)| entity.schema == column.schema)
+                    .map(|(id, _)| FieldRef::new(id.clone(), column.field.clone()))
+                    .collect();
+                for slot in &slots {
+                    self.slot_columns.insert(slot.clone(), column.clone());
+                }
+                self.column_slots.insert(column.clone(), slots);
+            }
+        }
+        self.reference_uses.insert(formula.clone(), references);
+        self.column_uses.insert(formula.clone(), columns);
+    }
+
+    fn finish(self) -> DependencyGraph {
+        DependencyGraph {
+            reference_uses: PartitionedMap::from_sorted_iter(
+                self.reference_uses.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_uses: PartitionedMap::from_sorted_iter(self.column_uses),
+            cell_readers: PartitionedMap::from_sorted_iter(
+                self.cell_readers.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_readers: PartitionedMap::from_sorted_iter(
+                self.column_readers.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            column_slots: PartitionedMap::from_sorted_iter(
+                self.column_slots.into_iter().map(|(k, v)| (k, v.into())),
+            ),
+            slot_columns: PartitionedMap::from_sorted_iter(self.slot_columns),
+            entity_schemas: PartitionedMap::from_sorted_iter(self.entity_schemas),
+        }
+    }
+}
+
 impl DependencyGraph {
     fn new(document: &Document, formulas: &FormulaNodes<'_>) -> Self {
-        let mut graph = Self::default();
+        let mut builder = GraphBuilder::default();
         for (entity_id, entity) in &document.entities {
-            graph
+            builder
                 .entity_schemas
                 .insert(entity_id.clone(), entity.schema.clone());
         }
         for (formula, expression) in formulas {
-            let references = direct_references(formula, expression);
-            let columns = extract_column_totals(expression);
-            graph.insert_edges(document, formula, references, columns);
+            builder.insert_edges(
+                document,
+                formula,
+                direct_references(formula, expression),
+                extract_column_totals(expression),
+            );
         }
-        graph
+        builder.finish()
     }
 
     fn insert_edges(
@@ -2607,12 +2678,28 @@ fn remaining_counts(
     (dependency_counts, column_counts)
 }
 
-fn evaluate_remaining_formulas(
+trait ValueStore: tachiko_semantic_core::FormulaValueLookup {
+    fn put(&mut self, field: FieldRef, value: Number);
+}
+
+impl ValueStore for BTreeMap<FieldRef, Number> {
+    fn put(&mut self, field: FieldRef, value: Number) {
+        self.insert(field, value);
+    }
+}
+
+impl ValueStore for PartitionedMap<FieldRef, Number> {
+    fn put(&mut self, field: FieldRef, value: Number) {
+        self.insert(field, value);
+    }
+}
+
+fn evaluate_remaining_formulas<V: ValueStore>(
     document: &Document,
     formulas: &FormulaNodes<'_>,
     graph: &DependencyGraph,
     failures: &mut FailureMap,
-    values: &mut PartitionedMap<FieldRef, Number>,
+    values: &mut V,
 ) {
     // Phases 3 and 4: process the remaining acyclic graph dependency-first.
     // Edges to already-failed nodes are ready and become direct dependency
@@ -2653,7 +2740,7 @@ fn evaluate_remaining_formulas(
         if failed_dependencies.is_empty() {
             match evaluation.number(expression) {
                 Ok(value) => {
-                    values.insert(formula.clone(), value);
+                    values.put(formula.clone(), value);
                 }
                 Err(failure) => {
                     failures.insert(formula.clone(), failure);

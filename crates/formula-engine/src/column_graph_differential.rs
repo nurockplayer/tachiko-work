@@ -1005,6 +1005,7 @@ fn generated_row(random: &mut SplitMix64, schema: &str, index: usize) -> Entity 
     fields.insert(FieldId::from("c1"), Value::Formula(c1));
     fields.insert(FieldId::from("c2"), Value::Formula(c2));
     Entity {
+        rank: None,
         id: EntityId::from(entity_id.as_str()),
         key: EntityKey::from(entity_id.as_str()),
         schema: SchemaId::from(schema),
@@ -1333,6 +1334,7 @@ fn retained_update_matches_the_expanded_reference_after_schema_moves() {
             None,
         ] {
             let row = |id: &str, schema: &str, fields: BTreeMap<FieldId, Value>| Entity {
+                rank: None,
                 id: EntityId::from(id),
                 key: EntityKey::from(id),
                 schema: SchemaId::from(schema),
@@ -1410,6 +1412,7 @@ fn linear_document(rows: usize) -> Document {
         entities.insert(
             EntityId::from(entity_id.as_str()),
             Entity {
+                rank: None,
                 id: EntityId::from(entity_id.as_str()),
                 key: EntityKey::from(entity_id.as_str()),
                 schema: SchemaId::from("row"),
@@ -1448,6 +1451,32 @@ fn linear_document(rows: usize) -> Document {
         entities,
         keyed_grouped_sum_definitions: BTreeMap::new(),
     }
+}
+
+#[test]
+fn bulk_graph_matches_incremental_graph_for_references_and_totals() {
+    let mut document = linear_document(2);
+    let row = document
+        .entities
+        .get_mut(&EntityId::from("row-00000"))
+        .unwrap();
+    row.fields.insert(
+        FieldId::from("c2"),
+        Value::Formula(Expression::SameRowReference(FieldId::from("c0"))),
+    );
+    row.fields.insert(
+        FieldId::from("c3"),
+        Value::Formula(Expression::Reference(FieldRef::new("row-00001", "c0"))),
+    );
+    let (_, formulas, bulk) = super::collect_calculation_nodes(&document);
+    let mut incremental = super::DependencyGraph::default();
+    for entity in document.entities.keys() {
+        incremental.remember_entity(&document, entity);
+    }
+    for formula in formulas.keys() {
+        incremental.replace_formula(&document, formula);
+    }
+    assert_eq!(bulk, incremental);
 }
 
 #[test]
@@ -1722,6 +1751,7 @@ fn fixed_schema(key: &str, fields: &[(&str, FieldType)]) -> Schema {
 
 fn fixed_row(id: &str, schema: &str, entries: &[(&str, Value)]) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from(schema),

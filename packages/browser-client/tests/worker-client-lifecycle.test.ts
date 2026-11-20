@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { InteropMetadata } from "../src/runtime/interop-protocol.ts";
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
 import type { FailureProjection, FieldExplanationProjection, GroupTotalsProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
@@ -91,6 +92,40 @@ describe("Designer Worker request lifecycle", () => {
     const stale = worker.client.explainField("resident/2", target);
     worker.reply({id: worker.request(2).id, status: "error", error: {code: "stale_revision", message: "Stale query", current_revision: "resident/3", diagnostics: []}});
     await expect(stale).rejects.toMatchObject({failure: {code: "stale_revision", current_revision: "resident/3"}});
+  });
+
+  it.each([1, 2] as const)("retains the published v%s import mapping for the next export", async version => {
+    const worker = transport();
+    const sheet = {schema_id: "sheet_1", name: "Renamed", has_header: true};
+    const metadata: InteropMetadata = version === 1
+      ? {version, sheets: [{...sheet, columns: [{field_id: "value", name: "Value", width: null}], rows: []}]}
+      : {version, sheets: [{...sheet, columns: [{field_id: "value", name: "Value"}]}]};
+    const publication = {base_revision: "resident/0", resulting_revision: "resident/1", schemas: ["sheet_1"], schema_fields: [], entities: [], fields: [], affected_calculations: [], import_metadata: metadata};
+    const renamed = worker.client.renameTable("resident/0", "sheet_1", "Renamed");
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "published", payload: publication}});
+    const result = await renamed;
+    expect(result.import_metadata).toEqual(metadata);
+    if (result.import_metadata === undefined) throw new Error("Missing published import metadata");
+    const exported = worker.client.exportSpreadsheet(result.resulting_revision, result.import_metadata, "xlsx", "sheet_1");
+    expect(worker.request(1)).toMatchObject({kind: "spreadsheet", operation: {type: "export", metadata}});
+    worker.reply({id: worker.request(1).id, status: "spreadsheet_exported", export: {revision: "resident/1", bytes: new ArrayBuffer(0), ledger: []}});
+    await expect(exported).resolves.toMatchObject({revision: "resident/1"});
+
+    const undo = worker.client.trackerCommand({type: "undo", expected_revision: "resident/1"});
+    worker.reply({id: worker.request(2).id, status: "ok", response: {type: "published", payload: {...publication, import_metadata: {...metadata, version: 3} as unknown as InteropMetadata}}});
+    await expect(undo).rejects.toThrow("Invalid Worker import metadata.");
+  });
+
+  it("validates import mappings nested in an add-table publication", async () => {
+    const worker = transport();
+    const metadata: InteropMetadata = {version: 2, sheets: [{schema_id: "added", name: "Added", has_header: true, columns: [{field_id: "value", name: "Value"}]}]};
+    const payload = {collection: {id: "added", key: "added", display_name: "Added", entity_count: 0}, publication: {base_revision: "resident/0", resulting_revision: "resident/1", schemas: ["added"], schema_fields: [], entities: [], fields: [], affected_calculations: [], import_metadata: metadata}};
+    const added = worker.client.addTable("resident/0", "Added", [{name: "Value", field_type: "number", required: false}]);
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "duplicated", payload}});
+    await expect(added).resolves.toEqual(payload);
+    const invalid = worker.client.addTable("resident/1", "Other", [{name: "Value", field_type: "number", required: false}]);
+    worker.reply({id: worker.request(1).id, status: "ok", response: {type: "duplicated", payload: {...payload, publication: {...payload.publication, import_metadata: null as unknown as InteropMetadata}}}});
+    await expect(invalid).rejects.toThrow("Invalid Worker import metadata.");
   });
 
   it("correlates simultaneous table replies by ID rather than arrival order", async () => {

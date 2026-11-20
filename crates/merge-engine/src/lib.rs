@@ -3,9 +3,9 @@
 mod conflict_v2;
 
 pub use conflict_v2::{
-    ConflictFacetV2, ConflictFactV2, MergeConflictV2, MergeOutcomeV2, MergeValueV2,
-    SEMANTIC_CONFLICT_V2, SchemaFieldSubjectV2, SchemaSubjectV2, UnsupportedTargetFacetV2,
-    merge_v2,
+    ConflictFacetV2, ConflictFactV2, EntitySubjectV2, MergeConflictV2, MergeOutcomeV2,
+    MergeValueV2, SEMANTIC_CONFLICT_V2, SchemaFieldSubjectV2, SchemaSubjectV2,
+    UnsupportedTargetFacetV2, merge_v2,
 };
 
 use std::{
@@ -29,6 +29,7 @@ pub enum MergeOutcome {
     UnsupportedDisplayName,
     UnsupportedNumberFormat,
     UnsupportedFieldOrder,
+    UnsupportedRowRank,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -499,6 +500,12 @@ impl From<&Entity> for EntitySubject {
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     if [base, ours, theirs]
         .iter()
+        .any(|document| document.has_row_ranks())
+    {
+        return MergeOutcome::UnsupportedRowRank;
+    }
+    if [base, ours, theirs]
+        .iter()
         .any(|document| document.has_number_formats() || document.has_date_formats())
     {
         return MergeOutcome::UnsupportedNumberFormat;
@@ -904,6 +911,7 @@ fn merge_entity(
     );
 
     Some(Entity {
+        rank: None,
         id: entity_id.clone(),
         key: key?,
         schema: schema?,

@@ -28,6 +28,7 @@ fn field(id: &str, field_type: FieldType) -> FieldDefinition {
 
 fn row(id: &str, schema: &str, values: Vec<(&str, Value)>) -> Entity {
     Entity {
+        rank: None,
         id: id.into(),
         key: id.into(),
         schema: schema.into(),

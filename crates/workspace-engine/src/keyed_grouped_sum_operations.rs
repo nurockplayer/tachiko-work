@@ -446,6 +446,7 @@ mod tests {
             document.entities.insert(
                 EntityId::from(id),
                 Entity {
+                    rank: None,
                     id: EntityId::from(id),
                     key: EntityKey::from(id),
                     schema: SchemaId::from(PRODUCTS),
@@ -468,6 +469,7 @@ mod tests {
             document.entities.insert(
                 EntityId::from(id),
                 Entity {
+                    rank: None,
                     id: EntityId::from(id),
                     key: EntityKey::from(id),
                     schema: SchemaId::from(ORDERS),
@@ -787,6 +789,7 @@ mod tests {
             document.entities.insert(
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("duplicate-{serial}")),
                     schema: SchemaId::from(PRODUCTS),

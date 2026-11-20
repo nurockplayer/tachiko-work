@@ -50,6 +50,7 @@ fn document() -> Document {
     document.entities.insert(
         "e1".into(),
         Entity {
+            rank: None,
             id: "e1".into(),
             key: "row".into(),
             schema: "s".into(),
@@ -591,6 +592,7 @@ fn formula_document() -> Document {
     document.entities.insert(
         "e1".into(),
         Entity {
+            rank: None,
             id: "e1".into(),
             key: "row".into(),
             schema: "s".into(),
@@ -991,6 +993,7 @@ fn batch_document() -> Document {
 /// An accepted entity the planner can append to or remove from.
 fn second_entity() -> Entity {
     Entity {
+        rank: None,
         id: "e2".into(),
         key: "second".into(),
         schema: "s".into(),
@@ -1750,6 +1753,7 @@ fn cross_schema_document() -> Document {
     document.entities.insert(
         "e2".into(),
         Entity {
+            rank: None,
             id: "e2".into(),
             key: "row2".into(),
             schema: "s2".into(),
@@ -1781,6 +1785,7 @@ fn unprojectable_document() -> Document {
     document.entities.insert(
         "target".into(),
         Entity {
+            rank: None,
             id: "target".into(),
             key: "e".repeat(4_090).into(),
             schema: "t".into(),
@@ -2144,6 +2149,7 @@ fn preflight_chain_document() -> Document {
     document.entities.insert(
         "e2".into(),
         Entity {
+            rank: None,
             id: "e2".into(),
             key: "row2".into(),
             schema: "s2".into(),
@@ -2157,6 +2163,7 @@ fn preflight_chain_document() -> Document {
     document.entities.insert(
         "target".into(),
         Entity {
+            rank: None,
             id: "target".into(),
             key: "e".repeat(3_900).into(),
             schema: "t".into(),
@@ -2895,6 +2902,7 @@ fn a_prepared_evaluation_from_another_base_document_is_ignored() {
 /// An entity the planner can append to the `s` collection.
 fn appended_entity(id: &str, key: &str, formula: Option<Expression>) -> Entity {
     let mut entity = Entity {
+        rank: None,
         id: id.into(),
         key: key.into(),
         schema: "s".into(),
@@ -3073,6 +3081,7 @@ fn a_cell_edit_or_collection_append_resets_the_append_proof() {
         fields: BTreeMap::from([("f".into(), text_field("f"))]),
     };
     let entity = Entity {
+        rank: None,
         id: "x1".into(),
         key: "x".into(),
         schema: "s2".into(),
@@ -3332,6 +3341,7 @@ fn mid_sized_entity(entity_id: &str, index: usize) -> Entity {
     ))
     .unwrap();
     Entity {
+        rank: None,
         id: entity_id.into(),
         key: format!("row{index}").into(),
         schema: "s".into(),

@@ -154,8 +154,9 @@ fn assert_fixture_window(opened: &OpenedWindowProjection) {
         let Some(StoredValueProjection::Number { value }) = &projected(row, "c0").stored else {
             panic!("row {} has no stored Number in c0", row.id);
         };
-        let Some(CalculationProjection::Value { value: calculated }) =
-            &projected(row, CALC_FIELD).calculated
+        let Some(CalculationProjection::Value {
+            value: calculated, ..
+        }) = &projected(row, CALC_FIELD).calculated
         else {
             panic!("row {} has no calculated value in {CALC_FIELD}", row.id);
         };
@@ -205,6 +206,7 @@ fn text_grid(rows: usize, columns: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -397,6 +399,7 @@ fn populated_limit_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -1519,6 +1522,7 @@ fn shared_reference_grid(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -1548,6 +1552,7 @@ fn publication_with_targets(total: usize) -> PublicationProjection {
         affected_calculations: Vec::new(),
         many: false,
         changed: Vec::new(),
+        import_metadata: None,
     }
 }
 
@@ -1667,6 +1672,7 @@ fn redraw_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("ledger"),
@@ -1683,6 +1689,7 @@ fn redraw_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("mk{row:05}")),
                 schema: SchemaId::from("mirror"),
@@ -1987,7 +1994,10 @@ fn a_publication_over_the_target_list_comes_back_as_a_marker() {
     for row in &window.rows {
         assert_eq!(
             projected(row, "calc").calculated,
-            Some(CalculationProjection::Value { value: 7.0 })
+            Some(CalculationProjection::Value {
+                value: 7.0,
+                result: None
+            })
         );
     }
 
@@ -2482,6 +2492,7 @@ fn fill_grid(rows: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -2529,6 +2540,7 @@ fn two_collection_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -2541,6 +2553,7 @@ fn two_collection_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("mk{row:05}")),
                 schema: SchemaId::from("mirror"),
@@ -3141,6 +3154,7 @@ fn values_grid() -> Document {
     document.entities.insert(
         EntityId::from("t00000"),
         Entity {
+            rank: None,
             id: EntityId::from("t00000"),
             key: EntityKey::from("kt00000"),
             schema: SchemaId::from("refs"),
@@ -3220,6 +3234,7 @@ fn values_grid() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{index:05}")),
                 schema: SchemaId::from("grid"),
@@ -3281,6 +3296,7 @@ fn long_identity_grid() -> Document {
     document.entities.insert(
         entity_id.clone(),
         Entity {
+            rank: None,
             id: entity_id,
             key: EntityKey::from(long.clone()),
             schema: schema_id,
@@ -3513,6 +3529,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     document.entities.insert(
         EntityId::from("e00000"),
         Entity {
+            rank: None,
             id: EntityId::from("e00000"),
             key: EntityKey::from("ke00000"),
             schema: SchemaId::from("entries"),
@@ -3677,6 +3694,7 @@ fn wrap_document() -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),
@@ -4114,6 +4132,7 @@ fn number_grid_filled(rows: usize, columns: usize, filled: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(format!("k{row:05}")),
                 schema: SchemaId::from("grid"),

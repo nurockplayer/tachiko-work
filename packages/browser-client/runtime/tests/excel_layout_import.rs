@@ -31,7 +31,7 @@ fn formula(source: &str) -> SourceCell {
 
 fn calculated(value: &CalculationProjection) -> f64 {
     match value {
-        CalculationProjection::Value { value } => *value,
+        CalculationProjection::Value { value, .. } => *value,
         other => panic!("expected a calculated value, got {other:?}"),
     }
 }

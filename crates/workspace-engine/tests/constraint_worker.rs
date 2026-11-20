@@ -85,6 +85,7 @@ fn formula_constraint_document(with_failed_formula: bool) -> Document {
     document.entities.insert(
         "entity".into(),
         Entity {
+            rank: None,
             id: "entity".into(),
             key: "item".into(),
             schema: "schema".into(),

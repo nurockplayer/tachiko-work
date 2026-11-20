@@ -49,6 +49,7 @@ fn fixture() -> DesignerRuntime {
             document.entities.insert(
                 entity_id.clone(),
                 Entity {
+                    rank: None,
                     id: entity_id,
                     key: EntityKey::from(name),
                     schema: schema_id.clone(),
@@ -359,6 +360,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id: id.clone(),
                 key: EntityKey::from(if index == 85 {
                     "long_but_valid_input_reference_key".to_owned()

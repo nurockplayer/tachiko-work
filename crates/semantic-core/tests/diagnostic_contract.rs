@@ -130,6 +130,7 @@ fn multi_subject_duplicate_is_stable_across_human_key_rename() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
     let duplicate_fields = BTreeMap::from([
         (
@@ -186,6 +187,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             EntityId::from("entity-a"),
             Entity {
+                rank: None,
                 id: "declared-entity".into(),
                 key: "duplicate-entity".into(),
                 schema: "schema-a".into(),
@@ -195,6 +197,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             EntityId::from("entity-b"),
             Entity {
+                rank: None,
                 id: "declared-entity".into(),
                 key: "duplicate-entity".into(),
                 schema: "schema-a".into(),

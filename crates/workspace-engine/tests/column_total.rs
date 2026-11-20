@@ -31,6 +31,7 @@ fn number(value: f64) -> Value {
 
 fn plan_row(id: &str, reserve: f64) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from("plan"),
@@ -82,6 +83,7 @@ fn document() -> Document {
             (
                 EntityId::from("summary"),
                 Entity {
+                    rank: None,
                     id: EntityId::from("summary"),
                     key: EntityKey::from("summary"),
                     schema: SchemaId::from("summary"),

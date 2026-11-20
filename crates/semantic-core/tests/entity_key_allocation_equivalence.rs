@@ -33,6 +33,7 @@ fn fixture() -> Document {
         document.entities.insert(
             id.into(),
             Entity {
+                rank: None,
                 id: id.into(),
                 key: key.into(),
                 schema: schema.into(),

@@ -931,10 +931,11 @@ fn export_spreadsheet(
     format: SpreadsheetFormat,
     collection: &str,
 ) -> Result<SpreadsheetResult, DesignerError> {
+    runtime.check_revision(revision)?;
     // XLSX's declared import profile requires a header. Insert one only in
     // the output mapping so bound formulas project to the shifted rows;
     // neither the source metadata nor the resident document is changed.
-    let mut export_metadata = metadata.clone();
+    let mut export_metadata = runtime.metadata_for_export(metadata)?.clone();
     let mut inserted_headers = Vec::new();
     if matches!(format, SpreadsheetFormat::Xlsx) {
         match runtime.profile {

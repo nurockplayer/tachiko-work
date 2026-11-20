@@ -504,6 +504,10 @@ fn entity_bytes(entity: &Entity) -> u64 {
         compact_string("id", entity.id.as_str(), true),
         compact_string("key", entity.key.as_str(), true),
         compact_string("schema", entity.schema.as_str(), true),
+        entity
+            .rank
+            .as_ref()
+            .map_or(0, |rank| compact_string("rank", rank.as_str(), true)),
         compact_prefix("fields"),
         1, // "{"
         entity_fields_bytes(entity),
@@ -934,6 +938,7 @@ mod iferror_tests {
         document.entities.insert(
             "row".into(),
             Entity {
+                rank: None,
                 id: "row".into(),
                 key: "row".into(),
                 schema: "schema".into(),

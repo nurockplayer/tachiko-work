@@ -25,6 +25,7 @@ fn document() -> Document {
         entities: BTreeMap::from([(
             EntityId::from("entity"),
             Entity {
+                rank: None,
                 id: "entity".into(),
                 key: "entity".into(),
                 schema: "schema".into(),
@@ -218,6 +219,7 @@ fn swapped_entity_ids_preserve_both_directional_mismatches() {
         (
             EntityId::from("entity-a"),
             Entity {
+                rank: None,
                 id: "entity-b".into(),
                 key: "entity-a".into(),
                 schema: "schema".into(),
@@ -227,6 +229,7 @@ fn swapped_entity_ids_preserve_both_directional_mismatches() {
         (
             EntityId::from("entity-b"),
             Entity {
+                rank: None,
                 id: "entity-a".into(),
                 key: "entity-b".into(),
                 schema: "schema".into(),
@@ -316,6 +319,7 @@ fn independent_findings_accumulate_while_missing_schema_suppresses_cascades() {
     document.entities.insert(
         EntityId::from("orphan"),
         Entity {
+            rank: None,
             id: "orphan".into(),
             key: "orphan".into(),
             schema: "missing-schema".into(),
@@ -410,6 +414,7 @@ fn stable_observations_survive_human_key_renames() {
     before.entities.insert(
         EntityId::from("second"),
         Entity {
+            rank: None,
             id: "second".into(),
             key: "entity".into(),
             schema: "schema".into(),
@@ -644,6 +649,7 @@ fn cascade_suppression_filters_each_binding_fact_by_its_actual_prerequisite() {
     document.entities.insert(
         EntityId::from("orphan"),
         Entity {
+            rank: None,
             id: "orphan".into(),
             key: "orphan".into(),
             schema: "missing-entity-schema".into(),
@@ -1023,6 +1029,7 @@ fn authoring_projection_remains_an_explicit_operation_gate() {
     document.entities.insert(
         EntityId::from("target"),
         Entity {
+            rank: None,
             id: "target".into(),
             key: long_key.into(),
             schema: "schema".into(),

@@ -38,6 +38,7 @@ fn document(field_type: FieldType, constraint: FieldConstraint, value: Option<Va
         document.entities.insert(
             "entity".into(),
             Entity {
+                rank: None,
                 id: "entity".into(),
                 key: "item".into(),
                 schema: "schema".into(),

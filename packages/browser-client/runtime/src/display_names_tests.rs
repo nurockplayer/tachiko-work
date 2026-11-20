@@ -371,6 +371,7 @@ fn nameless_rename_inverse_restores_absence_and_preserves_formula_bindings() {
     }
     let ids = schema.fields.keys().cloned().collect::<Vec<_>>();
     let entity = Entity {
+        rank: None,
         id: "row-id".into(),
         key: "row".into(),
         schema: schema.id.clone(),

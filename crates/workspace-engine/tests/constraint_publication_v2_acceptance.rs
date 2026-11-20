@@ -55,6 +55,7 @@ fn document(value: f64) -> Document {
     doc.entities.insert(
         "entity".into(),
         Entity {
+            rank: None,
             id: "entity".into(),
             key: "item".into(),
             schema: "schema".into(),
@@ -758,6 +759,7 @@ fn constraint_review_shows_every_affected_value_before_review_credit() {
     original.entities.insert(
         "second".into(),
         Entity {
+            rank: None,
             id: "second".into(),
             key: "second_item".into(),
             schema: "schema".into(),
@@ -768,6 +770,7 @@ fn constraint_review_shows_every_affected_value_before_review_credit() {
     original.entities.insert(
         "formula".into(),
         Entity {
+            rank: None,
             id: "formula".into(),
             key: "formula_item".into(),
             schema: "schema".into(),
@@ -860,6 +863,7 @@ fn constraint_review_requires_query_for_stored_formula_dependencies() {
     original.entities.insert(
         "formula".into(),
         Entity {
+            rank: None,
             id: "formula".into(),
             key: "formula_item".into(),
             schema: "schema".into(),
@@ -973,6 +977,7 @@ fn constraint_review_requires_query_for_transitive_formula_dependencies() {
     original.entities.insert(
         "intermediate".into(),
         Entity {
+            rank: None,
             id: "intermediate".into(),
             key: "intermediate_item".into(),
             schema: "schema".into(),
@@ -988,6 +993,7 @@ fn constraint_review_requires_query_for_transitive_formula_dependencies() {
     original.entities.insert(
         "formula".into(),
         Entity {
+            rank: None,
             id: "formula".into(),
             key: "formula_item".into(),
             schema: "schema".into(),

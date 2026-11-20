@@ -38,6 +38,7 @@ fn number_document(number: Number) -> Document {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("entity"),
                 schema: schema_id,

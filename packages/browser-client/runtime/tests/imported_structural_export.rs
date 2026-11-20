@@ -1304,6 +1304,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
             document.entities.insert(
                 entity.clone(),
                 Entity {
+                    rank: None,
                     id: entity.clone(),
                     key: EntityKey::from(format!("s{n}r{r}")),
                     schema: schema.clone(),

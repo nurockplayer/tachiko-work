@@ -56,6 +56,7 @@ fn document() -> Document {
     document.entities.insert(
         "rent".into(),
         Entity {
+            rank: None,
             id: "rent".into(),
             key: "rent".into(),
             schema: "plan".into(),
@@ -75,6 +76,7 @@ fn document() -> Document {
     document.entities.insert(
         "global".into(),
         Entity {
+            rank: None,
             id: "global".into(),
             key: "global".into(),
             schema: "settings".into(),

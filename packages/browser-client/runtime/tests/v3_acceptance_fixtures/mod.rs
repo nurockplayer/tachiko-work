@@ -96,6 +96,7 @@ pub fn constrained_v3_document(field_index: usize) -> Document {
         document.entities.insert(
             id.clone(),
             Entity {
+                rank: None,
                 id,
                 key: EntityKey::from(format!("sheet_1_row_{}", index + 1)),
                 schema: schema_id.clone(),

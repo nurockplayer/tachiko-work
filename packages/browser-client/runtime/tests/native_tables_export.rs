@@ -50,6 +50,7 @@ fn add_table(
         document.entities.insert(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id.clone(),
                 key: EntityKey::from(entity_id.as_str()),
                 schema: SchemaId::from(id),

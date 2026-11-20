@@ -528,6 +528,7 @@ fn extra_entity() -> Entity {
 
 fn plan_row(id: &str, reserve: f64) -> Entity {
     Entity {
+        rank: None,
         id: EntityId::from(id),
         key: EntityKey::from(id),
         schema: SchemaId::from("plan"),
@@ -1259,6 +1260,7 @@ fn oracle_document() -> Document {
             (
                 EntityId::from(PRIMARY),
                 Entity {
+                    rank: None,
                     id: EntityId::from(PRIMARY),
                     key: EntityKey::from(PRIMARY),
                     schema: SchemaId::from("metrics"),
@@ -1268,6 +1270,7 @@ fn oracle_document() -> Document {
             (
                 EntityId::from(ISOLATED),
                 Entity {
+                    rank: None,
                     id: EntityId::from(ISOLATED),
                     key: EntityKey::from(ISOLATED),
                     schema: SchemaId::from("metrics"),

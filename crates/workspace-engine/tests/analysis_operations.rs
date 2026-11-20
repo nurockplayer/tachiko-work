@@ -75,6 +75,7 @@ fn weapon(entity: &str, category: &str, tier: Option<f64>, damage: f64, interval
         fields.insert(FieldId::from("tier"), Value::Number(number(tier)));
     }
     Entity {
+        rank: None,
         id: EntityId::from(entity),
         key: EntityKey::from(format!("human-{entity}")),
         schema: SchemaId::from("weapons"),
@@ -163,6 +164,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
     document.entities.insert(
         EntityId::from("wrong-category"),
         Entity {
+            rank: None,
             id: EntityId::from("wrong-category"),
             key: EntityKey::from("wrong-category"),
             schema: SchemaId::from("characters"),
@@ -914,6 +916,7 @@ fn authorized_target_domain_and_type_errors_remain_structured() {
     other_domain.entities.insert(
         EntityId::from("outsider"),
         Entity {
+            rank: None,
             id: EntityId::from("outsider"),
             key: EntityKey::from("human-outsider"),
             schema: SchemaId::from("characters"),

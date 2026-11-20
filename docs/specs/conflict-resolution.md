@@ -513,3 +513,22 @@ conflict contract.
 - avoid silent data loss and catch-all conflict taxonomies;
 - let CLI, GUI, Git, and AI projections share one logical contract; and
 - keep mutation, validation, history, transport, and Git authority separate.
+
+## Row-rank v2 amendment — ADR-0048
+
+Rank storage and in-process v2 history are implemented; positional expressions
+and their `positional_order_change` conflict remain pending.
+
+V2 adds `rank` at facet rank 3 for the existing entity target (subject rank 3),
+after `schema` (facet rank 2). Its facts are PRESENT typed optional `RowRank`
+values whenever the entity exists, including PRESENT(None) for an unranked
+entity. Complete v2 entity-subject evidence includes optional rank; frozen v1
+entity-subject DTOs stay unchanged.
+
+For a continuing entity, compare base/left/right ranks: take the sole changed
+side; take equal changed values; otherwise emit `concurrent_change` at
+`(EntityId, rank)`. Different entities reconcile independently. Delete/change
+conflicts retain the complete entity-subject evidence, including rank-only
+changes. Concurrent additions retain complete subjects and report unequal
+ranks on the rank facet. Conflict ordering remains target, facet, kind; all
+existing slots stay fixed. Frozen v1 merge refuses any ranked input.

@@ -50,11 +50,11 @@ pub use tachiko_semantic_core::{
     Date, Diagnostic, DiagnosticCode, DiagnosticFact, DiagnosticLocation, DiagnosticProvider,
     DiagnosticSeverity, DisplayNameFailure, Document, DocumentId, Entity, EntityId, EntityKey,
     Expression, FieldAddress, FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldRef,
-    FieldType, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
+    FieldType, InvalidRowRank, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId,
     KeyedGroupedSumOrdersBinding, KeyedGroupedSumProductsBinding, MAX_DISPLAY_NAME_BYTES, Number,
-    NumberFormat, NumberFormatError, NumberFormatKind, PresentationStore, Schema, SchemaId,
-    SchemaKey, SemanticSubject, StableDiagnosticObservation, Value, display_name_failures,
-    prune_presentation, trim_display_name, validate_presentation,
+    NumberFormat, NumberFormatError, NumberFormatKind, PresentationStore, RowRank, Schema,
+    SchemaId, SchemaKey, SemanticSubject, StableDiagnosticObservation, Value, compare_row_order,
+    display_name_failures, prune_presentation, trim_display_name, validate_presentation,
 };
 pub use tachiko_semantic_core::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use thiserror::Error;
@@ -628,6 +628,10 @@ pub enum WorkspaceError {
     UnsupportedNumberFormatMerge,
     #[error("the selected merge contract does not support durable field order")]
     UnsupportedFieldOrderMerge,
+    #[error("frozen v1 merge does not support row rank; use merge_documents_v2")]
+    UnsupportedRowRankMerge,
+    #[error("the frozen runtime export cannot represent row rank")]
+    UnsupportedRowRankRepresentation,
     #[error("the field order for schema {schema} must name every field exactly once")]
     InvalidFieldOrder { schema: SchemaId },
     #[error("date format requires a Date field")]
@@ -1309,6 +1313,7 @@ pub fn merge_documents(
         }
         MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
         MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
+        MergeOutcome::UnsupportedRowRank => Err(WorkspaceError::UnsupportedRowRankMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }
@@ -1403,6 +1408,9 @@ fn require_merge_keyed_definitions(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
+    if document.has_row_ranks() {
+        return Err(WorkspaceError::UnsupportedRowRankRepresentation);
+    }
     if document.has_display_names() {
         return Err(WorkspaceError::UnsupportedDisplayNameRepresentation);
     }
@@ -3927,6 +3935,7 @@ fn insert_entity(
     entities.insert(
         id.clone(),
         Entity {
+            rank: None,
             id,
             key: EntityKey::from(key),
             schema: schema.clone(),

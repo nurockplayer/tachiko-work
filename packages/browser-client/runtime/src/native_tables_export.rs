@@ -390,7 +390,7 @@ fn projected_cell(
         spec.summary.id, column.id
     );
     let value = match computed.get(&target) {
-        Some(crate::CalculationProjection::Value { value }) => *value,
+        Some(crate::CalculationProjection::Value { value, .. }) => *value,
         Some(crate::CalculationProjection::Failure { code, message }) => {
             return Err(refused(
                 "native_tables_formula_value_unavailable",
@@ -562,7 +562,7 @@ fn project_sheet(
 }
 
 impl DesignerRuntime {
-    /// Export every native scalar collection in canonical collection-key order.
+    /// Export every native scalar collection in the order clients see.
     /// Fields and rows use the runtime's canonical stable-identity order.
     ///
     /// # Errors
@@ -672,7 +672,9 @@ impl DesignerRuntime {
         let mut sheets = Vec::new();
         let mut exported = Vec::new();
         let mut names = BTreeSet::new();
-        for (key, spec) in &self.collection_specs {
+        for collection in &self.collections {
+            let key = &collection.key;
+            let spec = &self.collection_specs[key];
             if csv && spec.summary.id != selected.summary.id {
                 ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_csv_collection_excluded", &spec.summary.id,
                     format!("CSV excludes collection {:?} ({key}); only the requested collection is exported.", spec.summary.display_name)));

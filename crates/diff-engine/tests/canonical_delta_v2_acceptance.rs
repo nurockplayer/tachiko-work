@@ -68,6 +68,7 @@ fn entity_payload(entity: &Entity) -> EntityDefinitionPayload {
     EntityDefinitionPayload {
         key: entity.key.clone(),
         schema: entity.schema.clone(),
+        rank: entity.rank.clone(),
         fields: entity.fields.clone(),
     }
 }
@@ -92,6 +93,7 @@ fn document() -> Document {
         entities: BTreeMap::from([(
             "entity".into(),
             Entity {
+                rank: None,
                 id: "entity".into(),
                 key: "row".into(),
                 schema: "schema".into(),

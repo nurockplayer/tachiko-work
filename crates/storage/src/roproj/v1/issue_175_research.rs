@@ -2154,6 +2154,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("entity_{index:08}")),
                     schema: schema_id.clone(),
@@ -2202,6 +2203,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("chain_{index:08}")),
                     schema: schema_id.clone(),
@@ -2309,6 +2311,7 @@ fn payload_document(entity_count: usize, text_chars: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("payload_{index:08}")),
                     schema: schema_id.clone(),
@@ -2363,6 +2366,7 @@ fn reference_document(entity_count: usize, reference_fields: usize) -> Document 
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("reference_{index:08}")),
                     schema: schema_id.clone(),
@@ -2410,6 +2414,7 @@ fn formula_profile_document(
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("formula_{index:08}")),
                     schema: schema_id.clone(),
@@ -2509,6 +2514,7 @@ fn wide_field_document(entity_count: usize, field_count: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("wide_{index:08}")),
                     schema: schema_id.clone(),
@@ -2637,6 +2643,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
                 return (
                     id.clone(),
                     Entity {
+                        rank: None,
                         id,
                         key: EntityKey::from(format!("late_{index:08}")),
                         schema: cold_schema_id.clone(),
@@ -2664,6 +2671,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
             (
                 id.clone(),
                 Entity {
+                    rank: None,
                     id,
                     key: EntityKey::from(format!("late_{index:08}")),
                     schema: hot_schema_id.clone(),
@@ -3428,6 +3436,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
         entities: BTreeMap::from([(
             entity_id.clone(),
             Entity {
+                rank: None,
                 id: entity_id,
                 key: EntityKey::from("formula_poll_entity"),
                 schema: schema_id,

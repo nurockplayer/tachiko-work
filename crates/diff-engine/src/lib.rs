@@ -267,6 +267,8 @@ pub enum DiffError {
     UnsupportedNumberFormat,
     #[error("tachiko.semantic-delta/v1 does not support durable field order")]
     UnsupportedFieldOrder,
+    #[error("frozen v1 diff does not support row rank; use canonical delta v2")]
+    UnsupportedRowRank,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -464,6 +466,9 @@ fn push_formula_impacts(
 ///
 /// Returns the first unsupported [`DiffError`] for the pair.
 pub fn require_diff_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
+    if before.has_row_ranks() || after.has_row_ranks() {
+        return Err(DiffError::UnsupportedRowRank);
+    }
     if before.has_number_formats()
         || after.has_number_formats()
         || before.has_date_formats()

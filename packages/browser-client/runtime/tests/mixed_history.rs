@@ -44,6 +44,7 @@ fn mixed_document() -> Document {
     document.entities.insert(
         EntityId::from("note"),
         Entity {
+            rank: None,
             id: EntityId::from("note"),
             key: EntityKey::from("note"),
             schema: SchemaId::from("notes"),
