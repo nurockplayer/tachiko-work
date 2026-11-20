@@ -62,8 +62,7 @@ fn open_reuses_calculation_without_changing_the_three_calculation_path() {
         // the resident session independently on the same document.
         if let Err(expected) = super::validate(&document) {
             let actual = expect_error(DesignerRuntime::from_document_working_size(
-                document,
-                OCCURRENCE,
+                document, OCCURRENCE,
             ));
             let DesignerError::InvalidProjectWorkspace { source } = actual else {
                 panic!("expected the original validation refusal: {actual:?}");
