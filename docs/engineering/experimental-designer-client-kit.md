@@ -231,6 +231,38 @@ ordinary and text-capacity sessions, 64 MiB for working-size sessions), oversize
 selections receive `request_too_large`, and clients can compare the encoded
 request size against that advertised limit before sending.
 
+
+`querySelectionRangeStatistics(expectedRevision, range)` sends the alternative
+compact request below. `first` and `last` are inclusive row EntityIds in the
+collection's **stored order**, in either anchor order: ranked rows by rank, then
+unranked rows by EntityId, matching the unsorted table window. `fields` is the
+ordered list of FieldIds. This is a rectangle, independent of view sorting or
+filtering; whole-column selection still requires both anchors.
+
+```ts
+await client.querySelectionRangeStatistics(revision, {
+  collection, first: firstRowId, last: lastRowId, fields: [amountFieldId, taxFieldId],
+});
+// Wire: { type: "query_selection_statistics", expected_revision: revision,
+//         range: { collection, first, last, fields } }
+```
+
+Exactly one of `targets` or `range` is required. Both or neither, unknown or
+foreign anchors, undeclared fields and duplicate fields refuse atomically with
+`invalid_view`; stale revisions retain `stale_query`. Unknown collections retain
+the existing collection refusal. An empty field list selects no cells, but the
+anchors must still belong to the collection. Expansion uses the existing
+per-cell projection and aggregation semantics, including formula results and
+canonical summation order; the response shape is unchanged.
+
+There is no additional statistics-specific cell/work cap. Expansion stays within
+the admitted document's row and field bounds (working-size: 10,000 rows per table,
+32 fields and 100,000 populated cells), including declared absent cells. A compact
+10,000-row × 2-field request is under 1 KiB for ordinary imported identities,
+independent of row count, and fits the 65,536-byte ordinary request cap. The
+10,000-row document itself requires the existing working-size import profile;
+compact requests also work in ordinary and text-capacity imported sessions.
+
 | Selected cell | count | Numeric contribution |
 | --- | --- | --- |
 | Absent optional field | 0 | Skip |

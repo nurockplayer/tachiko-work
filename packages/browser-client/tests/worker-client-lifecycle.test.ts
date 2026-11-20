@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { InteropMetadata } from "../src/runtime/interop-protocol.ts";
 import { DesignerRuntimeError } from "../src/runtime/client.ts";
-import type { FailureProjection, FieldExplanationProjection, GroupTotalsProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
+import type { DesignerRequest, FailureProjection, FieldExplanationProjection, GroupTotalsProjection, TableProjection, WorkerReply, WorkerRequest } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
 // This fixture supplies transport events only. Request correlation and promise
@@ -193,6 +193,24 @@ describe("Designer Worker request lifecycle", () => {
     const malformed = worker.client.querySelectionStatistics("resident/7", targets);
     worker.reply({id: worker.request(1).id, status: "ok", response: {type: "selection_statistics", payload: {...stats, average: Number.NaN}}});
     await expect(malformed).rejects.toThrow("Invalid Worker selection statistic.");
+  });
+
+  it("forwards compact selection ranges with the exclusive protocol form", async () => {
+    const worker = transport();
+    const range = {collection: "items", first: "row-00001", last: "row-10000", fields: ["amount", "other"]};
+    const request: DesignerRequest = {type: "query_selection_statistics", expected_revision: "resident/7", range};
+    // @ts-expect-error Both selection forms are forbidden.
+    const both: DesignerRequest = {...request, targets: []};
+    // @ts-expect-error A selection form is required.
+    const neither: DesignerRequest = {type: "query_selection_statistics", expected_revision: "resident/7"};
+    void both;
+    void neither;
+    const pending = worker.client.querySelectionRangeStatistics("resident/7", range);
+    expect(worker.request(0)).toEqual({id: worker.request(0).id, kind: "command", request});
+    expect(new TextEncoder().encode(JSON.stringify(request)).length).toBeLessThan(1_024);
+    const stats = {revision: "resident/7", count: 20_000, numerical_count: 20_000, sum: 60_000, average: 3, min: 2, max: 4, error_count: 0};
+    worker.reply({id: worker.request(0).id, status: "ok", response: {type: "selection_statistics", payload: stats}});
+    await expect(pending).resolves.toEqual(stats);
   });
 
   it("forwards column-total requests and validates their replies", async () => {

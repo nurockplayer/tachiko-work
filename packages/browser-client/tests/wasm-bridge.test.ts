@@ -40,7 +40,7 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
   vi.spyOn(WebAssembly, "instantiateStreaming").mockResolvedValue({
     instance: { exports }, module: {},
   });
-  return { bridge: await createDesignerWasmBridge("/runtime.wasm"), pointer, release, selectedExport, reserve };
+  return { bridge: await createDesignerWasmBridge("/runtime.wasm"), memory, pointer, release, selectedExport, reserve };
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -53,6 +53,21 @@ describe("table WASM projection transport", () => {
       columns: [column], rows: []};
     const {bridge} = await fixture(0, 0, "table", payload);
     expect(bridge.request({type: "query_table", collection: "sheet"})).toEqual({status: "ok", response: {type: "table", payload}});
+  });
+});
+
+describe("selection statistics WASM transport", () => {
+  it("sends a compact rectangle through the ordinary request arena and preserves statistics", async () => {
+    const stats = {revision: "resident/0", count: 20_000, numerical_count: 20_000,
+      sum: 60_000, average: 3, min: 2, max: 4, error_count: 0};
+    const {bridge, memory, reserve} = await fixture(0, 0, "selection_statistics", stats);
+    const request = {type: "query_selection_statistics" as const, expected_revision: "resident/0",
+      range: {collection: "sheet_1", first: "row-00001", last: "row-10000", fields: ["left", "right"]}};
+    const bytes = new TextEncoder().encode(JSON.stringify(request));
+    expect(bytes.length).toBeLessThan(1_024);
+    expect(bridge.request(request)).toEqual({status: "ok", response: {type: "selection_statistics", payload: stats}});
+    expect(reserve).toHaveBeenCalledWith(bytes.length);
+    expect(JSON.parse(new TextDecoder().decode(new Uint8Array(memory.buffer, 0, bytes.length)))).toEqual(request);
   });
 });
 

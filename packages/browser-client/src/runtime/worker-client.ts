@@ -44,6 +44,7 @@ import type {
   FindPosition,
   ColumnTotalsProjection,
   SelectionStatisticsProjection,
+  SelectionStatisticsRange,
   GroupDimension,
   GroupKey,
   GroupScope,
@@ -611,6 +612,20 @@ export class WorkerDesignerClient implements DesignerClient {
         type: "query_selection_statistics",
         expected_revision: expectedRevision,
         targets,
+      }),
+    );
+  }
+
+  async querySelectionRangeStatistics(
+    expectedRevision: string,
+    range: SelectionStatisticsRange,
+  ): Promise<SelectionStatisticsProjection> {
+    return expectResponse(
+      "selection_statistics",
+      await this.#command({
+        type: "query_selection_statistics",
+        expected_revision: expectedRevision,
+        range,
       }),
     );
   }
