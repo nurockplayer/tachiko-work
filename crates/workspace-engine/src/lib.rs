@@ -916,6 +916,12 @@ pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, Wor
     let mut fields = calculation
         .values()
         .iter()
+        .filter(|(field, _)| {
+            matches!(
+                document.entities[&field.entity].fields.get(&field.field),
+                Some(Value::Formula(_))
+            )
+        })
         .map(|(field, value)| {
             Ok(CalculatedField {
                 field: field.clone(),
@@ -3611,8 +3617,13 @@ fn runtime_value(
             })
         }
         Value::Formula(_) => calculation
-            .value(field)
-            .map(RuntimeValue::Number)
+            .calculated_value(field)
+            .map(|value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    RuntimeValue::Number(number)
+                }
+                tachiko_formula_engine::CalculatedValue::Date(date) => RuntimeValue::Date(date),
+            })
             .ok_or_else(|| WorkspaceError::MissingCalculation {
                 field: field.clone(),
             }),

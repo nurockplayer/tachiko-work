@@ -128,6 +128,45 @@ fn date_functions_calculate_and_compose() {
 }
 
 #[test]
+fn date_functions_accept_calculated_dates() {
+    for (source, expected) in [
+        ("MONTH([.later])", 11.0),
+        ("WEEKDAY([.later])", 5.0),
+        ("DAYS([.later], [.d])", 7.0),
+    ] {
+        let mut document = document();
+        document
+            .schemas
+            .get_mut("schema")
+            .unwrap()
+            .fields
+            .insert("later".into(), definition("later", FieldType::Date, true));
+        let later = FieldRef::new("r", "later");
+        let expression =
+            bind_expression(&document, &later, &parse_expression("[.d] + 7").unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("later".into(), Value::Formula(expression));
+        let owner = FieldRef::new("r", "output");
+        let expression =
+            bind_expression(&document, &owner, &parse_expression(source).unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("output".into(), Value::Formula(expression));
+        let CalculationOutcome::Complete(result) = calculate_complete(&document) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(result.value(&owner).unwrap().get(), expected, "{source}");
+    }
+}
+
+#[test]
 fn date_arguments_are_restricted_and_projection_round_trips() {
     let document = document();
     let owner = FieldRef::new("r", "output");

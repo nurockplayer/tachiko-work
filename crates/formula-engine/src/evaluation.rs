@@ -902,6 +902,12 @@ impl<V: ValueStore> Evaluation<'_, V> {
             }
             _ => return Err(CalculationFailure::TypeMismatch),
         };
+        if let Some(value) = self.values.calculated_value(&reference) {
+            return match value {
+                CalculatedValue::Date(date) => Ok(date),
+                CalculatedValue::Number(_) => Err(CalculationFailure::TypeMismatch),
+            };
+        }
         match self
             .document
             .entities

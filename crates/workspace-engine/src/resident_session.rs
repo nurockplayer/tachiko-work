@@ -846,6 +846,12 @@ impl ResidentDerivedState {
             .map_err(|source| WorkspaceError::from(source.clone()))?;
         let mut fields = values
             .iter()
+            .filter(|(field, _)| {
+                matches!(
+                    document.entities[&field.entity].fields.get(&field.field),
+                    Some(Value::Formula(_))
+                )
+            })
             .map(|(field, value)| {
                 Ok(CalculatedField {
                     field: field.clone(),
