@@ -783,7 +783,7 @@ fn validate_value(
         | (FieldType::Text, Value::Text(_))
         | (FieldType::Boolean, Value::Boolean(_))
         | (FieldType::Date, Value::Date(_)) => {}
-        (FieldType::Number, Value::Formula(expression)) => {
+        (FieldType::Number | FieldType::Date, Value::Formula(expression)) => {
             if include_formula_references {
                 validate_expression(document, &field(), expression, &path(), diagnostics);
             }
@@ -1178,7 +1178,7 @@ fn validate_formula_reference(
         );
         return;
     };
-    if numeric && definition.field_type != FieldType::Number {
+    if numeric && !matches!(definition.field_type, FieldType::Number | FieldType::Date) {
         diagnostics.push(
             core_diagnostic(
                 path,
@@ -1722,7 +1722,7 @@ mod issue_175_research {
             | (FieldType::Text, Value::Text(_))
             | (FieldType::Boolean, Value::Boolean(_))
             | (FieldType::Date, Value::Date(_)) => {}
-            (FieldType::Number, Value::Formula(expression)) => {
+            (FieldType::Number | FieldType::Date, Value::Formula(expression)) => {
                 if include_formula_references {
                     validate_expression(document, field, expression, path, diagnostics, cancelled)?;
                 }

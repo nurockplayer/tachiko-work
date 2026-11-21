@@ -1114,9 +1114,16 @@ pub(crate) fn calculation_for(
     target: &FieldRef,
 ) -> FormulaCalculationOutcome {
     match outcome {
-        CalculationOutcome::Complete(calculation) => calculation.value(target).map_or(
+        CalculationOutcome::Complete(calculation) => calculation.calculated_value(target).map_or(
             FormulaCalculationOutcome::Unavailable,
-            FormulaCalculationOutcome::Value,
+            |value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    FormulaCalculationOutcome::Value(number)
+                }
+                tachiko_formula_engine::CalculatedValue::Date(date) => {
+                    FormulaCalculationOutcome::Date(date)
+                }
+            },
         ),
         CalculationOutcome::Failed(failures) => failures
             .failures()

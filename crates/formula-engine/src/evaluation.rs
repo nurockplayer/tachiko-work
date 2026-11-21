@@ -7,7 +7,7 @@ use tachiko_semantic_core::{
     Entity, EntityId, Expression, FieldRef, FieldType, Number, Value,
 };
 
-use crate::{CalculationFailure, FailureMap, ValueStore, column_cells};
+use crate::{CalculatedValue, CalculationFailure, FailureMap, ValueStore, column_cells};
 
 #[cfg(test)]
 use conditional_walks::{bypass_caches, record_row, record_walk};
@@ -221,6 +221,64 @@ pub(crate) struct Evaluation<'a, V: ValueStore> {
 }
 
 impl<V: ValueStore> Evaluation<'_, V> {
+    pub(crate) fn calculated(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<CalculatedValue, CalculationFailure> {
+        match expression {
+            Expression::Reference(reference) => self.calculated_reference(reference),
+            Expression::SameRowReference(field) => {
+                self.calculated_reference(&FieldRef::new(self.owner.entity.clone(), field.clone()))
+            }
+            Expression::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let condition = self.condition(condition)?;
+                self.calculated(if condition { then_value } else { else_value })
+            }
+            Expression::Add { left, right } | Expression::Subtract { left, right } => {
+                let left = self.calculated(left)?;
+                let right = self.calculated(right)?;
+                let subtract = matches!(expression, Expression::Subtract { .. });
+                match (left, right) {
+                    (CalculatedValue::Number(a), CalculatedValue::Number(b)) => {
+                        number_result(if subtract {
+                            a.get() - b.get()
+                        } else {
+                            a.get() + b.get()
+                        })
+                        .map(CalculatedValue::Number)
+                    }
+                    (CalculatedValue::Date(a), CalculatedValue::Date(b)) if subtract => {
+                        number_result(f64::from(days_from_civil(a) - days_from_civil(b)))
+                            .map(CalculatedValue::Number)
+                    }
+                    (CalculatedValue::Date(date), CalculatedValue::Number(days)) => {
+                        shift_date(date, if subtract { -days.get() } else { days.get() })
+                            .map(CalculatedValue::Date)
+                    }
+                    (CalculatedValue::Number(days), CalculatedValue::Date(date)) if !subtract => {
+                        shift_date(date, days.get()).map(CalculatedValue::Date)
+                    }
+                    _ => Err(CalculationFailure::TypeMismatch),
+                }
+            }
+            _ => self.number(expression).map(CalculatedValue::Number),
+        }
+    }
+
+    fn calculated_reference(
+        &self,
+        reference: &FieldRef,
+    ) -> Result<CalculatedValue, CalculationFailure> {
+        if let Some(value) = self.values.calculated_value(reference) {
+            Ok(value)
+        } else {
+            self.reference(reference).map(CalculatedValue::Number)
+        }
+    }
     // Static dependencies still govern scheduling, cycles, and invalidation.
     // Failure propagation follows only the branches that are actually read;
     // a column read names its first failed cell in entity order. The
@@ -945,6 +1003,28 @@ pub fn days_from_civil(date: Date) -> i32 {
     let day_of_year = (153 * shifted_month + 2) / 5 + i32::from(date.day()) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
+}
+
+fn shift_date(date: Date, offset: f64) -> Result<Date, CalculationFailure> {
+    if offset.fract() != 0.0 {
+        return Err(CalculationFailure::TypeMismatch);
+    }
+    let day = f64::from(days_from_civil(date)) + offset;
+    if !(-719_162.0..=2_932_896.0).contains(&day) {
+        return Err(CalculationFailure::NonFiniteResult);
+    }
+    let day = day as i32 + 719_468;
+    let era = day.div_euclid(146_097);
+    let day_of_era = day - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i32::from(month <= 2);
+    Date::new(year as u16, month as u8, day as u8).map_err(|_| CalculationFailure::NonFiniteResult)
 }
 
 /// The first cell of `column`, in entity order, that already carries a failure.

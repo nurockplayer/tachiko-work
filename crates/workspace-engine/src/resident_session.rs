@@ -1870,9 +1870,16 @@ fn retained_calculation_for(
                 FormulaCalculationOutcome::Failure(failure.clone())
             })
     } else {
-        calculation.value(target).map_or(
+        calculation.calculated_value(target).map_or(
             FormulaCalculationOutcome::Unavailable,
-            FormulaCalculationOutcome::Value,
+            |value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    FormulaCalculationOutcome::Value(number)
+                }
+                tachiko_formula_engine::CalculatedValue::Date(date) => {
+                    FormulaCalculationOutcome::Date(date)
+                }
+            },
         )
     }
 }

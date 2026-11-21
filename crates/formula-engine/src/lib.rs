@@ -163,7 +163,7 @@ fn bind_numeric_reference(
     address: &FieldAddress,
 ) -> Result<FieldRef, FormulaBindError> {
     let (reference, field_type) = resolve_reference_target(document, index, address)?;
-    if field_type != FieldType::Number {
+    if !matches!(field_type, FieldType::Number | FieldType::Date) {
         return Err(FormulaBindError::NonNumericTarget {
             address: address.clone(),
             reference,
@@ -1527,6 +1527,14 @@ impl RetainedCalculationState {
             .flatten()
     }
 
+    #[must_use]
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.failures
+            .is_empty()
+            .then(|| self.calculation.calculated_value(field))
+            .flatten()
+    }
+
     /// Return the complete published value map only for an atomic successful
     /// outcome.
     #[must_use]
@@ -2023,7 +2031,7 @@ fn collect_calculation_nodes(
     let mut formulas = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
-            if matches!(value, Value::Number(_) | Value::Formula(_)) {
+            if matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)) {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
@@ -2044,7 +2052,7 @@ fn calculation_value<'document>(
         .entities
         .get(&field.entity)
         .and_then(|entity| entity.fields.get(&field.field))
-        .filter(|value| matches!(value, Value::Number(_) | Value::Formula(_)))
+        .filter(|value| matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)))
 }
 
 /// The cells and columns one formula reads, from a document snapshot.
@@ -2676,6 +2684,9 @@ fn initial_values(
             Value::Number(number) if !failures.contains_key(field) => {
                 Some((field.clone(), CalculatedValue::Number(*number)))
             }
+            Value::Date(date) if !failures.contains_key(field) => {
+                Some((field.clone(), CalculatedValue::Date(*date)))
+            }
             _ => None,
         })
         .collect()
@@ -2726,10 +2737,14 @@ fn remaining_counts(
 
 trait ValueStore {
     fn number_value(&self, field: &FieldRef) -> Option<&Number>;
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue>;
     fn put(&mut self, field: FieldRef, value: CalculatedValue);
 }
 
 impl ValueStore for BTreeMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).copied()
+    }
     fn number_value(&self, field: &FieldRef) -> Option<&Number> {
         self.get(field).and_then(CalculatedValue::number)
     }
@@ -2739,6 +2754,9 @@ impl ValueStore for BTreeMap<FieldRef, CalculatedValue> {
 }
 
 impl ValueStore for PartitionedMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).copied()
+    }
     fn number_value(&self, field: &FieldRef) -> Option<&Number> {
         self.get(field).and_then(CalculatedValue::number)
     }
@@ -2791,9 +2809,19 @@ fn evaluate_remaining_formulas<V: ValueStore>(
         };
         let failed_dependencies = evaluation.failed_required_references(expression, failures);
         if failed_dependencies.is_empty() {
-            match evaluation.number(expression) {
+            match evaluation.calculated(expression) {
                 Ok(value) => {
-                    values.put(formula.clone(), CalculatedValue::Number(value));
+                    let entity = &document.entities[&formula.entity];
+                    let kind = &document.schemas[&entity.schema].fields[&formula.field].field_type;
+                    if matches!(
+                        (kind, value),
+                        (FieldType::Number, CalculatedValue::Number(_))
+                            | (FieldType::Date, CalculatedValue::Date(_))
+                    ) {
+                        values.put(formula.clone(), value);
+                    } else {
+                        failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
+                    }
                 }
                 Err(failure) => {
                     failures.insert(formula.clone(), failure);
@@ -2904,7 +2932,8 @@ fn structural_reference_failure(
     else {
         return Some(ReferenceFailure::Missing);
     };
-    (numeric && definition.field_type != FieldType::Number).then_some(ReferenceFailure::NonNumeric)
+    (numeric && !matches!(definition.field_type, FieldType::Number | FieldType::Date))
+        .then_some(ReferenceFailure::NonNumeric)
 }
 
 fn reference_failure(
@@ -2921,8 +2950,8 @@ fn reference_failure(
     let entity = &document.entities[&field.entity];
     let definition = &document.schemas[&entity.schema].fields[&field.field];
     match entity.fields.get(&field.field) {
-        Some(Value::Number(_) | Value::Formula(_)) => None,
-        Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {
+        Some(Value::Number(_) | Value::Date(_) | Value::Formula(_)) => None,
+        Some(Value::Text(_) | Value::Boolean(_) | Value::Reference(_)) => {
             Some(ReferenceFailure::NonNumeric)
         }
         None if !definition.required => None,

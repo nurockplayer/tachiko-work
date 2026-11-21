@@ -245,3 +245,43 @@ fn same_row_date_edits_recalculate_through_retained_state() {
     assert_eq!(calculation.value(&owner).unwrap().get(), 2027.0);
     assert!(calculation.dependencies()[&owner].contains(&FieldRef::new("r", "d")));
 }
+
+#[test]
+fn date_outcomes_recalculate_through_date_references() {
+    use std::collections::BTreeSet;
+    use tachiko_formula_engine::{CalculatedValue, RetainedCalculationState};
+
+    let mut doc = document();
+    for (field, source) in [
+        ("end", "[r.d] + 7"),
+        ("sunday", "[r.end]"),
+        ("output", "[r.end] - [r.d]"),
+    ] {
+        let owner = FieldRef::new("r", field);
+        let expression = bind_expression(&doc, &owner, &parse_expression(source).unwrap()).unwrap();
+        doc.entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from(field), Value::Formula(expression));
+    }
+    let (mut retained, _) = RetainedCalculationState::rebuild(&doc);
+    assert_eq!(
+        retained.calculated_value(&FieldRef::new("r", "sunday")),
+        Some(CalculatedValue::Date(Date::parse("2026-11-19").unwrap()))
+    );
+    assert_eq!(
+        retained.value(&FieldRef::new("r", "output")),
+        Some(Number::new(7.0).unwrap())
+    );
+    doc.entities.get_mut("r").unwrap().fields.insert(
+        FieldId::from("d"),
+        Value::Date(Date::parse("2026-12-26").unwrap()),
+    );
+    let _ = retained.update(&doc, &BTreeSet::from([FieldRef::new("r", "d")]));
+    assert_eq!(
+        retained.calculated_value(&FieldRef::new("r", "sunday")),
+        Some(CalculatedValue::Date(Date::parse("2027-01-02").unwrap()))
+    );
+    assert_eq!(retained.outcome(), calculate_complete(&doc));
+}

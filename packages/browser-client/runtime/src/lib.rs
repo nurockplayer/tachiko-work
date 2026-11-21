@@ -1559,15 +1559,8 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value {
-                value,
-                result: None,
-            } => Some(*value),
-            Self::Value {
-                result: Some(_), ..
-            }
-            | Self::Failure { .. }
-            | Self::Unavailable => None,
+            Self::Value { value, .. } => Some(*value),
+            Self::Failure { .. } | Self::Unavailable => None,
         }
     }
 }
