@@ -297,6 +297,7 @@ pub struct FormulaInverseRestoreRequest {
     base_revision: SemanticRevision,
     target: FieldRef,
     value: Number,
+    restored_value: Option<Value>,
     originator: PrincipalId,
 }
 
@@ -314,8 +315,15 @@ impl FormulaInverseRestoreRequest {
             base_revision,
             target,
             value,
+            restored_value: None,
             originator,
         }
+    }
+
+    #[must_use]
+    pub fn with_restored_value(mut self, value: Value) -> Self {
+        self.restored_value = Some(value);
+        self
     }
 }
 
@@ -677,7 +685,8 @@ impl PatchLifecycle {
             };
         }
         self.require_query_for_admission(&request.originator, &disclosure, now)?;
-        formula_inverse_restore_candidate(document, &request.target, request.value).map_err(
+        let restored_value = request.restored_value.unwrap_or(Value::Number(request.value));
+        formula_inverse_restore_candidate(document, &request.target, restored_value.clone()).map_err(
             |source| PatchLifecycleError::CommandRejected {
                 source: Box::new(source),
             },
@@ -690,7 +699,7 @@ impl PatchLifecycle {
                 request.proposal_id,
                 request.base_revision,
                 SemanticPatchBody::command(SemanticCommand::FormulaInverseRestore(
-                    FormulaInverseRestoreCommand::new(request.target, request.value),
+                    FormulaInverseRestoreCommand::new(request.target, request.value).with_restored_value(restored_value),
                 )),
                 request.originator,
             ),
