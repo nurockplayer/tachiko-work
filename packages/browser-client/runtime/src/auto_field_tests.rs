@@ -334,15 +334,9 @@ fn auto_presentation_only_edit_and_history_publish_changed_cell() {
         };
         assert!(!publication.many);
         assert_eq!(publication.fields, vec![target.clone()]);
+        let revision = runtime.current_revision().to_owned();
         let window = runtime
-            .query_table_window(
-                runtime.current_revision(),
-                &collection,
-                &TableView::default(),
-                0,
-                10,
-                true,
-            )
+            .query_table_window(&revision, &collection, &TableView::default(), 0, 10, true)
             .unwrap();
         assert_eq!(publication.changed, vec![window.rows[0].fields[0].clone()]);
         assert_eq!(publication.changed[0].target, target);
