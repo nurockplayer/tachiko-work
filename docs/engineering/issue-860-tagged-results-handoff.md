@@ -1,6 +1,6 @@
 # Issue #860: Date outcome decision handoff
 
-Status: implementation pending; the projection decision has been made.
+Status: Date projection support added; engine production of Date outcomes is pending.
 Checked: 2026-11-21 19:37 JST.
 Base: `f5d3b2b59d695d95244b21647cc53bf4b302de9c`.
 
@@ -30,7 +30,7 @@ The current `CalculationProjection` serializer and deserializer require
 `value: f64`; `CalculationProjection::number()` returns it for every successful
 outcome. Numeric consumers must account for Date-tagged results.
 
-The engine path is `Calculation.values`, retained calculation state,
+The remaining engine path is `Calculation.values`, retained calculation state,
 `evaluation::Evaluation::number`, and `FormulaCalculationOutcome::Value`.
 The partitioned map is already generic; its lookup integration and direct
 numeric consumers also need updating. The current type surface contains only
@@ -43,8 +43,6 @@ Date arithmetic fail. Plain Date references must retain their tag. Text and
 Boolean results remain follow-ups.
 
 Delivery risk: Guarded (formula semantics and public projection consumers).
-Ownership/async boundary: not applicable to this documentation-only checkpoint;
-no ownership, async, pinning or unsafe code changes.
-Tests: not run; no executable code changed. The brief's engine/runtime command
-remains required after implementation. Independent review belongs to the lead
-and PR review gate.
+Ownership/async boundary: no ownership, async, pinning or unsafe code changes.
+The brief's engine/runtime command remains required after implementation.
+Independent review belongs to the lead and PR review gate.

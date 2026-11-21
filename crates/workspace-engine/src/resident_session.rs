@@ -458,7 +458,8 @@ impl ResidentWorkspaceSession {
                         FormulaCalculationOutcome::Value(value) => {
                             fold[position].0 += value.get();
                         }
-                        FormulaCalculationOutcome::Failure(_)
+                        FormulaCalculationOutcome::Date(_)
+                        | FormulaCalculationOutcome::Failure(_)
                         | FormulaCalculationOutcome::Unavailable => fold[position].1 = false,
                     },
                     Value::Number(value) => fold[position].0 += value.get(),
@@ -523,7 +524,8 @@ impl ResidentWorkspaceSession {
                 Value::Formula(_) => {
                     match retained_calculation_for(&self.retained.calculation_state, target) {
                         FormulaCalculationOutcome::Value(number) => numbers.push(number.get()),
-                        FormulaCalculationOutcome::Failure(_)
+                        FormulaCalculationOutcome::Date(_)
+                        | FormulaCalculationOutcome::Failure(_)
                         | FormulaCalculationOutcome::Unavailable => error_count += 1,
                     }
                 }

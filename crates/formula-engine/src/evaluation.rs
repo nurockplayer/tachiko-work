@@ -933,7 +933,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
 }
 
 // Howard Hinnant's civil-date algorithm, with an arbitrary 1970-01-01 epoch.
-fn days_from_civil(date: Date) -> i32 {
+pub fn days_from_civil(date: Date) -> i32 {
     let mut year = i32::from(date.year());
     let month = i32::from(date.month());
     if month <= 2 {

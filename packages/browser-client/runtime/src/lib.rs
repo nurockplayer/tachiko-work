@@ -1559,8 +1559,15 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value, .. } => Some(*value),
-            Self::Failure { .. } | Self::Unavailable => None,
+            Self::Value {
+                value,
+                result: None,
+            } => Some(*value),
+            Self::Value {
+                result: Some(_), ..
+            }
+            | Self::Failure { .. }
+            | Self::Unavailable => None,
         }
     }
 }
@@ -2692,6 +2699,7 @@ fn view_value(
     }
     match &field.calculated_value {
         Some(FormulaCalculationOutcome::Value(number)) => Some(ViewValue::Number(number.get())),
+        Some(FormulaCalculationOutcome::Date(date)) => Some(ViewValue::Date(*date)),
         Some(FormulaCalculationOutcome::Failure(_) | FormulaCalculationOutcome::Unavailable)
         | None => None,
     }
@@ -9095,10 +9103,22 @@ impl NumberTotal {
 
     fn add(&mut self, field: &FieldProjection) {
         match (&field.calculated, &field.stored) {
-            (Some(CalculationProjection::Value { value, .. }), _)
+            (
+                Some(CalculationProjection::Value {
+                    value,
+                    result: None,
+                }),
+                _,
+            )
             | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
             (
-                Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
+                Some(
+                    CalculationProjection::Value {
+                        result: Some(_), ..
+                    }
+                    | CalculationProjection::Failure { .. }
+                    | CalculationProjection::Unavailable,
+                ),
                 _,
             )
             | (None, Some(_) | None) => self.complete = false,
@@ -9295,6 +9315,16 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
 
 /// The Number or Date a field shows as display text, in its column's format.
 fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+    if let Some(CalculationProjection::Value {
+        result: Some(StoredValueProjection::Date { value }),
+        ..
+    }) = &field.calculated
+    {
+        return Some(display_text::format_date(
+            *value,
+            column.date_format.as_ref(),
+        ));
+    }
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
         return Some(display_text::format_date(
@@ -12247,6 +12277,10 @@ fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationPro
         FormulaCalculationOutcome::Value(value) => CalculationProjection::Value {
             value: value.get(),
             result: None,
+        },
+        FormulaCalculationOutcome::Date(date) => CalculationProjection::Value {
+            value: f64::from(tachiko_formula_engine::days_from_civil(*date)),
+            result: Some(StoredValueProjection::Date { value: *date }),
         },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),

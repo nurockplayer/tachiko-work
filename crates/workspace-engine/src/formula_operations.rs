@@ -68,6 +68,7 @@ impl FormulaQueryContext {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FormulaCalculationOutcome {
     Value(Number),
+    Date(tachiko_semantic_core::Date),
     Failure(CalculationFailure),
     Unavailable,
 }

@@ -961,6 +961,7 @@ fn override_failure_output(failure: &ScenarioOverrideFailure) -> serde_json::Val
 fn calculation_output(outcome: &FormulaCalculationOutcome) -> serde_json::Value {
     match outcome {
         FormulaCalculationOutcome::Value(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::Date(value) => json!({ "kind": "value", "value": value }),
         FormulaCalculationOutcome::Failure(failure) => {
             json!({ "kind": "failure", "failure": calculation_failure_output(failure) })
         }

@@ -6,6 +6,16 @@ use super::{
 };
 
 #[test]
+fn calculated_date_projects_tag_and_day_number() {
+    let date = tachiko_semantic_core::Date::parse("2026-01-02").unwrap();
+    let projection = calculation_projection(&FormulaCalculationOutcome::Date(date));
+    assert_eq!(
+        serde_json::to_value(projection).unwrap(),
+        json!({"status": "value", "value": 20455.0, "result": {"kind": "date", "value": "2026-01-02"}})
+    );
+}
+
+#[test]
 fn calculated_number_preserves_main_wire_bytes_and_failure_keeps_its_code() {
     let number =
         calculation_projection(&FormulaCalculationOutcome::Value(Number::new(2.5).unwrap()));
