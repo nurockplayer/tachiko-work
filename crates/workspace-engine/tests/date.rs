@@ -56,9 +56,9 @@ fn date_document(value: &str) -> Document {
 #[test]
 fn stored_dates_are_not_calculation_results() {
     let document = date_document("2026-01-02");
-    assert!(calculate_fields(&document).unwrap().is_empty());
+    assert_eq!(calculate_fields(&document).unwrap(), []);
     let session = ResidentWorkspaceSession::new(DocumentScopeId::from("dates"), document);
-    assert!(session.calculate_fields().unwrap().value().is_empty());
+    assert_eq!(session.calculate_fields().unwrap().value().as_slice(), []);
 }
 
 #[test]
