@@ -14,7 +14,6 @@ pub(super) fn candidate(
     let mut ids = NewTableIds::new(occurrence_id);
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let schema = crate::Schema {
-        headerless: false,
         id: schema_id.clone(),
         key: "sheet".into(),
         display_name: Some("Sheet 1".into()),
