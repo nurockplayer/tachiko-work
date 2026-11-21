@@ -36,7 +36,10 @@ fn outline_save_reopen_export_and_undo_preserve_exact_sides_and_slice_one_styles
             ]),
         )
         .unwrap();
-        assert!(publication.affected_calculations.is_empty());
+        assert_eq!(
+            publication.affected_calculations,
+            [] as [crate::FieldTarget; 0]
+        );
         assert_eq!(runtime.undo.len(), 2);
         assert_eq!(runtime.session.document(), &document);
         let expected = vec![
@@ -182,7 +185,7 @@ fn outline_uses_selection_order_and_clear_preserves_unselected_sides() {
         shown.rows[0].styles[1].border_sides,
         [BorderSide::Right, BorderSide::Bottom]
     );
-    assert!(shown.rows[1].styles.is_empty());
+    assert_eq!(shown.rows[1].styles, [] as [SourceStyle; 0]);
     edit(
         &mut runtime,
         &["r3", "r1"],
@@ -195,7 +198,7 @@ fn outline_uses_selection_order_and_clear_preserves_unselected_sides() {
     .unwrap();
     let shown = window(&mut runtime, &TableView::default());
     assert_eq!(shown.rows[2].styles[2].border_sides, [BorderSide::Bottom]);
-    assert!(shown.rows[0].styles.is_empty());
+    assert_eq!(shown.rows[0].styles, [] as [SourceStyle; 0]);
     edit(
         &mut runtime,
         &["r2"],
