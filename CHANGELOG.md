@@ -12,6 +12,12 @@ All notable changes to Tachiko Work are documented in this file.
   the same call (#889, #815 slice 2). XLSX exports of native tables and imported
   workbooks write edited bold, italic, fill and exact border sides.
 
+- Resident project inspection (`inspectCurrentProject`) recovers the current
+  imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
+  callers can export without reopening. The optional mapping is omitted for
+  untouched imports and non-imported projects; existing replies stay unchanged
+  (#870).
+
 - Imported workbook project and portable `.ro` exports return an
   `import_metadata` companion. Imported-project open accepts that companion
   with `.ro` bytes, retaining sheet names, source order and XLSX export after
