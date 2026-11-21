@@ -47,7 +47,10 @@ mod reference {
         let (nodes, formulas, dependencies) = collect(document);
         let mut failures = pregraph_failures(document, &nodes, &formulas);
         assign_cycle_failures(&formulas, &dependencies, &mut failures);
-        let mut values = initial_values(&nodes, &failures);
+        let mut values = initial_values(&nodes, &failures)
+            .into_iter()
+            .map(|(field, value)| (field, *value.number().unwrap()))
+            .collect();
         evaluate(
             document,
             &formulas,
@@ -1057,7 +1060,11 @@ fn assert_matches_reference(document: &Document, label: impl std::fmt::Display) 
     let expected = reference::calculate(document);
     let actual = super::full_calculation_parts(document);
     assert!(
-        actual.values.iter().eq(expected.values.iter()),
+        actual
+            .values
+            .iter()
+            .map(|(field, value)| (field, value.number().unwrap()))
+            .eq(expected.values.iter()),
         "values of {label}"
     );
     assert_eq!(&actual.failures, &expected.failures, "failures of {label}");
