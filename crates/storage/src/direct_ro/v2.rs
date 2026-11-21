@@ -15,6 +15,7 @@ pub(crate) const FORMAT_VERSION: u32 = 2;
 pub(crate) enum CodecError {
     Json(serde_json::Error),
     InvalidRepresentation(String),
+    UnsupportedHeaderless,
     UnsupportedRowRank,
     UnsupportedAutoField,
 }
@@ -197,6 +198,9 @@ impl DocumentV2 {
         if document.has_auto_fields() {
             return Err(CodecError::UnsupportedAutoField);
         }
+        if document.has_headerless_schemas() {
+            return Err(CodecError::UnsupportedHeaderless);
+        }
         if document.has_row_ranks() {
             return Err(CodecError::UnsupportedRowRank);
         }
@@ -312,6 +316,7 @@ impl SchemaV2 {
 
     fn into_semantic(self) -> Schema {
         Schema {
+            headerless: false,
             field_order: self
                 .field_order
                 .map(|order| order.into_iter().map(FieldId::from).collect()),

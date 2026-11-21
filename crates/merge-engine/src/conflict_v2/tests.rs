@@ -27,6 +27,7 @@ fn number_field(id: &str) -> FieldDefinition {
 
 fn basic_document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "schema".into(),
         key: "items".into(),
@@ -199,6 +200,7 @@ fn schema_qualified_value_transition_preserves_unmaterialized_evidence() {
         base.schemas.insert(
             id.into(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: id.into(),
                 key: id.into(),

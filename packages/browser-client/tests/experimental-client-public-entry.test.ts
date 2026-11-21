@@ -28,7 +28,7 @@ function opened(revision: string) {
       collections: [],
       keyed_grouped_sum_definition_ids: [],
     },
-    table: {revision, collection: {id: "entities", key: "entities", entity_count: 0}, columns: [], rows: []},
+    table: {revision, collection: {id: "entities", key: "entities", headerless: false, data_start_row: 2, entity_count: 0}, columns: [], rows: []},
   };
 }
 

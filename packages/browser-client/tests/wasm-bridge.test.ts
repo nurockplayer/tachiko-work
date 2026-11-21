@@ -21,7 +21,7 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
   const pointer = vi.fn(() => outputOffset);
   const release = vi.fn(() => { new Uint8Array(memory.buffer, outputOffset, 4).fill(0); });
   const selectedExport = vi.fn();
-  const reserve = vi.fn(() => 0);
+  const reserve = vi.fn((_length: number) => 0);
   const exports = {
     memory,
     tachiko_designer_request_reserve: reserve,
@@ -61,7 +61,7 @@ describe("table WASM projection transport", () => {
   it.each([false, true])("preserves explicit-name presence without inferring it from spelling (%s)", async explicit => {
     const column = {id: "field", key: "column_1", display_name: "column_1", field_type: "text", required: false,
       ...(explicit ? {display_name_explicit: true} : {})};
-    const payload = {revision: "resident/0", collection: {id: "sheet", key: "sheet_1", display_name: "sheet_1", entity_count: 0},
+    const payload = {revision: "resident/0", collection: {id: "sheet", key: "sheet_1", display_name: "sheet_1", headerless: false, data_start_row: 2, entity_count: 0},
       columns: [column], rows: []};
     const {bridge} = await fixture(0, 0, "table", payload);
     expect(bridge.request({type: "query_table", collection: "sheet"})).toEqual({status: "ok", response: {type: "table", payload}});
@@ -267,5 +267,26 @@ describe("working-size WASM project transport", () => {
     ] as const) {
       expect(exports[name]).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("blank workbook WASM transport", () => {
+  it("serializes both requests and preserves headerless and Auto projections", async () => {
+    const collection = {id: "s", key: "sheet", display_name: "Sheet 1", headerless: true, data_start_row: 1, entity_count: 0};
+    const payload = {profile: "working_size", bootstrap: {collections: [collection]}, window: {collection, columns: [], rows: []}};
+    const {bridge, memory, reserve} = await fixture(0, 0, "opened_window", payload);
+    const request = {type: "new_blank_workbook", occurrence_id: "o", profile: "working_size"} as const;
+    expect(bridge.request(request)).toEqual({status: "ok", response: {type: "opened_window", payload}});
+    const length = reserve.mock.calls.at(-1)![0] as number;
+    expect(JSON.parse(new TextDecoder().decode(new Uint8Array(memory.buffer, 0, length)))).toEqual(request);
+
+    const publication = {base_revision: "resident/0", resulting_revision: "resident/1", changed: [
+      {target: {entity: "r", field: "a"}, editable_scalar: "auto", stored: {kind: "number", value: 120}},
+    ]};
+    const writing = await fixture(0, 0, "published", publication);
+    const write = {type: "write_cell_at", expected_revision: "resident/0", collection: "sheet", row: 1, column: 1, input: {kind: "auto", input: "120"}} as const;
+    expect(writing.bridge.request(write)).toEqual({status: "ok", response: {type: "published", payload: publication}});
+    const written = writing.reserve.mock.calls.at(-1)![0] as number;
+    expect(JSON.parse(new TextDecoder().decode(new Uint8Array(writing.memory.buffer, 0, written)))).toEqual(write);
   });
 });

@@ -54,6 +54,7 @@ pub enum CanonicalDeltaError {
 /// Complete immutable payload for a schema definition, excluding its target ID.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaDefinitionPayload {
+    pub headerless: bool,
     pub key: SchemaKey,
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, FieldDefinitionPayload>,
@@ -123,6 +124,11 @@ pub enum CanonicalDirectFact {
         schema: SchemaId,
         before: Option<String>,
         after: Option<String>,
+    },
+    SchemaHeaderlessChanged {
+        schema: SchemaId,
+        before: bool,
+        after: bool,
     },
     SchemaFieldOrderChanged {
         schema: SchemaId,
@@ -258,6 +264,7 @@ impl CanonicalDirectFact {
             F::SchemaKeyChanged { schema, .. } => (1, vec![schema.as_str()], 2),
             F::SchemaDisplayNameChanged { schema, .. } => (1, vec![schema.as_str()], 3),
             F::SchemaFieldOrderChanged { schema, .. } => (1, vec![schema.as_str()], 4),
+            F::SchemaHeaderlessChanged { schema, .. } => (1, vec![schema.as_str()], 5),
             F::SchemaFieldDisplayNameChanged { schema, field, .. } => {
                 (2, vec![schema.as_str(), field.as_str()], 6)
             }
@@ -509,6 +516,7 @@ fn admit_input(document: &Document, side: DeltaInputSide) -> Result<(), Canonica
 
 fn schema_payload(schema: &tachiko_semantic_core::Schema) -> SchemaDefinitionPayload {
     SchemaDefinitionPayload {
+        headerless: schema.headerless,
         key: schema.key.clone(),
         display_name: schema.display_name.clone(),
         fields: schema
@@ -682,6 +690,13 @@ fn compare_schema(
             schema: id.clone(),
             before: before.display_name.clone(),
             after: after.display_name.clone(),
+        });
+    }
+    if before.headerless != after.headerless {
+        facts.push(F::SchemaHeaderlessChanged {
+            schema: id.clone(),
+            before: before.headerless,
+            after: after.headerless,
         });
     }
     if before.field_order != after.field_order {

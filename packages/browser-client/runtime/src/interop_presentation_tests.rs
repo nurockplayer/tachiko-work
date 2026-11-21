@@ -40,6 +40,7 @@ fn native_presentation_is_projected_and_survives_xlsx() {
         field("b-text", FieldType::Text, None),
     ];
     let schema = Schema {
+        headerless: false,
         id: "table".into(),
         key: SchemaKey::from("table"),
         display_name: Some("Table".into()),
@@ -1085,6 +1086,7 @@ fn stage5_palette_bound_drops_cell_and_validates() {
     document.schemas.insert(
         "table".into(),
         Schema {
+            headerless: false,
             id: "table".into(),
             key: "table".into(),
             display_name: None,

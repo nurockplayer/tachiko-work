@@ -565,6 +565,7 @@ fn constraint_write_requires_schema_class_even_when_other_classes_are_granted() 
 fn keyed_definition_document() -> Document {
     fn schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
         Schema {
+            headerless: false,
             field_order: None,
             id: id.into(),
             key: id.into(),
@@ -1410,6 +1411,7 @@ fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
     document.schemas.insert(
         "items".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "items".into(),
             key: "items".into(),
@@ -1663,6 +1665,7 @@ fn single_item_document() -> Document {
     document.schemas.insert(
         "items".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "items".into(),
             key: "items".into(),

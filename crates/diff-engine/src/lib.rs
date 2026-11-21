@@ -270,6 +270,8 @@ pub enum DiffError {
     UnsupportedNumberFormat,
     #[error("tachiko.semantic-delta/v1 does not support durable field order")]
     UnsupportedFieldOrder,
+    #[error("frozen v1 diff does not support headerless schema; use canonical delta v2")]
+    UnsupportedHeaderless,
     #[error("frozen v1 diff does not support row rank; use canonical delta v2")]
     UnsupportedRowRank,
     #[error("frozen v1 diff does not support Auto fields; use canonical delta v2")]
@@ -512,6 +514,9 @@ fn push_changed_formula_impacts(
 pub fn require_diff_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
     if before.has_auto_fields() || after.has_auto_fields() {
         return Err(DiffError::UnsupportedAutoField);
+    }
+    if before.has_headerless_schemas() || after.has_headerless_schemas() {
+        return Err(DiffError::UnsupportedHeaderless);
     }
     if before.has_row_ranks() || after.has_row_ranks() {
         return Err(DiffError::UnsupportedRowRank);

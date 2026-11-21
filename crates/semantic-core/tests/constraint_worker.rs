@@ -19,6 +19,7 @@ fn constrained_document(
     document.schemas.insert(
         "schema".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "schema".into(),
             key: "items".into(),

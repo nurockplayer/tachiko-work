@@ -68,6 +68,7 @@ fn document() -> Document {
         document.schemas.insert(
             id.into(),
             Schema {
+                headerless: false,
                 id: id.into(),
                 key: id.into(),
                 display_name: None,

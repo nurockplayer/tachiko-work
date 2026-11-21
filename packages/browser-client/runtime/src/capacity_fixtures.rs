@@ -68,6 +68,7 @@ pub fn capacity_document(spec: FixtureSpec) -> Document {
     let mut rng = SplitMix64(spec.seed);
     let mut document = Document::empty("capacity-benchmark", "Capacity Fixture");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
@@ -266,6 +267,7 @@ pub fn formula_sweep_document(
     for table in 0..tables {
         let schema_id = SchemaId::from(format!("t{table}"));
         let mut schema = Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(format!("t{table}")),

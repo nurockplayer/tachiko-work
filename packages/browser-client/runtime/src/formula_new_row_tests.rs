@@ -196,6 +196,7 @@ fn document_fixture(
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             id: schema.clone(),
             key: SchemaKey::from("items"),
             display_name: None,

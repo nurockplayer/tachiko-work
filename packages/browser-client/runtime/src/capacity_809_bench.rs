@@ -38,6 +38,7 @@ fn formula_table_809(rows: usize) -> Document {
         FieldType::Number,
     ];
     let mut schema = Schema {
+        headerless: false,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
         display_name: None,

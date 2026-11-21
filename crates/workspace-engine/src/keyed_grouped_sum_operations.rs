@@ -415,6 +415,7 @@ mod tests {
         document.schemas.insert(
             SchemaId::from(ORDERS),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from(ORDERS),
                 key: SchemaKey::from("orders"),
@@ -428,6 +429,7 @@ mod tests {
         document.schemas.insert(
             SchemaId::from(PRODUCTS),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from(PRODUCTS),
                 key: SchemaKey::from("products"),

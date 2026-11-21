@@ -6389,6 +6389,13 @@ fn reject_legacy_field_orders(
             source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedAutoField)),
         });
     }
+    if base.has_headerless_schemas() || candidate.has_headerless_schemas() {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedHeaderless,
+            )),
+        });
+    }
     if base.has_row_ranks() || candidate.has_row_ranks() {
         return Err(PatchLifecycleError::CommandRejected {
             source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedRowRank)),
@@ -6974,6 +6981,7 @@ mod tests {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
@@ -7079,6 +7087,7 @@ mod tests {
         document.schemas.insert(
             orders.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
@@ -7116,6 +7125,7 @@ mod tests {
         document.schemas.insert(
             products.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: products.clone(),
                 key: SchemaKey::from("products"),
@@ -7993,6 +8003,7 @@ mod tests {
         // Vec<Entity> in AppendCollection.
         let one_entity = SemanticCommand::AppendCollection {
             schema: Schema {
+                headerless: false,
                 id: SchemaId::from("s"),
                 key: SchemaKey::from("s"),
                 display_name: None,
@@ -8003,6 +8014,7 @@ mod tests {
         };
         let two_entities = SemanticCommand::AppendCollection {
             schema: Schema {
+                headerless: false,
                 id: SchemaId::from("s"),
                 key: SchemaKey::from("s"),
                 display_name: None,

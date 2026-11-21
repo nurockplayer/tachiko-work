@@ -231,6 +231,8 @@ struct DocumentIdentityV3 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SchemaV3 {
+    #[serde(default, deserialize_with = "headerless_true")]
+    headerless: bool,
     id: String,
     key: String,
     #[serde(default, deserialize_with = "optional_name")]
@@ -988,6 +990,14 @@ fn schemas_into_semantic(
     Ok(semantic)
 }
 
+fn headerless_true<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    if bool::deserialize(deserializer)? {
+        Ok(true)
+    } else {
+        Err(serde::de::Error::custom("headerless false must be omitted"))
+    }
+}
+
 impl SchemaV3 {
     fn into_semantic(self) -> Result<Schema, FormatError> {
         let mut fields = BTreeMap::new();
@@ -1005,6 +1015,7 @@ impl SchemaV3 {
         }
         let field_order = field_order_from_wire(self.field_order, &fields)?;
         Ok(Schema {
+            headerless: self.headerless,
             field_order,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
@@ -1537,6 +1548,7 @@ impl SchemaV3 {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
             display_name: schema.display_name.clone(),
+            headerless: schema.headerless,
             field_order: schema
                 .field_order
                 .as_ref()
@@ -1944,6 +1956,10 @@ fn write_schema(output: &mut String, schema: &SchemaV3, indent: usize) -> Result
     pretty_member_string(output, indent + 1, "key", &schema.key, true)?;
     if let Some(name) = &schema.display_name {
         pretty_member_string(output, indent + 1, "display_name", name, true)?;
+    }
+    if schema.headerless {
+        pretty_member_prefix(output, indent + 1, "headerless")?;
+        output.push_str("true,\n");
     }
     if let Some(order) = &schema.field_order {
         pretty_member_prefix(output, indent + 1, "field_order")?;

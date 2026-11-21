@@ -39,6 +39,7 @@ fn fixture(count: usize) -> Document {
     document.schemas.insert(
         SchemaId::from("rows"),
         Schema {
+            headerless: false,
             id: SchemaId::from("rows"),
             key: SchemaKey::from("rows"),
             display_name: None,

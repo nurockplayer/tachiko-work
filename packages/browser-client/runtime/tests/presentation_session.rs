@@ -57,6 +57,7 @@ fn entity(id: &str, schema: &str, fields: BTreeMap<FieldId, Value>) -> Entity {
 
 fn orders_document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("orders"),
         key: SchemaKey::from("orders"),
@@ -92,6 +93,7 @@ fn orders_document() -> Document {
 /// The bounded stock tracker, which is the document `RemoveRows` accepts.
 fn tracker_document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("tracker"),
         key: SchemaKey::from("tracker"),

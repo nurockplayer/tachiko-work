@@ -42,6 +42,7 @@ fn document() -> Document {
     doc.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "items".into(),
@@ -782,6 +783,7 @@ fn a_column_total_blocks_removing_its_column_from_an_empty_table() {
     base.schemas.insert(
         "t".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "t".into(),
             key: "summary".into(),

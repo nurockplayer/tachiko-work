@@ -83,6 +83,7 @@ fn schema(document: &mut Document, id: &str, name: &str, fields: Vec<FieldDefini
     document.schemas.insert(
         schema_id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(id),

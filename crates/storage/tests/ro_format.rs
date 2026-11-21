@@ -70,6 +70,7 @@ fn document_with_order(reverse: bool) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
@@ -237,6 +238,7 @@ fn invalid_v2_relationship_cannot_be_serialized() {
         schemas: BTreeMap::from([(
             SchemaId::from("source"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("source"),
                 key: SchemaKey::from("source"),

@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Blank headerless workbooks expose `new_blank_workbook` and `write_cell_at`.
+  First and adjacent writes create optional Auto columns and rows atomically,
+  with generated Column A/B labels, tagged values and one Undo step. Headerless
+  schema state, labels and cells survive v3/portable `.ro` save/reopen and v2
+  delta/merge; distant writes and Auto formulas remain explicitly refused
+  (#899, #668 PR2).
+
 - Auto scalar columns accept classifier-backed edits and paste with lossless
   Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
   Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and

@@ -18,6 +18,7 @@ fn identity_document() -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("weapon"),
@@ -154,6 +155,7 @@ fn address_index_reports_duplicate_schema_keys_in_stable_id_order() {
     document.schemas.insert(
         second.clone(),
         Schema {
+            headerless: false,
             id: second.clone(),
             ..template.clone()
         },
@@ -161,6 +163,7 @@ fn address_index_reports_duplicate_schema_keys_in_stable_id_order() {
     document.schemas.insert(
         first.clone(),
         Schema {
+            headerless: false,
             id: first.clone(),
             ..template
         },

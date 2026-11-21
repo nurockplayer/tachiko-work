@@ -13,6 +13,7 @@ fn duplicate_schema_keys(key: &str) -> Document {
         document.schemas.insert(
             SchemaId::from(id),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from(id),
                 key: SchemaKey::from(key),
@@ -165,6 +166,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             SchemaId::from("schema-a"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "declared-schema".into(),
                 key: SchemaKey::from("duplicate-schema"),
@@ -175,6 +177,7 @@ fn duplicate_keys_identify_distinct_store_entries_when_declared_ids_match() {
         (
             SchemaId::from("schema-b"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "declared-schema".into(),
                 key: SchemaKey::from("duplicate-schema"),

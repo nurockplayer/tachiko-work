@@ -1902,6 +1902,7 @@ mod tests {
         before.schemas.insert(
             "s".into(),
             Schema {
+                headerless: false,
                 id: "s".into(),
                 key: "s".into(),
                 display_name: None,
@@ -1955,6 +1956,7 @@ mod tests {
             constraint: tachiko_semantic_core::FieldConstraint::None,
         };
         let schema = tachiko_semantic_core::Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),

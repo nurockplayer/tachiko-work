@@ -9,6 +9,8 @@ export type CollectionSummary = {
   id: string;
   key: string;
   display_name: string;
+  headerless: boolean;
+  data_start_row: number;
   entity_count: number;
 };
 
@@ -599,6 +601,7 @@ export function isFormulaFailure(failure: FailureProjection): failure is Formula
 }
 
 export type TrackerCommand =
+  | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
@@ -666,6 +669,7 @@ export type DesignerRequest =
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string; profile?: "working_size" }
   | { type: "new_budget"; occurrence_id: string; profile?: "working_size" }
+  | { type: "new_blank_workbook"; occurrence_id: string; profile: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "delete_table"; expected_revision: string; collection: string }

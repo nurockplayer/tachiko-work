@@ -11,6 +11,7 @@ fn formula_table(rows: usize) -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             id: "s".into(),
             key: "s".into(),
             display_name: None,

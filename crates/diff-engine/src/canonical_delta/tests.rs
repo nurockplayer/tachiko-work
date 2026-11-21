@@ -22,6 +22,7 @@ fn number(value: f64) -> Number {
 
 fn text_schema(id: &str) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: "schema".into(),
@@ -74,6 +75,7 @@ fn keyed_definition() -> KeyedGroupedSumDefinition {
 
 fn numeric_or_text_schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: id.into(),
@@ -151,6 +153,7 @@ fn calculation_failure_is_reported_for_the_failing_side() {
     let valid = Document::empty("doc", "title");
     let mut failed = valid.clone();
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "s".into(),
         key: "s".into(),

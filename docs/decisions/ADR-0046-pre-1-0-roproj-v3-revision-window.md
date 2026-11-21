@@ -58,6 +58,7 @@ Only these constructs may enter v3 during the window.
 
 | Construct | Item in #668 | Its ADR decides |
 |---|---|---|
+| Schema: optional `headerless:true` | 1, #899 | Headerless grid state, semantic delta and merge |
 | `FieldType` tag `auto` and its admission rule | 1, 2 | Value model and failure rule |
 | Expression: Text, Boolean and Date literals; new functions | 2 | Value model and failure rule |
 | Expression: positional range | 3 | Row order and ranges |
@@ -70,6 +71,25 @@ Only these constructs may enter v3 during the window.
 Anything else needs an amendment to this ADR. The numeric and conditional
 functions already in the Expression vocabulary stay as they are, and further
 functions over Number results stay inside the second row.
+
+### Headerless schema amendment (#899)
+
+The [#668 sizing decision](https://github.com/nurockplayer/tachiko-work/issues/668#issuecomment-7067055398)
+adds one canonical schema member: `headerless:true`, after `display_name` and
+before `field_order` and `fields`. Absence means false and MUST remain omitted;
+explicit false, null, non-Booleans and unknown members are refused. A headerless
+schema may have zero fields and records. Its first stored row is data row 1;
+a regular table's first data row is 2 in the workbook projection.
+
+This is semantic schema state, independent of presentation and cell values.
+Canonical delta v2 includes `SchemaHeaderlessChanged { schema, before, after }`
+and includes the Boolean in complete schema creation/deletion payloads. Merge
+v2 reconciles it as an independent three-way Boolean facet: one-sided and
+identical changes merge; deleting a schema against a header-state edit or
+concurrently creating unequal schema subjects conflicts, with complete header
+state in subject evidence. Frozen v1 delta/conflict and older storage writers
+refuse headerless state. The v3/package profiles and absence hashes stay the
+same; pre-amendment readers refuse headerless documents as required by §4.
 
 ### 3. This ADR grants no shape
 

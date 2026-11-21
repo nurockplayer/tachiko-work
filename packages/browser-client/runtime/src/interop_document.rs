@@ -1810,6 +1810,7 @@ fn build_import_sheet(
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
@@ -2553,6 +2554,7 @@ mod extremum_tests {
         document.schemas.insert(
             "items".into(),
             Schema {
+                headerless: false,
                 id: "items".into(),
                 key: "items".into(),
                 display_name: None,
@@ -5724,6 +5726,7 @@ mod import_dependency_tests {
         document.schemas.insert(
             "sheet".into(),
             Schema {
+                headerless: false,
                 id: "sheet".into(),
                 key: "sheet".into(),
                 display_name: None,

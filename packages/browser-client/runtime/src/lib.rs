@@ -24,6 +24,9 @@ mod authored_input_tests;
 #[cfg(test)]
 mod auto_field_tests;
 mod auto_input;
+mod blank_workbook;
+#[cfg(test)]
+mod blank_workbook_tests;
 #[cfg(test)]
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -278,6 +281,17 @@ pub enum DesignerRequest {
         occurrence_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<DesignerProfile>,
+    },
+    NewBlankWorkbook {
+        occurrence_id: String,
+        profile: DesignerProfile,
+    },
+    WriteCellAt {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        column: usize,
+        input: ScalarEditInput,
     },
     NewTable {
         occurrence_id: String,
@@ -637,6 +651,8 @@ pub struct BootstrapProjection {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CollectionSummary {
+    pub headerless: bool,
+    pub data_start_row: usize,
     pub id: String,
     pub key: String,
     pub display_name: String,
@@ -1120,6 +1136,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_field_orders()
         || document.has_row_ranks()
         || document.has_auto_fields()
+        || document.has_headerless_schemas()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -3859,6 +3876,23 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(response)
             }
+            DesignerRequest::NewBlankWorkbook {
+                occurrence_id,
+                profile: DesignerProfile::WorkingSize,
+            } => {
+                let (candidate, response) = blank_workbook::candidate(&occurrence_id)?;
+                *self = candidate;
+                Ok(response)
+            }
+            DesignerRequest::WriteCellAt {
+                expected_revision,
+                collection,
+                row,
+                column,
+                input,
+            } => self
+                .write_cell_at(&expected_revision, &collection, row, column, &input)
+                .map(DesignerResponse::Published),
             DesignerRequest::NewTable {
                 occurrence_id,
                 name,
@@ -7120,6 +7154,7 @@ impl DesignerRuntime {
             .zip(ordered_ids)
             .collect();
         let mut schema = Schema {
+            headerless: source_schema.headerless,
             // The copy keeps the source's projected column order.
             field_order: Some(
                 source_spec
@@ -8115,6 +8150,7 @@ impl DesignerRuntime {
     fn tracker_document(occurrence_id: &str) -> Document {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
@@ -8230,6 +8266,7 @@ impl DesignerRuntime {
             );
         }
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
@@ -10247,6 +10284,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id,
         key: SchemaKey::from(key),
@@ -10708,7 +10746,8 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
             if let Some(occurrence_id) = match &request {
                 DesignerRequest::NewTracker { occurrence_id, .. }
                 | DesignerRequest::NewBudget { occurrence_id, .. }
-                | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
+                | DesignerRequest::NewTable { occurrence_id, .. }
+                | DesignerRequest::NewBlankWorkbook { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
@@ -10717,6 +10756,9 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     }
                     DesignerRequest::NewBudget { profile, .. } => {
                         starter_candidate(occurrence_id, *profile, Starter::Budget)
+                    }
+                    DesignerRequest::NewBlankWorkbook { .. } => {
+                        blank_workbook::candidate(occurrence_id)
                     }
                     DesignerRequest::NewTable {
                         name,
@@ -11245,6 +11287,8 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                 id: schema.id.to_string(),
                 key: schema.key.to_string(),
                 display_name: schema.effective_name().to_owned(),
+                headerless: schema.headerless,
+                data_start_row: if schema.headerless { 1 } else { 2 },
                 entity_count: entities.len(),
             };
             (
@@ -12842,7 +12886,7 @@ fn has_scalar_row_authoring_shape(
     schema: &Schema,
     entities: &[EntityId],
 ) -> bool {
-    (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
+    (usize::from(!schema.headerless)..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
@@ -15876,6 +15920,8 @@ mod tests {
             direct_tracker_rows: false,
             native_table_rows: false,
             summary: super::CollectionSummary {
+                headerless: false,
+                data_start_row: 2,
                 id: "s".to_owned(),
                 key: "s".to_owned(),
                 display_name: "S".to_owned(),
