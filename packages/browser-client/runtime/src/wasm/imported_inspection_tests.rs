@@ -13,14 +13,14 @@ fn reply_payload() -> Value {
     reply["response"]["payload"].clone()
 }
 
-fn command(input: Value) -> Value {
-    REQUEST.with(|slot| *slot.borrow_mut() = serde_json::to_vec(&input).unwrap());
+fn command(input: &Value) -> Value {
+    REQUEST.with(|slot| *slot.borrow_mut() = serde_json::to_vec(input).unwrap());
     tachiko_designer_request_run();
     reply_payload()
 }
 
-fn spreadsheet(input: Value, bytes: Vec<u8>) -> Value {
-    REQUEST.with(|slot| *slot.borrow_mut() = serde_json::to_vec(&input).unwrap());
+fn spreadsheet(input: &Value, bytes: Vec<u8>) -> Value {
+    REQUEST.with(|slot| *slot.borrow_mut() = serde_json::to_vec(input).unwrap());
     PROJECT.with(|slot| *slot.borrow_mut() = bytes);
     tachiko_designer_spreadsheet_run();
     reply_payload()
@@ -39,24 +39,24 @@ fn wasm_inspection_recovers_rename_and_undo_mappings_for_export() {
         if working {
             input["profile"] = json!("working_size");
         }
-        spreadsheet(input, source);
+        spreadsheet(&input, source);
         assert_eq!(
-            command(json!({"type": "inspect_project"})),
+            command(&json!({"type": "inspect_project"})),
             json!({"revision": "resident/0"})
         );
-        let mut published = command(json!({
+        let mut published = command(&json!({
             "type": "rename_table", "expected_revision": "resident/0",
             "collection": "sheet_1", "name": "Renamed Input",
         }));
         for name in ["Renamed Input", "Input"] {
             if name == "Input" {
-                published = command(json!({"type": "undo", "expected_revision": "resident/1"}));
+                published = command(&json!({"type": "undo", "expected_revision": "resident/1"}));
             }
             // The caller recovers without supplying the lifecycle reply's mapping.
-            let inspected = command(json!({"type": "inspect_project"}));
+            let inspected = command(&json!({"type": "inspect_project"}));
             assert_eq!(inspected["import_metadata"], published["import_metadata"]);
             let exported = spreadsheet(
-                json!({
+                &json!({
                     "type": "export", "expected_revision": inspected["revision"],
                     "metadata": inspected["import_metadata"], "format": "xlsx", "collection": "sheet_1",
                 }),
