@@ -186,8 +186,8 @@ fn value_edit_matches_the_reference() {
         .unwrap(),
         changes: vec![SemanticChange::FieldChanged {
             field: field("row", "amount"),
-            before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-            after: tachiko_formula_engine::CalculatedValue::Number(number(5.0)),
+            before: number(1.0),
+            after: number(5.0),
         }],
     };
     assert_matches_reference(&case);
@@ -215,7 +215,7 @@ fn formula_edit_matches_the_reference() {
         )),
         changes: vec![SemanticChange::FieldChanged {
             field: field("row", "total"),
-            before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
+            before: number(1.0),
             after: formula(expression),
         }],
     };
@@ -270,12 +270,12 @@ fn copied_formula_into_blanks_and_over_numbers_matches_the_reference() {
             },
             SemanticChange::FieldChanged {
                 field: field("r2", "total"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(0.0)),
+                before: number(0.0),
                 after: formula(expression.clone()),
             },
             SemanticChange::FieldChanged {
                 field: field("r3", "total"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(0.0)),
+                before: number(0.0),
                 after: formula(expression),
             },
         ],
@@ -399,8 +399,8 @@ fn mixed_batch_matches_the_reference() {
         changes: vec![
             SemanticChange::FieldChanged {
                 field: field("r1", "amount"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-                after: tachiko_formula_engine::CalculatedValue::Number(number(5.0)),
+                before: number(1.0),
+                after: number(5.0),
             },
             SemanticChange::FieldRemoved {
                 field: field("r2", "other"),
@@ -489,8 +489,8 @@ fn column_in_another_schema_matches_the_reference() {
         changes: vec![
             SemanticChange::FieldChanged {
                 field: field("t1", "rate"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(4.0)),
-                after: tachiko_formula_engine::CalculatedValue::Number(number(6.0)),
+                before: number(4.0),
+                after: number(6.0),
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
@@ -530,8 +530,8 @@ fn formula_chain_across_columns_matches_the_reference() {
         changes: vec![
             SemanticChange::FieldChanged {
                 field: field("row", "a"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-                after: tachiko_formula_engine::CalculatedValue::Number(number(5.0)),
+                before: number(1.0),
+                after: number(5.0),
             },
             SemanticChange::FormulaImpact {
                 field: field("row", "b"),
@@ -584,8 +584,8 @@ fn column_in_an_if_branch_matches_the_reference() {
         changes: vec![
             SemanticChange::FieldChanged {
                 field: field("t1", "rate"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
-                after: tachiko_formula_engine::CalculatedValue::Number(number(3.0)),
+                before: number(2.0),
+                after: number(3.0),
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
@@ -628,8 +628,8 @@ fn blank_column_slots_match_the_reference() {
         changes: vec![
             SemanticChange::FieldChanged {
                 field: field("r1", "amount"),
-                before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-                after: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
+                before: number(1.0),
+                after: number(2.0),
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
@@ -659,8 +659,8 @@ fn missing_entity_derivation_error_matches_the_reference() {
         )),
         changes: vec![SemanticChange::FieldChanged {
             field: field("ghost", "amount"),
-            before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-            after: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
+            before: number(1.0),
+            after: number(2.0),
         }],
     };
     assert_matches_reference_error(&case);
@@ -687,8 +687,8 @@ fn undeclared_field_derivation_error_matches_the_reference() {
         )),
         changes: vec![SemanticChange::FieldChanged {
             field: field("row", "ghost"),
-            before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-            after: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
+            before: number(1.0),
+            after: number(2.0),
         }],
     };
     assert_matches_reference_error(&case);
@@ -720,8 +720,8 @@ fn one_edit_walks_a_read_column_a_bounded_number_of_times() {
 
     let mut changes = vec![SemanticChange::FieldChanged {
         field: field("row-0", "amount"),
-        before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
-        after: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
+        before: number(1.0),
+        after: number(2.0),
     }];
     changes.extend((0..ROWS).map(|index| SemanticChange::FormulaImpact {
         field: field(&format!("row-{index}"), "total"),
