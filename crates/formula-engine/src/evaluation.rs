@@ -499,7 +499,6 @@ impl<V: ValueStore> Evaluation<'_, V> {
         references
     }
 
-    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match self.calculated(expression)? {
             CalculatedValue::Number(number) => Ok(number),
@@ -507,6 +506,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     fn number_expression(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
