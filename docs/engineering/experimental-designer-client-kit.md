@@ -734,3 +734,54 @@ It does not download a CA, modify the system trust store, or inherit TLS-disable
 switches. Missing or invalid paths refuse before package execution. Unset or
 `0` keeps CA overrides excluded; any other opt-in value refuses. Only use this
 option for a CA file whose existing trust and provenance have been verified.
+
+## Cell styles (#815, first slice)
+
+`setCellStyle(expectedRevision, collection, entities, fields, changes)` applies
+`entities × fields` atomically, including blank cells. Use stable record and
+field IDs in selection order. The equivalent `trackerCommand` request is:
+
+```ts
+{
+  type: "set_cell_style",
+  expected_revision: revision,
+  collection,
+  entities: selectedRecordIds,
+  fields: selectedFieldIds,
+  changes: [
+    {kind: "toggle_bold"},
+    {kind: "italic", value: true},
+    {kind: "fill", color: "#FFFF00"},
+  ],
+}
+```
+
+`CellStyleChange` also accepts `{kind: "bold", value: boolean}`,
+`{kind: "toggle_italic"}` and `{kind: "fill", color: null}`. False removes bold
+or italic; null clears fill, including a column-inherited fill, while preserving
+other records' current appearance. Changes run in array order. A toggle clears
+its attribute when every selected cell has it, otherwise it sets the whole
+selection. Colours use ADR-0049's canonical `#RRGGBB` spelling with uppercase hex.
+
+One call makes one presentation-only revision and one Undo/Redo step. It changes
+no values, formulas or calculations. Publication sets `many: true`; re-query the
+visible window. Table/window rows expose optional `styles` in column order,
+using the same style shape as imported rows (`bold`, optional `italic`, `fill`,
+`wrap`, `border`, `alignment`, `number_format`). Fill in this projection keeps the
+imported shape's hex spelling without `#`. Omitted `styles` means default styles;
+omitted `italic` means false. Styles belong to record/field identities, follow a
+view sort and persist in v3 project trees and portable `.ro` files.
+
+Failures leave revision, presentation and history unchanged. Codes include
+`invalid_style_color`, `read_only_table` for a collection outside the kit's row
+authoring/imported-table profiles, `missing_collection`, `unknown_entity`,
+`unknown_view_field`, `stale_revision`, `no_change`, `capacity_exceeded` and
+`style_capacity_exceeded` (palette limit). The runtime has no separate table-lock
+setting; this command uses its existing authoring profiles and publication
+authority.
+
+This is the brief-authorized first slice: bold, italic, fill, read projection,
+persistence and history. Border editing and complete edited-style XLSX export
+(including italic and exact border sides) remain the next slice. This slice does
+not complete #815's border/export acceptance case. Sheet owns toolbar controls,
+shortcuts and selection; the kit owns style state and toggle semantics.

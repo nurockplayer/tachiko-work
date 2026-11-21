@@ -97,6 +97,7 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+mod cell_style;
 mod imported_lifecycle;
 #[cfg(test)]
 mod imported_lifecycle_tests;
@@ -107,6 +108,9 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+pub use cell_style::CellStyleChange;
+#[cfg(test)]
+mod cell_style_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod presentation_commands_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -325,6 +329,13 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         wrap: Option<bool>,
+    },
+    SetCellStyle {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+        fields: Vec<String>,
+        changes: Vec<CellStyleChange>,
     },
     SetColumnWidth {
         expected_revision: String,
@@ -1346,6 +1357,9 @@ pub struct RowProjection {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blank_fields: Vec<String>,
     pub fields: Vec<FieldProjection>,
+    /// Resolved stored styles in column order, shared with imported rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<interop_adapter::CellStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1953,6 +1967,12 @@ pub enum DesignerError {
     },
     #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("fill must be '#' followed by six uppercase hexadecimal digits")]
+    InvalidStyleColor,
+    #[error("collection '{collection}' is read-only for cell styles")]
+    ReadOnlyStyleTable { collection: String },
+    #[error("cell style capacity exceeded: {message}")]
+    StyleCapacityExceeded { message: String },
     #[error("column width must be between 1 and 65280")]
     InvalidColumnWidth,
     #[error("date format requires a Date column")]
@@ -2116,6 +2136,9 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
+            Self::InvalidStyleColor => ("invalid_style_color", Vec::new()),
+            Self::ReadOnlyStyleTable { .. } => ("read_only_table", Vec::new()),
+            Self::StyleCapacityExceeded { .. } => ("style_capacity_exceeded", Vec::new()),
             Self::InvalidColumnWidth => ("invalid_column_width", Vec::new()),
             Self::InvalidNumberFormat { .. } | Self::InvalidDateFormat => {
                 ("invalid_number_format", Vec::new())
@@ -2440,6 +2463,10 @@ enum HistoryAction {
         commands: Vec<SemanticCommand>,
         default_collection: String,
     },
+    CellPresentation {
+        store: PresentationStore,
+        bytes: usize,
+    },
     ColumnPresentation {
         schema: SchemaId,
         field: FieldId,
@@ -2470,6 +2497,7 @@ impl HistoryAction {
                     .sum::<usize>()
                     + default_collection.len()
             }
+            Self::CellPresentation { bytes, .. } => *bytes,
             Self::ColumnPresentation { schema, field, .. } => {
                 schema.as_str().len() + field.as_str().len() + 128
             }
@@ -3895,6 +3923,19 @@ impl DesignerRuntime {
                 &field,
                 wrap,
             )?)),
+            DesignerRequest::SetCellStyle {
+                expected_revision,
+                collection,
+                entities,
+                fields,
+                changes,
+            } => Ok(DesignerResponse::Published(self.set_cell_style(
+                &expected_revision,
+                &collection,
+                &entities,
+                &fields,
+                &changes,
+            )?)),
             DesignerRequest::SetColumnWidth {
                 expected_revision,
                 collection,
@@ -4698,6 +4739,7 @@ impl DesignerRuntime {
                         id: entity.id.to_string(),
                         key: entity.key.to_string(),
                         position: None,
+                        styles: self.row_styles(spec, &entity.id),
                         blank_fields: blank_field_ids(entity, spec),
                         fields: spec
                             .columns
@@ -4781,6 +4823,7 @@ impl DesignerRuntime {
             key: entity.key.to_string(),
             position: None,
             blank_fields: blank_field_ids(entity, spec),
+            styles: self.row_styles(spec, &entity.id),
             fields,
         })
     }
@@ -8453,6 +8496,9 @@ impl DesignerRuntime {
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
+            HistoryAction::CellPresentation { store, .. } => {
+                self.apply_cell_presentation(expected, store.clone())
+            }
             HistoryAction::ColumnPresentation {
                 schema,
                 field,
@@ -9579,9 +9625,11 @@ fn admit_portable_ro(
     let verified = decode_portable_package_v1(input)?;
     let tree = verified.tree();
     let document = decode_roproj_v3(tree)?;
-    let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    let (mut candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation_from_tree(tree)?)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9620,9 +9668,9 @@ fn admit_portable_ro_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -9669,13 +9717,15 @@ fn admit_project(
         opened_from_v3,
         presentation,
     } = decode_project_bundle(input)?;
-    let (mut candidate, opened) = if opened_from_v3 {
+    let (mut candidate, mut opened) = if opened_from_v3 {
         admit_v3_document(document, occurrence_id)?
     } else {
         admit_document(document, occurrence_id)?
     };
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9711,9 +9761,9 @@ fn admit_project_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -15701,6 +15751,7 @@ mod tests {
             key: id.to_owned(),
             position: None,
             blank_fields: Vec::new(),
+            styles: Vec::new(),
             fields: vec![super::FieldProjection {
                 blank: false,
                 target: super::FieldTarget {
@@ -15726,6 +15777,7 @@ mod tests {
             key: "blank".to_owned(),
             position: None,
             blank_fields: vec!["amount".to_owned()],
+            styles: Vec::new(),
             fields: Vec::new(),
         };
         let rows = vec![

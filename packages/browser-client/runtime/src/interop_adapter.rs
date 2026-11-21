@@ -1525,6 +1525,8 @@ pub enum SourceValue {
 pub struct CellStyle {
     pub number_format: Option<String>,
     pub bold: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
     pub fill: Option<String>,
     pub wrap: bool,
     pub border: bool,
@@ -3218,6 +3220,7 @@ fn parse_styles(
         styles.push(CellStyle {
             number_format,
             bold,
+            italic: false,
             fill,
             wrap,
             border: has_border,
