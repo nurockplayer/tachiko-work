@@ -991,6 +991,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
 }
 
 // Howard Hinnant's civil-date algorithm, with an arbitrary 1970-01-01 epoch.
+#[must_use]
 pub fn days_from_civil(date: Date) -> i32 {
     let mut year = i32::from(date.year());
     let month = i32::from(date.month());
@@ -1013,6 +1014,7 @@ fn shift_date(date: Date, offset: f64) -> Result<Date, CalculationFailure> {
     if !(-719_162.0..=2_932_896.0).contains(&day) {
         return Err(CalculationFailure::NonFiniteResult);
     }
+    #[allow(clippy::cast_possible_truncation)] // Integral and bounded above.
     let day = day as i32 + 719_468;
     let era = day.div_euclid(146_097);
     let day_of_era = day - era * 146_097;
@@ -1024,7 +1026,12 @@ fn shift_date(date: Date, offset: f64) -> Result<Date, CalculationFailure> {
     let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
     let month = month_prime + if month_prime < 10 { 3 } else { -9 };
     year += i32::from(month <= 2);
-    Date::new(year as u16, month as u8, day as u8).map_err(|_| CalculationFailure::NonFiniteResult)
+    Date::new(
+        u16::try_from(year).map_err(|_| CalculationFailure::NonFiniteResult)?,
+        u8::try_from(month).map_err(|_| CalculationFailure::NonFiniteResult)?,
+        u8::try_from(day).map_err(|_| CalculationFailure::NonFiniteResult)?,
+    )
+    .map_err(|_| CalculationFailure::NonFiniteResult)
 }
 
 /// The first cell of `column`, in entity order, that already carries a failure.
