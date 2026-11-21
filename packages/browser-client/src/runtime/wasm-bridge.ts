@@ -202,6 +202,7 @@ export async function createDesignerWasmBridge(
           export: {
             revision: reply.response.payload.revision,
             bytes: projectBytes.buffer,
+            ...(reply.response.payload.import_metadata === undefined ? {} : { import_metadata: reply.response.payload.import_metadata }),
           },
         };
       } finally {
@@ -237,6 +238,7 @@ export async function createDesignerWasmBridge(
           export: {
             revision: reply.response.payload.revision,
             bytes: projectBytes.buffer,
+            ...(reply.response.payload.import_metadata === undefined ? {} : { import_metadata: reply.response.payload.import_metadata }),
           },
         };
       } finally {
@@ -286,7 +288,7 @@ export async function createDesignerWasmBridge(
           exports.tachiko_designer_project_ptr(),
           receipt.byte_length,
         ).slice().buffer;
-        return { status: "ok", export: { revision: receipt.revision, bytes } };
+        return { status: "ok", export: { revision: receipt.revision, bytes, ...(receipt.import_metadata === undefined ? {} : { import_metadata: receipt.import_metadata }) } };
       } finally {
         exports.tachiko_designer_project_release();
       }
