@@ -5911,12 +5911,15 @@ impl<'a> DisclosureDerivation<'a> {
                 // SetFieldValue command; arbitrary added fields remain closed.
                 // The formula exceptions are an authored formula update and
                 // the app-private restore of a formula the host cleared; both
-                // can only target an optional Number slot through their own
+                // can only target an optional Number or Date slot through their own
                 // commands.
                 let definition = crate::field_definition(self.before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = self.before.entities[&field.entity].fields.get(&field.field);
-                let formula_restore = definition.field_type == FieldType::Number
+                let formula_restore = matches!(
+                    definition.field_type,
+                    FieldType::Number | FieldType::Date
+                )
                     && !definition.required
                     && matches!(value, Value::Formula(_))
                     && families.contains(&OperationFamily::FormulaUpdate);
