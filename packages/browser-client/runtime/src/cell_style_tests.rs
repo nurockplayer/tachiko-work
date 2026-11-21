@@ -105,8 +105,25 @@ fn rectangle_toggle_and_each_undo_are_presentation_only_in_every_profile() {
         SessionProfile::TextCapacity,
         SessionProfile::WorkingSize,
     ] {
+        let mut document = fixture();
+        if profile == SessionProfile::TextCapacity {
+            for field in document
+                .schemas
+                .get_mut(&SchemaId::from("rows"))
+                .unwrap()
+                .fields
+                .values_mut()
+            {
+                field.field_type = FieldType::Text;
+            }
+            for entity in document.entities.values_mut() {
+                entity
+                    .fields
+                    .insert(FieldId::from("a"), Value::Text(entity.id.to_string()));
+            }
+        }
         let mut runtime =
-            DesignerRuntime::from_document_profile(fixture(), OCCURRENCE, profile).unwrap();
+            DesignerRuntime::from_document_profile(document, OCCURRENCE, profile).unwrap();
         let document = runtime.session.document().clone();
         let original = runtime.presentation.clone();
         let first = edit(
@@ -213,8 +230,8 @@ fn fill_follows_identity_through_sort_and_portable_save_reopen() {
     )
     .unwrap();
     let cleared = window(&mut reopened, &view);
-    assert!(cleared.rows[0].styles[2].fill.is_none());
-    assert!(!cleared.rows[0].styles[2].italic);
+    assert_eq!(cleared.rows[0].id, "r2");
+    assert_eq!(cleared.rows[0].styles.len(), 0);
 }
 
 fn column_fill(runtime: &mut DesignerRuntime) {
