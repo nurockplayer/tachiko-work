@@ -652,6 +652,24 @@ Deeper authority: [ADR-0020](../decisions/ADR-0020-first-class-headless-semantic
 the [Semantic API specification](../specs/semantic-api.md), and the
 [frontend/runtime boundary](../architecture/frontend-backend-boundary.md).
 
+## Recovering imported worksheet mappings
+
+After losing an imported worksheet add/rename/delete or Undo/Redo reply, call
+`inspectCurrentProject()`. It sends the resident `inspect_project` command
+through the ordinary native/WASM request bridge and returns a
+`ProjectInspectionProjection`: the current `revision` and optional
+`import_metadata`. Use that mapping with the returned revision for
+`exportSpreadsheet`, and persist it alongside the project for later reopen.
+The read does not mutate or replace the occurrence and needs no saved bytes
+or caller-held mapping. It works in ordinary and working-size sessions.
+
+The mapping is present once this occurrence has published an imported worksheet
+lifecycle mapping, including after Undo restores the original mapping. It is
+omitted for untouched imports and non-imported projects. Existing replies are
+unchanged. `inspectProject(bytes)` and `inspectImportedProject(bytes, metadata)`
+still inspect saved candidates in a temporary occurrence; use
+`inspectCurrentProject()` to recover the current resident mapping instead.
+
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is

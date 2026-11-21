@@ -20,6 +20,13 @@ export type BootstrapProjection = {
   keyed_grouped_sum_definition_ids?: string[];
 };
 
+/** Current resident state; saved-byte inspection remains a separate operation. */
+export type ProjectInspectionProjection = {
+  revision: string;
+  /** Present after an imported worksheet lifecycle publication, including Undo. */
+  import_metadata?: InteropMetadata;
+};
+
 /** `projection_bytes` refuses an import and `saved_bytes` a whole-session save; neither is a counted resource. */
 export type CapacityLimits = Record<
   Exclude<CapacityLimitName, "projection_bytes" | "saved_bytes" | "source_bytes" | "expanded_bytes" | "xml_nodes" | "serialized_source_bytes" | "output_bytes">,
@@ -658,6 +665,7 @@ export type DesignerRequest =
   | { type: "delete_table"; expected_revision: string; collection: string }
   | { type: "add_table"; expected_revision: string; name: string; columns: NewTableColumnInput[] }
   | { type: "bootstrap"; occurrence_id: string }
+  | { type: "inspect_project" }
   | { type: "query_capacity"; expected_revision?: string }
   | { type: "query_table"; collection: string }
   | {
@@ -755,6 +763,7 @@ export type DesignerResponse =
   | {type: "imported_window"; payload: ImportedWindowProjection}
   | {type: "spreadsheet_exported"; payload: {revision: string; byte_length: number; ledger: FidelityFinding[]}}
   | { type: "bootstrap"; payload: BootstrapProjection }
+  | { type: "project_inspected"; payload: ProjectInspectionProjection }
   | { type: "capacity"; payload: CapacityProjection }
   | { type: "opened"; payload: OpenedProjection }
   | { type: "opened_window"; payload: OpenedWindowProjection }

@@ -228,6 +228,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "inspectSpreadsheet",
     "importSpreadsheet",
     "importSpreadsheetWorkingSize",
+    "inspectCurrentProject",
     "inspectImportedProject",
     "inspectImportedProjectWorkingSize",
     "openImportedProjectWorkingSize",

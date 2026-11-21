@@ -4,6 +4,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Resident project inspection (`inspectCurrentProject`) recovers the current
+  imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
+  callers can export without reopening. The optional mapping is omitted for
+  untouched imports and non-imported projects; existing replies stay unchanged
+  (#870).
+
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes
   for large selections (#839).

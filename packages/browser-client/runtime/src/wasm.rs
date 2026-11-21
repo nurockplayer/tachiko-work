@@ -1335,6 +1335,9 @@ mod import_capacity_tests;
 mod selection_statistics_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod imported_inspection_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod row_rank_parity_tests {
     use super::{
         PROJECT, REQUEST, RESPONSE, tachiko_designer_portable_ro_open,
