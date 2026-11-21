@@ -136,6 +136,8 @@ pub enum FormatError {
     UnsupportedFieldOrder,
     #[error("this frozen representation does not support row rank; use .roproj/v3")]
     UnsupportedRowRank,
+    #[error("this frozen representation does not support Auto fields; use .roproj/v3")]
+    UnsupportedAutoField,
     #[error("'{}' already exists; refusing to overwrite it", path.display())]
     AlreadyExists { path: PathBuf },
     #[error(
@@ -609,6 +611,7 @@ fn map_v1_encode_error(error: legacy_direct_ro::v1::CodecError) -> FormatError {
 fn map_v2_decode_error(error: V2CodecError) -> FormatError {
     match error {
         V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
+        V2CodecError::UnsupportedAutoField => FormatError::UnsupportedAutoField,
         V2CodecError::Json(source) => FormatError::InvalidRepresentation {
             message: source.to_string(),
             source: Some(source),
@@ -623,6 +626,7 @@ fn map_v2_decode_error(error: V2CodecError) -> FormatError {
 fn map_v2_encode_error(error: V2CodecError) -> FormatError {
     match error {
         V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
+        V2CodecError::UnsupportedAutoField => FormatError::UnsupportedAutoField,
         V2CodecError::Json(source) => FormatError::Json(source),
         V2CodecError::InvalidRepresentation(message) => FormatError::InvalidRepresentation {
             message,
