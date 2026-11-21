@@ -301,7 +301,16 @@ fn imported_styles_are_promoted_edited_saved_and_exported_in_both_profiles() {
         let saved = runtime
             .export_portable_ro(runtime.current_revision())
             .unwrap();
-        let (reopened, _) = crate::admit_portable_ro(&saved.bytes, OCCURRENCE).unwrap();
+        let metadata = saved.import_metadata.unwrap();
+        let reopened = if working {
+            crate::admit_imported_project_working_size(&saved.bytes, OCCURRENCE, &metadata)
+                .unwrap()
+                .0
+        } else {
+            crate::admit_imported_project(&saved.bytes, OCCURRENCE, &metadata)
+                .unwrap()
+                .0
+        };
         let workbook = reopened
             .export_workbook(reopened.current_revision(), &metadata)
             .unwrap();
