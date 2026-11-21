@@ -1528,10 +1528,7 @@ pub enum SourceValue {
     },
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "Independent style attributes are part of the serialized interop shape"
-)]
+#[allow(clippy::struct_excessive_bools)] // Independent attributes are part of the serialized interop shape.
 pub struct CellStyle {
     pub number_format: Option<String>,
     pub bold: bool,
