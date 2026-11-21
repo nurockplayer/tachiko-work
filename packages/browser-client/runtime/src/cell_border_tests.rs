@@ -274,7 +274,19 @@ fn imported_styles_are_promoted_edited_saved_and_exported_in_both_profiles() {
             .iter()
             .map(|column| &column.field_id)
             .collect();
-        let entities: Vec<_> = sheet.rows.iter().map(|row| &row.entity_id).collect();
+        let revision = runtime.current_revision().to_owned();
+        let window = runtime
+            .query_table_window(
+                &revision,
+                &sheet.schema_id,
+                &TableView::default(),
+                0,
+                3,
+                false,
+            )
+            .unwrap();
+        assert_eq!(window.rows.len(), 3);
+        let entities: Vec<_> = window.rows.iter().map(|row| &row.id).collect();
         let before = runtime.presentation.clone();
         let request = serde_json::from_value(json!({
             "type":"set_cell_style", "expected_revision":runtime.current_revision(),
