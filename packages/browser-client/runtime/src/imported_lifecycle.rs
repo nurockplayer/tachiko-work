@@ -84,6 +84,9 @@ impl DesignerRuntime {
         // No imported state is attached to this disposable runtime, so its
         // publication cannot recursively preflight another metadata reply.
         let mut response = publish(&mut candidate)?;
+        if candidate.profile == crate::SessionProfile::WorkingSize {
+            response = candidate.with_changed_cells(response);
+        }
         let publication = match &mut response {
             DesignerResponse::Published(publication) => publication,
             DesignerResponse::Duplicated(duplicated) => &mut duplicated.publication,

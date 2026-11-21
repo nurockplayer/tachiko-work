@@ -6,6 +6,17 @@ mod evaluation;
 mod parser;
 mod partitioned;
 
+/// Test-only counts of actual full calculation executions on this thread.
+#[cfg(feature = "test-instrumentation")]
+#[doc(hidden)]
+pub mod test_instrumentation {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub static FULL_CALCULATION_RUNS: Cell<usize> = const { Cell::new(0) };
+    }
+}
+
 pub use partitioned::PartitionedMap;
 use partitioned::PartitionedSet;
 
@@ -2011,6 +2022,8 @@ type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
+    #[cfg(feature = "test-instrumentation")]
+    test_instrumentation::FULL_CALCULATION_RUNS.with(|runs| runs.set(runs.get() + 1));
     let (nodes, formulas, graph) = collect_calculation_nodes(document);
     let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &graph, &mut failures);

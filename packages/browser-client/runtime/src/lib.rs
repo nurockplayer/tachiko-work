@@ -260,6 +260,7 @@ pub struct SelectionStatisticsRange {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DesignerRequest {
+    InspectProject,
     Bootstrap {
         occurrence_id: String,
     },
@@ -558,6 +559,7 @@ pub enum DesignerRequest {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
+    ProjectInspected(ProjectInspectionProjection),
     Bootstrap(BootstrapProjection),
     Capacity(CapacityProjection),
     Opened(Box<OpenedProjection>),
@@ -593,6 +595,14 @@ pub enum DesignerResponse {
 pub struct OpenedProjection {
     pub bootstrap: BootstrapProjection,
     pub table: TableProjection,
+}
+
+/// Read-only inspection of the resident occurrence, without admitting saved bytes.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ProjectInspectionProjection {
+    pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<InteropMetadata>,
 }
 
 /// A profile a host can ask for. Serialized `"working_size"`.
@@ -1810,16 +1820,20 @@ pub struct DuplicateCollectionProjection {
 }
 
 /// One exact-revision canonical project prepared for a host durability commit.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProjectExport {
     pub revision: String,
     pub bytes: Vec<u8>,
+    /// Host-held companion; never part of the canonical tree or portable bytes.
+    pub import_metadata: Option<InteropMetadata>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ProjectExportProjection {
     pub revision: String,
     pub byte_length: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<InteropMetadata>,
 }
 
 /// An app-private transfer record containing every exact canonical v1 file.
@@ -2400,6 +2414,8 @@ pub struct DesignerRuntime {
     /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
     imported: Option<imported_lifecycle::ImportedState>,
+    /// Remains true after Undo restores the untouched mapping.
+    import_metadata_published: bool,
 }
 
 /// Most bytes a working-size session's undo and redo history holds together.
@@ -3382,6 +3398,7 @@ impl DesignerRuntime {
             presentation: PresentationStore::default(),
             presentation_saved_bytes: 0,
             imported: None,
+            import_metadata_published: false,
         };
         Ok(runtime)
     }
@@ -4050,6 +4067,16 @@ impl DesignerRuntime {
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
             }
+            DesignerRequest::InspectProject => Ok(DesignerResponse::ProjectInspected(
+                ProjectInspectionProjection {
+                    revision: self.current_revision().to_owned(),
+                    import_metadata: self
+                        .imported
+                        .as_ref()
+                        .filter(|_| self.import_metadata_published)
+                        .map(|state| state.metadata.clone()),
+                },
+            )),
             DesignerRequest::QueryCapacity { expected_revision } => {
                 if let Some(expected) = expected_revision {
                     self.check_revision(&expected)?;
@@ -4487,6 +4514,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -4517,6 +4545,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -4584,6 +4613,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -7894,6 +7924,7 @@ impl DesignerRuntime {
         }
         let mut publication = self.published_projection(&invalidation);
         if mapping_changed {
+            self.import_metadata_published = true;
             publication.import_metadata =
                 self.imported.as_ref().map(|state| state.metadata.clone());
         }
@@ -9786,7 +9817,7 @@ pub(crate) fn admit_imported_project(
         document,
         opened_from_v3,
         presentation,
-    } = decode_project_bundle(input)?;
+    } = decode_imported_project(input, DecodeProfile::Admitted)?;
     if opened_from_v3 {
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
@@ -9866,7 +9897,7 @@ pub(crate) fn admit_imported_project_working_size(
         document,
         opened_from_v3,
         presentation,
-    } = decode_project_bundle_working_size(input)?;
+    } = decode_imported_project(input, DecodeProfile::WorkingSize)?;
     capacity::check_working_saved_bytes(
         &document,
         save_size::presentation_saved_bytes(&presentation)?,
@@ -10297,6 +10328,23 @@ enum DecodeProfile {
     /// rectangle.
     Admitted,
     WorkingSize,
+}
+
+fn decode_imported_project(
+    input: &[u8],
+    profile: DecodeProfile,
+) -> Result<DecodedProject, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(b"PK\x03\x04") {
+        let verified = decode_portable_package_v1(input)?;
+        let tree = verified.tree();
+        return Ok(DecodedProject {
+            document: decode_roproj_v3(tree)?,
+            opened_from_v3: true,
+            presentation: presentation_from_tree(tree)?,
+        });
+    }
+    decode_project_bundle_for(input, profile)
 }
 
 fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> {

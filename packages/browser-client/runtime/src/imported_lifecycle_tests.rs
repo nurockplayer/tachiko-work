@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use tachiko_storage::{decode_portable_package_v1, encode_roproj_v3};
+use tachiko_storage::{decode_portable_package_v1, encode_portable_package_v1, encode_roproj_v3};
 use tachiko_workspace_engine::Document;
 
 use crate::interop_adapter::{
@@ -9,13 +9,13 @@ use crate::interop_adapter::{
 };
 use crate::{
     DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, NewTableColumnInput, import_workbook,
-    import_workbook_working_size, open_imported_project, open_project,
+    ImportSelection, InteropMetadata, NewTableColumnInput, ProjectInspectionProjection,
+    import_workbook, import_workbook_working_size, open_imported_project, open_project,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000859";
 
-fn fixture(formula: bool) -> SourceWorkbook {
+pub(super) fn fixture(formula: bool) -> SourceWorkbook {
     SourceWorkbook {
         ledger: Vec::new(),
         sheets: ["Input", "Scratch"]
@@ -42,7 +42,7 @@ fn fixture(formula: bool) -> SourceWorkbook {
     }
 }
 
-fn selection() -> ImportSelection {
+pub(super) fn selection() -> ImportSelection {
     ImportSelection {
         column_types: vec![vec![ImportFieldType::Number]; 2],
         extra_columns: vec![vec![]; 2],
@@ -54,6 +54,63 @@ fn imported(formula: bool) -> (DesignerRuntime, InteropMetadata) {
     let source = import_xlsx(&export_xlsx(&fixture(formula)).unwrap()).unwrap();
     let (runtime, projection) = import_workbook(&source, &selection(), OCCURRENCE).unwrap();
     (runtime, projection.metadata)
+}
+
+fn inspect_current(runtime: &mut DesignerRuntime) -> ProjectInspectionProjection {
+    let DesignerResponse::ProjectInspected(inspection) =
+        runtime.handle(DesignerRequest::InspectProject).unwrap()
+    else {
+        panic!("expected resident project inspection");
+    };
+    inspection
+}
+
+#[test]
+fn inspect_recovers_lost_rename_mapping_for_xlsx_export() {
+    let (mut runtime, _) = imported(false);
+    let published = runtime
+        .rename_table("resident/0", "sheet_1", "Renamed Input")
+        .unwrap();
+    let inspection = inspect_current(&mut runtime);
+    assert_eq!(inspection.revision, "resident/1");
+    assert_eq!(inspection.import_metadata, published.import_metadata);
+    let recovered = inspection.import_metadata.unwrap();
+    let workbook = import_xlsx(&xlsx(&runtime, &recovered)).unwrap();
+    assert_eq!(workbook.sheets.len(), 2);
+    assert_eq!(workbook.sheets[0].name, "Renamed Input");
+}
+
+#[test]
+fn inspect_recovers_post_undo_mapping_for_xlsx_export() {
+    let (mut runtime, original) = imported(false);
+    runtime
+        .rename_table("resident/0", "sheet_1", "Renamed Input")
+        .unwrap();
+    let undone = runtime.history_edit("resident/1", false).unwrap();
+    let inspection = inspect_current(&mut runtime);
+    assert_eq!(inspection.revision, "resident/2");
+    assert_eq!(inspection.import_metadata, undone.import_metadata);
+    assert_eq!(inspection.import_metadata.as_ref(), Some(&original));
+    let workbook = import_xlsx(&xlsx(&runtime, &inspection.import_metadata.unwrap())).unwrap();
+    assert_eq!(workbook.sheets[0].name, "Input");
+}
+
+#[test]
+fn inspect_omits_mapping_and_preserves_untouched_import_and_native_replies() {
+    let (mut runtime, _) = imported(false);
+    let before = snapshot(&runtime);
+    let bootstrap = serde_json::to_vec(&runtime.bootstrap_projection()).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&inspect_current(&mut runtime)).unwrap(),
+        br#"{"revision":"resident/0"}"#,
+    );
+    assert_eq!(
+        serde_json::to_vec(&runtime.bootstrap_projection()).unwrap(),
+        bootstrap
+    );
+    assert_eq!(snapshot(&runtime), before);
+    let mut native = DesignerRuntime::moonfall(OCCURRENCE).unwrap();
+    assert!(inspect_current(&mut native).import_metadata.is_none());
 }
 
 fn columns() -> Vec<NewTableColumnInput> {
@@ -360,7 +417,7 @@ fn assert_recalculation(runtime: &mut DesignerRuntime, metadata: &InteropMetadat
 }
 
 #[test]
-fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
+fn imported_lifecycle_export_companion_reopens_and_exports_bound_formulas() {
     let (mut runtime, _) = imported(false);
     let added = add(&mut runtime);
     add_formula(&mut runtime, &added);
@@ -386,17 +443,24 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
             .unwrap()
             .contains("'Renamed Input'!$A$2")
     );
-    let ro = runtime.export_portable_ro("resident/5").unwrap().bytes;
-    let verified = decode_portable_package_v1(&ro).unwrap();
+    let portable = runtime.export_portable_ro("resident/5").unwrap();
+    let companion = portable.import_metadata.unwrap();
+    assert_eq!(companion, metadata);
+    let verified = decode_portable_package_v1(&portable.bytes).unwrap();
     let tree = verified.tree();
     let manifest: serde_json::Value =
         serde_json::from_slice(tree.file("manifest.json").unwrap()).unwrap();
     assert!(manifest.get("import_metadata").is_none());
-    let project =
-        crate::encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
-            .unwrap();
+    let saved = runtime.export_project_v3("resident/5").unwrap();
+    assert_eq!(saved.import_metadata.as_ref(), Some(&companion));
     let mut reopened = None;
-    let opened = open_imported_project(&mut reopened, &project, &metadata, OCCURRENCE).unwrap();
+    open_imported_project(&mut reopened, &saved.bytes, &companion, OCCURRENCE).unwrap();
+    assert_eq!(
+        names(reopened.as_ref().unwrap()),
+        ["Renamed Input", "A Added"]
+    );
+    let opened =
+        open_imported_project(&mut reopened, &portable.bytes, &companion, OCCURRENCE).unwrap();
     assert_eq!(
         opened
             .bootstrap
@@ -408,6 +472,13 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
     );
     let mut reopened = reopened.unwrap();
     assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
+    assert_eq!(
+        reopened
+            .export_portable_ro("resident/0")
+            .unwrap()
+            .import_metadata,
+        Some(companion)
+    );
     let extra = reopened
         .add_table("resident/0", "Z Extra", &columns())
         .unwrap();
@@ -421,6 +492,50 @@ fn imported_lifecycle_published_mapping_reopens_and_exports_bound_formulas() {
     let (mut from_xlsx, projection) = import_workbook(&book, &selection(), OCCURRENCE).unwrap();
     assert_eq!(names(&from_xlsx), ["sheet_1", "sheet_2"]);
     assert_recalculation(&mut from_xlsx, &projection.metadata);
+}
+
+#[test]
+fn untouched_import_and_old_portable_bytes_stay_exact() {
+    let (runtime, metadata) = imported(false);
+    let tree = encode_roproj_v3(runtime.session.document()).unwrap();
+    let old_ro = encode_portable_package_v1(&tree).unwrap();
+    let exported = runtime.export_portable_ro("resident/0").unwrap();
+    assert_eq!(exported.bytes, old_ro);
+    assert_eq!(exported.import_metadata.as_ref(), Some(&metadata));
+    let mut reopened = None;
+    crate::open_portable_ro(&mut reopened, &old_ro, OCCURRENCE).unwrap();
+    let native_export = reopened.unwrap().export_portable_ro("resident/0").unwrap();
+    assert_eq!(native_export.bytes, old_ro);
+    assert!(native_export.import_metadata.is_none());
+    let receipt = crate::ProjectExportProjection {
+        revision: native_export.revision,
+        byte_length: native_export.bytes.len(),
+        import_metadata: native_export.import_metadata,
+    };
+    assert!(
+        serde_json::to_value(receipt)
+            .unwrap()
+            .get("import_metadata")
+            .is_none()
+    );
+}
+
+#[test]
+fn working_size_companion_reopens_portable_with_source_order() {
+    let source = import_xlsx(&export_xlsx(&fixture(false)).unwrap()).unwrap();
+    let (mut runtime, _) = import_workbook_working_size(&source, &selection(), OCCURRENCE).unwrap();
+    add(&mut runtime);
+    runtime
+        .rename_table("resident/1", "sheet_1", "Renamed Input")
+        .unwrap();
+    runtime.delete_table("resident/2", "sheet_2").unwrap();
+    let exported = runtime.export_portable_ro("resident/3").unwrap();
+    let companion = exported.import_metadata.unwrap();
+    let (reopened, _) =
+        crate::admit_imported_project_working_size(&exported.bytes, OCCURRENCE, &companion)
+            .unwrap();
+    assert_eq!(names(&reopened), ["Renamed Input", "A Added"]);
+    assert_eq!(xlsx(&reopened, &companion), xlsx(&runtime, &companion));
 }
 
 #[test]
@@ -597,6 +712,106 @@ fn imported_oversized_publication_refuses_before_mutation_and_history() {
         Err(crate::DesignerError::ProjectionTooLarge { .. })
     ));
     assert_eq!(runtime.current_revision(), "resident/1");
+    assert_eq!(snapshot(runtime), before);
+    assert_eq!(runtime.undo.len(), 1);
+    assert!(runtime.redo.is_empty());
+}
+
+#[test]
+fn working_size_changed_cells_refuse_oversized_undo_before_mutation() {
+    let mut source = fixture(false);
+    source.sheets[1].rows[0][0].value = SourceValue::Text {
+        value: "x".repeat(30_000),
+    };
+    let mut types = selection();
+    types.column_types[1][0] = ImportFieldType::Text;
+    let (runtime, projection) = import_workbook_working_size(&source, &types, OCCURRENCE).unwrap();
+    let mut metadata = projection.metadata;
+    metadata.version = 1;
+    for sheet in &mut metadata.sheets {
+        sheet.rows = runtime
+            .session
+            .document()
+            .entities
+            .values()
+            .filter(|entity| entity.schema.as_str() == sheet.schema_id)
+            .map(|entity| crate::interop_document::InteropRowMetadata {
+                entity_id: entity.id.to_string(),
+                styles: vec![CellStyle::default()],
+            })
+            .collect();
+    }
+    let target = crate::MAX_TEXT_CAPACITY_PROJECTION_BYTES - 15_000;
+    let style = CellStyle {
+        number_format: Some("0".repeat(crate::MAX_PROFILE_STRING_BYTES)),
+        ..CellStyle::default()
+    };
+    let count = target / crate::MAX_PROFILE_STRING_BYTES;
+    for _ in 0..count {
+        let rows = &mut metadata.sheets[1].rows;
+        rows.push(crate::interop_document::InteropRowMetadata {
+            entity_id: format!("historical_{}", rows.len()),
+            styles: vec![style.clone()],
+        });
+    }
+    while crate::serialized_projection_bytes(&metadata).unwrap()
+        > target + crate::MAX_PROFILE_STRING_BYTES
+    {
+        metadata.sheets[1].rows.pop();
+    }
+    let excess = crate::serialized_projection_bytes(&metadata).unwrap() - target;
+    let format = metadata.sheets[1].rows.last_mut().unwrap().styles[0]
+        .number_format
+        .as_mut()
+        .unwrap();
+    format.truncate(format.len() - excess);
+    let project = runtime.export_project_v3("resident/0").unwrap().bytes;
+    let (mut runtime, _) =
+        crate::admit_imported_project_working_size(&project, OCCURRENCE, &metadata).unwrap();
+    runtime.delete_table("resident/0", "sheet_2").unwrap();
+    let before = snapshot(&runtime);
+    let entry = runtime.undo.last().unwrap().clone();
+    let result = runtime.preflight_imported_reply(&metadata, |candidate| {
+        let mut detached = entry;
+        detached.imported = None;
+        candidate.undo.push(detached);
+        let mut publication = candidate.history_edit("resident/0", false).unwrap();
+        publication.import_metadata = Some(metadata.clone());
+        let response = DesignerResponse::Published(publication);
+        assert!(
+            crate::ensure_wire_reply_size(
+                &crate::DesignerWireReply::Ok {
+                    response: response.clone()
+                },
+                candidate.profile,
+            )
+            .is_ok()
+        );
+        assert!(
+            crate::ensure_wire_reply_size(
+                &crate::DesignerWireReply::Ok {
+                    response: candidate.with_changed_cells(response.clone())
+                },
+                candidate.profile,
+            )
+            .is_err()
+        );
+        Ok(response)
+    });
+    assert!(matches!(
+        result,
+        Err(crate::DesignerError::ProjectionTooLarge { .. })
+    ));
+    let mut resident = Some(runtime);
+    let request = serde_json::to_vec(&DesignerRequest::Undo {
+        expected_revision: "resident/1".into(),
+    })
+    .unwrap();
+    let reply: crate::DesignerWireReply =
+        serde_json::from_slice(&crate::process_wire_request(&mut resident, &request)).unwrap();
+    assert!(matches!(reply, crate::DesignerWireReply::Error { error }
+        if error.code == "query_too_large" && error.current_revision == "resident/1"));
+    let runtime = resident.as_ref().unwrap();
     assert_eq!(snapshot(runtime), before);
     assert_eq!(runtime.undo.len(), 1);
     assert!(runtime.redo.is_empty());

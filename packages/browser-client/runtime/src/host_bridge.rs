@@ -428,6 +428,7 @@ impl DesignerHost {
                         response: response(ProjectExportProjection {
                             revision: export.revision,
                             byte_length,
+                            import_metadata: export.import_metadata,
                         }),
                     }),
                     bytes: Some(export.bytes),
@@ -1057,6 +1058,7 @@ impl IntoProjectExport for crate::CanonicalTreeExport {
         crate::ProjectExport {
             revision: self.revision,
             bytes: self.bytes,
+            import_metadata: None,
         }
     }
 }

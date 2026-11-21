@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use tachiko_formula_engine::test_instrumentation::FULL_CALCULATION_RUNS;
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation, style_id};
 use tachiko_workspace_engine::{
     CellStyle, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
@@ -80,7 +81,15 @@ fn open_reuses_calculation_without_changing_the_three_calculation_path() {
         let sources = super::formula_sources(&document).unwrap();
         let scope = super::document_scope(OCCURRENCE, &document).unwrap();
         let old = super::ResidentWorkspaceSession::new(scope, document.clone());
+        // Count actual executions only during open, excluding the comparison
+        // path above; per-session measurements cannot see discarded work.
+        let before_open = FULL_CALCULATION_RUNS.with(std::cell::Cell::get);
         let runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+        assert_eq!(
+            FULL_CALCULATION_RUNS.with(std::cell::Cell::get) - before_open,
+            1,
+            "opening a resident document must calculate exactly once"
+        );
         assert_eq!(runtime.formula_sources, sources);
         assert_eq!(runtime.session.export_snapshot(), old.export_snapshot());
         assert_eq!(

@@ -1672,7 +1672,7 @@ fn collect_entity_projection_changes(
                     changes.unaddressable_calculation_change = true;
                 }
 
-                instrumentation::record_publication_fields_inspected(
+                instrumentation::record_publication_field_slots_enumerated(
                     u64::try_from(field_ids.len()).unwrap_or(u64::MAX),
                 );
                 for field_id in field_ids {
@@ -1763,7 +1763,7 @@ fn collect_schema_projection_changes(
             .collect::<BTreeSet<_>>();
 
         for field_id in field_ids {
-            instrumentation::record_publication_fields_inspected(1);
+            instrumentation::record_publication_field_slots_enumerated(1);
             let before_definition = before_schema.and_then(|schema| schema.fields.get(&field_id));
             let after_definition = after_schema.and_then(|schema| schema.fields.get(&field_id));
             if before_definition == after_definition {
@@ -1789,7 +1789,7 @@ fn collect_schema_projection_changes(
             };
             for entity_id in entity_ids {
                 let entity_id = *entity_id;
-                instrumentation::record_publication_fields_inspected(1);
+                instrumentation::record_publication_field_slots_enumerated(1);
                 let before_has_field = before.entities.get(entity_id).is_some_and(|entity| {
                     entity.schema == schema_id && entity.fields.contains_key(&field_id)
                 });
@@ -1830,7 +1830,7 @@ fn collect_diagnostic_projection_changes(
         .keys()
         .chain(after_diagnostics.keys())
         .collect::<BTreeSet<_>>();
-    instrumentation::record_publication_fields_inspected(
+    instrumentation::record_publication_field_slots_enumerated(
         u64::try_from(field_refs.len()).unwrap_or(u64::MAX),
     );
     for field in field_refs {

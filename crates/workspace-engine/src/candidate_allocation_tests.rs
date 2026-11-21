@@ -254,6 +254,30 @@ fn resident_cell_edits_scan_only_targets() {
 }
 
 #[test]
+fn resident_scalar_edit_entity_comparisons_do_not_grow_with_row_count() {
+    for rows in [3, 300] {
+        let mut document = fixture();
+        for index in 1..rows {
+            let mut entity = document.entities["e"].clone();
+            entity.id = format!("e-{index}").into();
+            entity.key = format!("e-{index}").into();
+            document.entities.insert(entity.id.clone(), entity);
+        }
+        assert_eq!(
+            inspected_for(
+                document,
+                SemanticCommand::set_field_value(
+                    FieldRef::new("e", "text"),
+                    Value::Text("new".into()),
+                ),
+            ),
+            1,
+            "resident scalar edit at {rows} rows",
+        );
+    }
+}
+
+#[test]
 fn resident_structural_edits_scan_all_entities() {
     let base = two_entity_fixture();
     let mut added = base.entities["e"].clone();

@@ -7,6 +7,18 @@ All notable changes to Tachiko Work are documented in this file.
 - Formula calculations retain Date results for Date references and whole-day
   addition and subtraction, and publish their Date tag to browser clients (#860).
 
+- Resident project inspection (`inspectCurrentProject`) recovers the current
+  imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
+  callers can export without reopening. The optional mapping is omitted for
+  untouched imports and non-imported projects; existing replies stay unchanged
+  (#870).
+
+- Imported workbook project and portable `.ro` exports return an
+  `import_metadata` companion. Imported-project open accepts that companion
+  with `.ro` bytes, retaining sheet names, source order and XLSX export after
+  add/rename/delete. CORE package bytes stay unchanged; standalone CORE-only
+  open still requires the companion for import fidelity (#869, ADR-0042 fallback).
+
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes
   for large selections (#839).

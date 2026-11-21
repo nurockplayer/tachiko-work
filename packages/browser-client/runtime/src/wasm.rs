@@ -1037,6 +1037,7 @@ pub extern "C" fn tachiko_designer_project_export() {
                                     ProjectExportProjection {
                                         revision: export.revision,
                                         byte_length,
+                                        import_metadata: export.import_metadata,
                                     },
                                 ),
                             }
@@ -1153,6 +1154,7 @@ fn export_project_bytes<E>(
                                 response: response(ProjectExportProjection {
                                     revision: export.revision,
                                     byte_length,
+                                    import_metadata: export.import_metadata,
                                 }),
                             }
                         }
@@ -1202,6 +1204,7 @@ impl IntoProjectExport for crate::CanonicalTreeExport {
         crate::ProjectExport {
             revision: self.revision,
             bytes: self.bytes,
+            import_metadata: None,
         }
     }
 }
@@ -1333,6 +1336,9 @@ mod import_capacity_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod selection_statistics_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod imported_inspection_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod row_rank_parity_tests {
