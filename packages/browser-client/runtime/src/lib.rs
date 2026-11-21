@@ -7319,9 +7319,13 @@ impl DesignerRuntime {
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
                 target.as_field_ref(),
-                match &value { Value::Number(number) => *number, _ => Number::new(0.0).expect("finite zero") },
+                match &value {
+                    Value::Number(number) => *number,
+                    _ => Number::new(0.0).expect("finite zero"),
+                },
                 self.principal.clone(),
-            ).with_restored_value(value.clone()),
+            )
+            .with_restored_value(value.clone()),
             self.clock.tick(),
         )?;
         designer_preview(
