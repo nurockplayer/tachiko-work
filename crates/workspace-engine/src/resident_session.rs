@@ -849,7 +849,7 @@ impl ResidentDerivedState {
             .filter(|(field, _)| {
                 matches!(
                     document.entities[&field.entity].fields.get(&field.field),
-                    Some(Value::Formula(_))
+                    Some(Value::Formula(_) | Value::Number(_))
                 )
             })
             .map(|(field, value)| {
