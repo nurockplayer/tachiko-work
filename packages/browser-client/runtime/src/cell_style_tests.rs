@@ -530,7 +530,37 @@ fn cell_style_rejects_projection_over_budget_before_publication() {
             },
         );
     }
-    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    document
+        .schemas
+        .get_mut(&SchemaId::from("rows"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("c"))
+        .unwrap()
+        .field_type = FieldType::Text;
+    // Find a genuinely admitted table whose projected styles exceed the budget.
+    let mut runtime = (0..=512)
+        .step_by(16)
+        .find_map(|length| {
+            let mut candidate = document.clone();
+            for entity in candidate.entities.values_mut() {
+                entity
+                    .fields
+                    .insert(FieldId::from("c"), Value::Text("x".repeat(length)));
+            }
+            let runtime = DesignerRuntime::from_document(candidate, OCCURRENCE).ok()?;
+            let mut opened = crate::OpenedProjection {
+                bootstrap: runtime.bootstrap_projection(),
+                table: runtime.query_table("rows").unwrap(),
+            };
+            for row in &mut opened.table.rows {
+                row.styles = vec![crate::interop_adapter::CellStyle::default(); 3];
+                row.styles[1].bold = true;
+            }
+            (crate::serialized_projection_bytes(&opened).unwrap() > crate::MAX_PROJECTION_BYTES)
+                .then_some(runtime)
+        })
+        .expect("fixture must fit before styling and exceed the projection budget after styling");
     let revision = runtime.current_revision().to_owned();
     let names: Vec<String> = (0..100).map(|index| format!("r{index:03}")).collect();
     let entities: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -540,10 +570,10 @@ fn cell_style_rejects_projection_over_budget_before_publication() {
         &["b"],
         &json!([{"kind":"bold","value":true}]),
     );
-    assert!(matches!(
-        result,
-        Err(DesignerError::ProjectionTooLarge { .. })
-    ));
+    assert!(
+        matches!(result, Err(DesignerError::ProjectionTooLarge { .. })),
+        "unexpected style edit result: {result:?}"
+    );
     assert_eq!(runtime.current_revision(), revision);
     let exported = runtime.export_project_v3(&revision).unwrap();
     crate::admit_project(&exported.bytes, OCCURRENCE).unwrap();
