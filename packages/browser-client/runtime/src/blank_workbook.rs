@@ -2,10 +2,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ColumnSpec, DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldId,
-    FieldKey, FieldRef, FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds,
-    ScalarEditInput, SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input,
-    native_table_row, parse_column_initializer, table_error, value_command,
+    ColumnSpec, DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey,
+    FieldRef, FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput,
+    SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input, native_table_row,
+    parse_column_initializer, table_error, value_command,
 };
 
 pub(super) fn candidate(
@@ -140,8 +140,8 @@ impl DesignerRuntime {
             let before = document.entities[&id].fields.get(&field_id).cloned();
             // No value command is needed for a new, blank optional column.
             if before != value {
-                forward.push(value_command(&target, value));
-                inverse.push(value_command(&target, before));
+                forward.push(value_command(&target, value.as_ref()));
+                inverse.push(value_command(&target, before.as_ref()));
             }
             id
         };

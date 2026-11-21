@@ -671,6 +671,7 @@ fn compare_saved_definitions(
     }
 }
 
+#[allow(clippy::too_many_lines)] // One flat comparison per canonical schema member.
 fn compare_schema(
     id: &SchemaId,
     before: &tachiko_semantic_core::Schema,

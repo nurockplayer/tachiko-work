@@ -2594,6 +2594,7 @@ fn ids_in_shard(prefix: &str, shard: usize, count: usize) -> Vec<EntityId> {
     ids
 }
 
+#[allow(clippy::too_many_lines)] // One literal research fixture.
 fn late_invalid_pressure_document(entity_count: usize) -> Document {
     assert!(entity_count >= 3);
     let ids = ids_in_shard("issue-175-late", 15, entity_count);
