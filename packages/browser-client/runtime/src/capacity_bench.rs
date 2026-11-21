@@ -545,7 +545,7 @@ fn measure_history() {
 
 fn print_report_header() {
     println!(
-        "\n| cells | rows | columns | operation | median ms | document clones | entities inspected | fields inspected | document comparisons | formula nodes | JSON bytes | output bytes | peak RSS delta MiB |"
+        "\n| cells | rows | columns | operation | median ms | document clones | entities inspected | field slots enumerated | document comparisons | formula nodes | JSON bytes | output bytes | peak RSS delta MiB |"
     );
     println!(
         "| ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
@@ -563,7 +563,7 @@ fn print_row(row: &Row) {
     let counters = sample.counters;
     let clones = counters.document_clones;
     let entities = counters.publication_entities_inspected;
-    let fields = counters.publication_fields_inspected;
+    let fields = counters.publication_field_slots_enumerated;
     let comparisons = counters.publication_document_comparisons;
     let formula_nodes = sample.formula_nodes;
     let json_bytes = counters.json_bytes_serialized;
