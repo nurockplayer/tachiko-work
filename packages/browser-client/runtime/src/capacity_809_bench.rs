@@ -127,6 +127,7 @@ fn report(step: &str, samples: &mut [Duration]) -> Duration {
 }
 
 #[test]
+#[allow(clippy::too_many_lines, clippy::assertions_on_constants)]
 #[ignore = "#809 capacity guard; run explicitly in release with --features capacity-bench"]
 fn capacity_809_formula_table() {
     assert!(!cfg!(debug_assertions), "run this guard with --release");
@@ -179,7 +180,7 @@ fn capacity_809_formula_table() {
         let DesignerResponse::TableWindow(window) = reply else {
             panic!("expected zero-row window");
         };
-        assert!(window.rows.is_empty());
+        assert_eq!(window.rows.len(), 0);
         assert_eq!(window.total_rows, ROWS);
         assert_eq!(window.revision, runtime.current_revision());
         let facts = runtime
