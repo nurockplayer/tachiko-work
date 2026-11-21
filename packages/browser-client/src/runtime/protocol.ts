@@ -593,7 +593,8 @@ export function isFormulaFailure(failure: FailureProjection): failure is Formula
 export type CellStyleChange =
   | { kind: "bold" | "italic"; value: boolean }
   | { kind: "toggle_bold" | "toggle_italic" }
-  | { kind: "fill"; color: string | null };
+  | { kind: "fill"; color: string | null }
+  | { kind: "border"; target: "top" | "right" | "bottom" | "left" | "outline" | "all"; value: boolean };
 
 export type TrackerCommand =
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }

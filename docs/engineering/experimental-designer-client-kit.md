@@ -735,7 +735,7 @@ switches. Missing or invalid paths refuse before package execution. Unset or
 `0` keeps CA overrides excluded; any other opt-in value refuses. Only use this
 option for a CA file whose existing trust and provenance have been verified.
 
-## Cell styles (#815, first slice)
+## Cell styles (#815, #889)
 
 `setCellStyle(expectedRevision, collection, entities, fields, changes)` applies
 `entities × fields` atomically, including blank cells. Use stable record and
@@ -752,6 +752,7 @@ field IDs in selection order. The equivalent `trackerCommand` request is:
     {kind: "toggle_bold"},
     {kind: "italic", value: true},
     {kind: "fill", color: "#FFFF00"},
+    {kind: "border", target: "outline", value: true},
   ],
 }
 ```
@@ -763,11 +764,24 @@ other records' current appearance. Changes run in array order. A toggle clears
 its attribute when every selected cell has it, otherwise it sets the whole
 selection. Colours use ADR-0049's canonical `#RRGGBB` spelling with uppercase hex.
 
+Borders use `{kind: "border", target, value}`. Targets are `"top"`, `"right"`,
+`"bottom"`, `"left"`, `"outline"` and `"all"`; true draws thin borders and false
+clears them. A side target applies that side to every selected cell; all applies
+all four sides. Outline changes only the selection's outer edges, using the
+supplied entity and field array order (first entity = top, first field = left).
+A single-cell outline draws all four sides. Other sides and attributes remain
+as they were, including column-inherited borders. For a fresh outline that also
+clears existing interior borders, send all/false followed by outline/true in the
+same changes array.
+
 One call makes one presentation-only revision and one Undo/Redo step. It changes
 no values, formulas or calculations. Publication sets `many: true`; re-query the
 visible window. Table/window rows expose optional `styles` in column order,
 using the same style shape as imported rows (`bold`, optional `italic`, `fill`,
-`wrap`, `border`, `alignment`, `number_format`). Fill in this projection keeps the
+`wrap`, `border`, optional `border_sides`, `alignment`, `number_format`).
+`border_sides` lists drawn `"top"`, `"right"`, `"bottom"`, `"left"` sides in that
+canonical order; `border` remains true when any side is drawn. For older source
+metadata, true without sides means a full box. Fill in this projection keeps the
 imported shape's hex spelling without `#`. Omitted `styles` means default styles;
 omitted `italic` means false. Styles belong to record/field identities, follow a
 view sort and persist in v3 project trees and portable `.ro` files.
@@ -780,8 +794,9 @@ authoring/imported-table profiles, `missing_collection`, `unknown_entity`,
 setting; this command uses its existing authoring profiles and publication
 authority.
 
-This is the brief-authorized first slice: bold, italic, fill, read projection,
-persistence and history. Border editing and complete edited-style XLSX export
-(including italic and exact border sides) remain the next slice. This slice does
-not complete #815's border/export acceptance case. Sheet owns toolbar controls,
-shortcuts and selection; the kit owns style state and toggle semantics.
+XLSX exports of native tables and imported workbooks resolve edited bold,
+italic, fill and exact border sides from the same presentation store, including
+blank styled cells. Import retains italic and individual border sides in the
+same projection. Existing export profile and capacity limits still apply.
+Sheet owns toolbar controls, shortcuts and selection; the kit owns style state
+and toggle semantics.

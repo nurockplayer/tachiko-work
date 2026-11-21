@@ -108,7 +108,9 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
-pub use cell_style::CellStyleChange;
+pub use cell_style::{CellBorderTarget, CellStyleChange};
+#[cfg(test)]
+mod cell_border_tests;
 #[cfg(test)]
 mod cell_style_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

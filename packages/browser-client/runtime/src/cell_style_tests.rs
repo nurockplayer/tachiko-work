@@ -14,7 +14,7 @@ use crate::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000815";
 
-fn fixture() -> Document {
+pub(crate) fn fixture() -> Document {
     let mut document = Document::empty("styles", "Cell styles");
     let fields = ["a", "b", "c"]
         .into_iter()
@@ -64,7 +64,7 @@ fn fixture() -> Document {
     document
 }
 
-fn edit(
+pub(crate) fn edit(
     runtime: &mut DesignerRuntime,
     entities: &[&str],
     fields: &[&str],
@@ -81,7 +81,7 @@ fn edit(
     }
 }
 
-fn history(runtime: &mut DesignerRuntime, redo: bool) {
+pub(crate) fn history(runtime: &mut DesignerRuntime, redo: bool) {
     let expected_revision = runtime.current_revision().to_owned();
     let request = if redo {
         DesignerRequest::Redo { expected_revision }
@@ -91,7 +91,10 @@ fn history(runtime: &mut DesignerRuntime, redo: bool) {
     runtime.handle(request).unwrap();
 }
 
-fn window(runtime: &mut DesignerRuntime, view: &TableView) -> crate::TableWindowProjection {
+pub(crate) fn window(
+    runtime: &mut DesignerRuntime,
+    view: &TableView,
+) -> crate::TableWindowProjection {
     let revision = runtime.current_revision().to_owned();
     runtime
         .query_table_window(&revision, "rows", view, 0, 10, true)

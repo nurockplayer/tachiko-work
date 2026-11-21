@@ -8,7 +8,9 @@ All notable changes to Tachiko Work are documented in this file.
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;
   styles follow record identity and survive v3/portable `.ro` save and reopen.
-  First slice of #815; border editing and complete edited-style XLSX export follow.
+  Border editing supports per-side, outline and all borders, set or clear, in
+  the same call (#889, #815 slice 2). XLSX exports of native tables and imported
+  workbooks write edited bold, italic, fill and exact border sides.
 
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes

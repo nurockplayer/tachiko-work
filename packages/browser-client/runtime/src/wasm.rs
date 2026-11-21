@@ -1584,3 +1584,6 @@ mod ranked_import_ingress_tests {
         tachiko_designer_project_close();
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cell_style_parity_tests;

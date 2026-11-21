@@ -1,6 +1,8 @@
 //! Identity-bound cell presentation commands; semantic values never change.
 use serde::{Deserialize, Serialize};
-use tachiko_workspace_engine::{CellStyle, EntityId, FieldId, PresentationStore, SchemaId};
+use tachiko_workspace_engine::{
+    BorderSide, CellStyle, EntityId, FieldId, PresentationStore, SchemaId,
+};
 
 use crate::{
     CollectionSpec, DesignerError, DesignerRuntime, HistoryAction, HistoryEntry,
@@ -12,11 +14,33 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CellStyleChange {
-    Bold { value: bool },
-    Italic { value: bool },
+    Bold {
+        value: bool,
+    },
+    Italic {
+        value: bool,
+    },
     ToggleBold,
     ToggleItalic,
-    Fill { color: Option<String> },
+    Fill {
+        color: Option<String>,
+    },
+    Border {
+        target: CellBorderTarget,
+        value: bool,
+    },
+}
+
+/// Border operations use the supplied row/column selection order for outline edges.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellBorderTarget {
+    Top,
+    Right,
+    Bottom,
+    Left,
+    Outline,
+    All,
 }
 
 impl DesignerRuntime {
@@ -30,19 +54,7 @@ impl DesignerRuntime {
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
         let schema = self.style_selection(collection, entities, fields)?;
-        for change in changes {
-            if let CellStyleChange::Fill { color: Some(color) } = change {
-                let bytes = color.as_bytes();
-                if bytes.len() != 7
-                    || bytes[0] != b'#'
-                    || !bytes[1..]
-                        .iter()
-                        .all(|byte| matches!(byte, b'0'..=b'9' | b'A'..=b'F'))
-                {
-                    return Err(DesignerError::InvalidStyleColor);
-                }
-            }
-        }
+        validate_style_changes(changes)?;
         let entities = entities
             .iter()
             .map(|id| EntityId::from(id.clone()))
@@ -59,13 +71,27 @@ impl DesignerRuntime {
                     self.expand_column_fill(&mut candidate, &schema, field)?;
                 }
             }
-            for entity in &entities {
-                for field in &fields {
+            for (row, entity) in entities.iter().enumerate() {
+                for (column, field) in fields.iter().enumerate() {
                     let mut style = cell_override(&candidate, entity, field);
                     match &change {
                         CellStyleChange::Bold { value } => style.bold = Some(*value),
                         CellStyleChange::Italic { value } => style.italic = Some(*value),
                         CellStyleChange::Fill { color } => style.fill.clone_from(color),
+                        CellStyleChange::Border { target, value } => {
+                            let borders = effective_borders(&candidate, &schema, entity, field);
+                            style.borders = Some(edit_borders(
+                                &borders,
+                                *target,
+                                *value,
+                                [
+                                    row == 0,
+                                    column + 1 == fields.len(),
+                                    row + 1 == entities.len(),
+                                    column == 0,
+                                ],
+                            ));
+                        }
                         CellStyleChange::ToggleBold | CellStyleChange::ToggleItalic => {
                             unreachable!()
                         }
@@ -345,4 +371,72 @@ fn compact_palette(store: &mut PresentationStore) {
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     store.styles.retain(|id, _| used.contains(id));
+}
+
+fn effective_borders(
+    store: &PresentationStore,
+    schema: &SchemaId,
+    entity: &EntityId,
+    field: &FieldId,
+) -> Vec<BorderSide> {
+    let cell = cell_override(store, entity, field);
+    cell.borders.unwrap_or_else(|| {
+        store
+            .tables
+            .get(schema)
+            .and_then(|table| table.column_styles.get(field))
+            .and_then(|id| store.styles.get(id))
+            .and_then(|style| style.borders.clone())
+            .unwrap_or_default()
+    })
+}
+
+fn edit_borders(
+    current: &[BorderSide],
+    target: CellBorderTarget,
+    value: bool,
+    edges: [bool; 4],
+) -> Vec<BorderSide> {
+    [
+        BorderSide::Top,
+        BorderSide::Right,
+        BorderSide::Bottom,
+        BorderSide::Left,
+    ]
+    .into_iter()
+    .enumerate()
+    .filter_map(|(index, side)| {
+        let selected = match target {
+            CellBorderTarget::Top => side == BorderSide::Top,
+            CellBorderTarget::Right => side == BorderSide::Right,
+            CellBorderTarget::Bottom => side == BorderSide::Bottom,
+            CellBorderTarget::Left => side == BorderSide::Left,
+            CellBorderTarget::Outline => edges[index],
+            CellBorderTarget::All => true,
+        };
+        (if selected {
+            value
+        } else {
+            current.contains(&side)
+        })
+        .then_some(side)
+    })
+    .collect()
+}
+
+fn validate_style_changes(changes: &[CellStyleChange]) -> Result<(), DesignerError> {
+    for change in changes {
+        if let CellStyleChange::Fill { color: Some(color) } = change {
+            let bytes = color.as_bytes();
+            if bytes.len() != 7
+                || bytes[0] != b'#'
+                || !bytes[1..]
+                    .iter()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'A'..=b'F'))
+            {
+                return Err(DesignerError::InvalidStyleColor);
+            }
+        }
+    }
+    Ok(())
 }

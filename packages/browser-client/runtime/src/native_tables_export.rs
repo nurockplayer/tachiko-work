@@ -121,7 +121,7 @@ fn exclusion_findings(ledger: &mut Vec<FidelityFinding>) {
         ),
         (
             "native_tables_sheet_presentation_excluded",
-            "Stored date formats, alignment, wrap and column widths are exported; other presentation and view sorting/filtering are excluded.",
+            "Stored bold, italic, fill, border sides, date formats, alignment, wrap and column widths are exported; other presentation and view sorting/filtering are excluded.",
         ),
     ] {
         ledger.push(finding(
