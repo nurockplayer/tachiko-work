@@ -11,6 +11,12 @@ All notable changes to Tachiko Work are documented in this file.
   delta/conflict v2 preserve it, frozen writers refuse it, and Auto formula
   entry remains explicitly unsupported (#887, #668 PR1).
 
+- Imported workbook project and portable `.ro` exports return an
+  `import_metadata` companion. Imported-project open accepts that companion
+  with `.ro` bytes, retaining sheet names, source order and XLSX export after
+  add/rename/delete. CORE package bytes stay unchanged; standalone CORE-only
+  open still requires the companion for import fidelity (#869, ADR-0042 fallback).
+
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes
   for large selections (#839).
