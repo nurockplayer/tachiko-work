@@ -292,6 +292,7 @@ fn field_type_bytes(field_type: &FieldType, indent: u64) -> u64 {
     total([
         2, // "{\n"
         match field_type {
+            FieldType::Auto => pretty_string(indent + 1, "type", "auto", false),
             FieldType::Number => pretty_string(indent + 1, "type", "number", false),
             FieldType::Text => pretty_string(indent + 1, "type", "text", false),
             FieldType::Boolean => pretty_string(indent + 1, "type", "boolean", false),

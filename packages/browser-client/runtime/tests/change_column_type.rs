@@ -552,7 +552,10 @@ fn same_type_unknown_type_and_stale_revision_refuse() {
     assert_eq!(table(&mut runtime), before);
 
     let error = change(&mut runtime, &amount, "money").expect_err("unknown type refuses");
-    assert_refusal(&error, "column type must be Text, Number, Boolean, or Date");
+    assert_refusal(
+        &error,
+        "column type must be Auto, Text, Number, Boolean, or Date",
+    );
     assert_eq!(table(&mut runtime), before);
 
     let error = runtime

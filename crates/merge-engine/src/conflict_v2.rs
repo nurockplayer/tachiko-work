@@ -9,7 +9,7 @@ use tachiko_semantic_core::{
 
 use crate::{
     ConflictFacet, ConflictFact, ConflictKind, ConflictTarget, MergeCandidate, MergeConflict,
-    MergeOutcome, MergeValue, OptionalChoice, choose, choose_optional, merge,
+    MergeOutcome, MergeValue, OptionalChoice, choose, choose_optional,
 };
 
 /// The explicitly selected constraint-aware semantic conflict contract.
@@ -305,7 +305,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     let base_v1 = without_field_orders(&without_constraints(base));
     let left_v1 = without_field_orders(&without_constraints(left));
     let right_v1 = without_field_orders(&without_constraints(right));
-    let (candidate, mut conflicts) = match merge(&base_v1, &left_v1, &right_v1) {
+    let (candidate, mut conflicts) = match super::merge_supported(&base_v1, &left_v1, &right_v1) {
         MergeOutcome::Merged(candidate) => (Some(candidate), Vec::new()),
         MergeOutcome::Conflicted(conflicts) => (
             None,
@@ -322,6 +322,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
             unreachable!("v2 rejects number formats before invoking v1")
         }
         MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
+        MergeOutcome::UnsupportedAutoField => unreachable!("v2 admits Auto fields"),
         MergeOutcome::UnsupportedRowRank => unreachable!("v2 strips ranks before invoking v1"),
         MergeOutcome::UnsupportedFieldOrder => {
             unreachable!("v2 strips field orders before invoking v1")

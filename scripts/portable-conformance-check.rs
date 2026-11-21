@@ -2262,6 +2262,7 @@ fn analysis_hash_failure(hash: &mut u64, failure: &AnalysisFailure) {
                     FieldType::Text => "text",
                     FieldType::Boolean => "boolean",
                     FieldType::Date => "date",
+                    FieldType::Auto => "auto",
                     FieldType::Reference { schema } => schema.as_str(),
                 },
             );

@@ -282,6 +282,7 @@ enum ConstraintV3 {
 }
 
 enum FieldTypeV3 {
+    Auto,
     Number,
     Text,
     Boolean,
@@ -303,6 +304,10 @@ impl<'de> Deserialize<'de> for FieldTypeV3 {
         };
 
         match field_type.as_str() {
+            "auto" => {
+                reject_unknown_field_type_members::<D>(&object, &["type"])?;
+                Ok(Self::Auto)
+            }
             "number" => {
                 reject_unknown_field_type_members::<D>(&object, &["type"])?;
                 Ok(Self::Number)
@@ -332,7 +337,7 @@ impl<'de> Deserialize<'de> for FieldTypeV3 {
             }
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["number", "text", "boolean", "date", "reference"],
+                &["auto", "number", "text", "boolean", "date", "reference"],
             )),
         }
     }
@@ -1105,6 +1110,7 @@ fn validate_text_literals(values: &[String], require_order: bool) -> Result<(), 
 impl FieldTypeV3 {
     fn into_semantic(self) -> Result<FieldType, FormatError> {
         Ok(match self {
+            Self::Auto => FieldType::Auto,
             Self::Number => FieldType::Number,
             Self::Text => FieldType::Text,
             Self::Boolean => FieldType::Boolean,
@@ -1576,6 +1582,7 @@ impl ConstraintV3 {
 impl FieldTypeV3 {
     fn from_semantic(field_type: &FieldType) -> Self {
         match field_type {
+            FieldType::Auto => Self::Auto,
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,
@@ -2016,6 +2023,7 @@ fn write_field_type(
 ) -> Result<(), FormatError> {
     output.push_str("{\n");
     match field_type {
+        FieldTypeV3::Auto => pretty_member_string(output, indent + 1, "type", "auto", false)?,
         FieldTypeV3::Number => pretty_member_string(output, indent + 1, "type", "number", false)?,
         FieldTypeV3::Text => pretty_member_string(output, indent + 1, "type", "text", false)?,
         FieldTypeV3::Boolean => pretty_member_string(output, indent + 1, "type", "boolean", false)?,

@@ -94,7 +94,7 @@ export type FieldProjection = {
   formula: { source: string } | null;
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
-  editable_scalar: "number" | "text" | "boolean" | "date" | null;
+  editable_scalar: "auto" | "number" | "text" | "boolean" | "date" | null;
   /** Sheet's display text for a Number or Date cell, present only when the window asked for it. */
   display?: string;
 };
@@ -621,7 +621,10 @@ export type TrackerCommand =
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };
 
+export type AutoDateOrder = "month_first" | "day_first";
+
 export type ScalarEditInput =
+  | { kind: "auto"; input: string; date_order?: AutoDateOrder }
   | { kind: "clear" }
   | { kind: "number"; input: string }
   | { kind: "text"; value: string }

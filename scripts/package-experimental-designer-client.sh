@@ -201,6 +201,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "querySelectionRangeStatistics",
     "editNumber",
     "editText",
+    "editAuto",
     "clearField",
     "changeColumnType",
     "setColumnRequiredness",

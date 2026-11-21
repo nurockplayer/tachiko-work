@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Auto scalar columns accept classifier-backed edits and paste with lossless
+  Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
+  Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
+  tags. Browser protocol, worker client and WASM bridge expose Auto input;
+  delta/conflict v2 preserve it, frozen writers refuse it, and Auto formula
+  entry remains explicitly unsupported (#887, #668 PR1).
+
 - Resident project inspection (`inspectCurrentProject`) recovers the current
   imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
   callers can export without reopening. The optional mapping is omitted for
