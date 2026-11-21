@@ -685,12 +685,13 @@ impl PatchLifecycle {
             };
         }
         self.require_query_for_admission(&request.originator, &disclosure, now)?;
-        let restored_value = request.restored_value.unwrap_or(Value::Number(request.value));
-        formula_inverse_restore_candidate(document, &request.target, restored_value.clone()).map_err(
-            |source| PatchLifecycleError::CommandRejected {
+        let restored_value = request
+            .restored_value
+            .unwrap_or(Value::Number(request.value));
+        formula_inverse_restore_candidate(document, &request.target, restored_value.clone())
+            .map_err(|source| PatchLifecycleError::CommandRejected {
                 source: Box::new(source),
-            },
-        )?;
+            })?;
         self.propose(
             document_scope,
             document,
@@ -699,7 +700,8 @@ impl PatchLifecycle {
                 request.proposal_id,
                 request.base_revision,
                 SemanticPatchBody::command(SemanticCommand::FormulaInverseRestore(
-                    FormulaInverseRestoreCommand::new(request.target, request.value).with_restored_value(restored_value),
+                    FormulaInverseRestoreCommand::new(request.target, request.value)
+                        .with_restored_value(restored_value),
                 )),
                 request.originator,
             ),

@@ -850,7 +850,7 @@ impl ResidentDerivedState {
                 Ok(CalculatedField {
                     field: field.clone(),
                     address: index.field_address(document, field)?,
-                    value: *value,
+                    value: super::calculated_field_number(*value),
                 })
             })
             .collect::<Result<Vec<_>, WorkspaceError>>()?;

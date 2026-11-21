@@ -461,8 +461,14 @@ impl SemanticCommand {
     }
 
     #[must_use]
-    pub fn formula_inverse_restore_typed(field: FieldRef, value: Number, restored_value: Value) -> Self {
-        Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value).with_restored_value(restored_value))
+    pub fn formula_inverse_restore_typed(
+        field: FieldRef,
+        value: Number,
+        restored_value: Value,
+    ) -> Self {
+        Self::FormulaInverseRestore(
+            FormulaInverseRestoreCommand::new(field, value).with_restored_value(restored_value),
+        )
     }
 
     /// Host-history only: the expression must be one the host read from an
@@ -838,7 +844,11 @@ pub struct FormulaInverseRestoreCommand {
 
 impl FormulaInverseRestoreCommand {
     pub(crate) fn new(target: FieldRef, value: Number) -> Self {
-        Self { target, value, restored_value: None }
+        Self {
+            target,
+            value,
+            restored_value: None,
+        }
     }
 
     #[must_use]
@@ -849,7 +859,9 @@ impl FormulaInverseRestoreCommand {
 
     #[must_use]
     pub fn restored_value(&self) -> Value {
-        self.restored_value.clone().unwrap_or(Value::Number(self.value))
+        self.restored_value
+            .clone()
+            .unwrap_or(Value::Number(self.value))
     }
 
     #[must_use]

@@ -920,12 +920,22 @@ pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, Wor
             Ok(CalculatedField {
                 field: field.clone(),
                 address: index.field_address(document, field)?,
-                value: *value,
+                value: calculated_field_number(*value),
             })
         })
         .collect::<Result<Vec<_>, WorkspaceError>>()?;
     fields.sort_by(|left, right| left.address.cmp(&right.address));
     Ok(fields)
+}
+
+fn calculated_field_number(value: tachiko_formula_engine::CalculatedValue) -> Number {
+    match value {
+        tachiko_formula_engine::CalculatedValue::Number(number) => number,
+        tachiko_formula_engine::CalculatedValue::Date(date) => {
+            Number::new(f64::from(tachiko_formula_engine::days_from_civil(date)))
+                .expect("date day number is finite")
+        }
+    }
 }
 
 /// Compare two semantic snapshots through the shared diff orchestration.
@@ -2414,8 +2424,14 @@ fn check_formula_inverse_restore_candidate(
     planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
     formula_update_target_rule(document, field)?;
-    if !value_matches_type(semantic_value_kind(value), &field_definition(document, field)?.field_type) || matches!(value, Value::Formula(_)) {
-        return Err(WorkspaceError::TypeMismatch { field: field.clone() });
+    if !value_matches_type(
+        semantic_value_kind(value),
+        &field_definition(document, field)?.field_type,
+    ) || matches!(value, Value::Formula(_))
+    {
+        return Err(WorkspaceError::TypeMismatch {
+            field: field.clone(),
+        });
     }
     let entity =
         document
