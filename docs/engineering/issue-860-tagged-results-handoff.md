@@ -1,7 +1,7 @@
 # Issue #860: Date outcome decision handoff
 
-Status: Date projection support and tagged retained value storage added; engine
-production of Date outcomes is pending.
+Status: Date evaluation, retained values, and projection implemented; publication
+acceptance and full validation remain in progress.
 Checked: 2026-11-21 19:37 JST.
 Base: `f5d3b2b59d695d95244b21647cc53bf4b302de9c`.
 
@@ -31,12 +31,13 @@ The current `CalculationProjection` serializer and deserializer require
 `value: f64`; `CalculationProjection::number()` returns it for every successful
 outcome. Numeric consumers must account for Date-tagged results.
 
-The remaining engine path is `evaluation::Evaluation::number`, Date references,
-and connecting retained tagged outcomes to `FormulaCalculationOutcome`. The
-partitioned value map now carries Number or Date; its numeric lookup currently
-exposes only Numbers. The current type surface contains only
-Number/Condition expressions and no Auto field type. Keep declared-column
-admission atomic under ADR-0047 §4; introducing Auto is outside this brief.
+The partitioned value map carries Number or Date; its numeric lookup exposes
+only Numbers. Date references, whole-day addition and subtraction, and Date
+differences recalculate through retained state. A Date or Number formula result
+must match its declared field. The current type surface has no Auto field type;
+introducing Auto is outside this brief. The existing FormulaUpdate target and
+Undo admission remains Number-only; opening Date formula authoring requires
+support for restoring the previous Date rather than losing it.
 
 Date arithmetic follows ADR-0047 §5: Date ± whole Number and Number + Date
 produce Dates, Date − Date produces Number, and fractional offsets and other
