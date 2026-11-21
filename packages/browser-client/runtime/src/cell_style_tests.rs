@@ -475,3 +475,77 @@ fn imported_styles_and_native_styles_use_the_same_projection() {
     history(&mut runtime, false);
     assert_eq!(runtime.presentation, before);
 }
+
+#[test]
+fn cell_style_fill_requires_explicit_color() {
+    let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    edit(
+        &mut runtime,
+        &["r1"],
+        &["b"],
+        &json!([{"kind":"fill","color":"#FFFF00"}]),
+    )
+    .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let request = json!({
+        "type": "set_cell_style", "expected_revision": revision,
+        "collection": "rows", "entities": ["r1"], "fields": ["b"],
+        "changes": [{"kind":"fill"}],
+    });
+    assert!(serde_json::from_value::<DesignerRequest>(request).is_err());
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(
+        window(&mut runtime, &TableView::default()).rows[0].styles[1]
+            .fill
+            .as_deref(),
+        Some("FFFF00")
+    );
+    edit(
+        &mut runtime,
+        &["r1"],
+        &["b"],
+        &json!([{"kind":"fill","color":null}]),
+    )
+    .unwrap();
+}
+
+#[test]
+fn cell_style_rejects_projection_over_budget_before_publication() {
+    let mut document = fixture();
+    document.entities.clear();
+    for index in 0..100 {
+        let name = format!("r{index:03}");
+        let id = EntityId::from(name.as_str());
+        document.entities.insert(
+            id.clone(),
+            Entity {
+                rank: None,
+                id,
+                key: EntityKey::from(name.as_str()),
+                schema: SchemaId::from("rows"),
+                fields: BTreeMap::from([(
+                    FieldId::from("a"),
+                    Value::Number(Number::new(1.0).unwrap()),
+                )]),
+            },
+        );
+    }
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let names: Vec<String> = (0..100).map(|index| format!("r{index:03}")).collect();
+    let entities: Vec<&str> = names.iter().map(String::as_str).collect();
+    let result = edit(
+        &mut runtime,
+        &entities,
+        &["b"],
+        &json!([{"kind":"bold","value":true}]),
+    );
+    assert!(matches!(
+        result,
+        Err(DesignerError::ProjectionTooLarge { .. })
+    ));
+    assert_eq!(runtime.current_revision(), revision);
+    let exported = runtime.export_project_v3(&revision).unwrap();
+    crate::admit_project(&exported.bytes, OCCURRENCE).unwrap();
+    runtime.export_portable_ro(&revision).unwrap();
+}
