@@ -12,6 +12,10 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[features]
+# Test-only execution counting for downstream regression tests.
+test-instrumentation = []
+
 [dependencies]
 tachiko-semantic-core = { version = "0.1.0", path = "../semantic-core" }
 thiserror.workspace = true

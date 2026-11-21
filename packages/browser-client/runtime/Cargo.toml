@@ -25,6 +25,7 @@ ryu-js = "1.0.3"
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+tachiko-formula-engine = { path = "../../../crates/formula-engine", features = ["test-instrumentation"] }
 tachiko-semantic-core = { path = "../../../crates/semantic-core" }
 
 [workspace]
