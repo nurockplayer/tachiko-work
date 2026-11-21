@@ -10,6 +10,12 @@ All notable changes to Tachiko Work are documented in this file.
   styles follow record identity and survive v3/portable `.ro` save and reopen.
   First slice of #815; border editing and complete edited-style XLSX export follow.
 
+- Resident project inspection (`inspectCurrentProject`) recovers the current
+  imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
+  callers can export without reopening. The optional mapping is omitted for
+  untouched imports and non-imported projects; existing replies stay unchanged
+  (#870).
+
 - Imported workbook project and portable `.ro` exports return an
   `import_metadata` companion. Imported-project open accepts that companion
   with `.ro` bytes, retaining sheet names, source order and XLSX export after

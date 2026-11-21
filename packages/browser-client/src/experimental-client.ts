@@ -23,6 +23,7 @@ import type {
   FieldTarget,
   PublicationProjection,
   CapacityProjection,
+  ProjectInspectionProjection,
 } from "./runtime/protocol.ts";
 
 export const EXPERIMENTAL_CLIENT_KIT_ID = "tachiko-designer-client-kit/v0-experimental";
@@ -39,6 +40,7 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
  * and the vendored kit makes that stronger contract explicit for consumers.
  */
 export interface ExperimentalDesignerClient extends DesignerClient {
+  inspectCurrentProject(): Promise<ProjectInspectionProjection>;
   translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation>;
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Explicit absence for one optional native Text/Number slot. */
@@ -165,6 +167,7 @@ export type { CanonicalProjectTransferEntry } from "./host/project-transfer.ts";
 export type { ImportedWindowProjection } from "./runtime/interop-protocol.ts";
 export type {
   BootstrapProjection,
+  ProjectInspectionProjection,
   CapacityFailureProjection,
   CapacityLimitName,
   CapacityLimits,
