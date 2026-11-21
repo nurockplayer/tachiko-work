@@ -603,6 +603,106 @@ fn imported_oversized_publication_refuses_before_mutation_and_history() {
 }
 
 #[test]
+fn working_size_changed_cells_refuse_oversized_undo_before_mutation() {
+    let mut source = fixture(false);
+    source.sheets[1].rows[0][0].value = SourceValue::Text {
+        value: "x".repeat(30_000),
+    };
+    let mut types = selection();
+    types.column_types[1][0] = ImportFieldType::Text;
+    let (runtime, projection) = import_workbook_working_size(&source, &types, OCCURRENCE).unwrap();
+    let mut metadata = projection.metadata;
+    metadata.version = 1;
+    for sheet in &mut metadata.sheets {
+        sheet.rows = runtime
+            .session
+            .document()
+            .entities
+            .values()
+            .filter(|entity| entity.schema.as_str() == sheet.schema_id)
+            .map(|entity| crate::interop_document::InteropRowMetadata {
+                entity_id: entity.id.to_string(),
+                styles: vec![CellStyle::default()],
+            })
+            .collect();
+    }
+    let target = crate::MAX_TEXT_CAPACITY_PROJECTION_BYTES - 15_000;
+    let style = CellStyle {
+        number_format: Some("0".repeat(crate::MAX_PROFILE_STRING_BYTES)),
+        ..CellStyle::default()
+    };
+    let count = target / crate::MAX_PROFILE_STRING_BYTES;
+    for _ in 0..count {
+        let rows = &mut metadata.sheets[1].rows;
+        rows.push(crate::interop_document::InteropRowMetadata {
+            entity_id: format!("historical_{}", rows.len()),
+            styles: vec![style.clone()],
+        });
+    }
+    while crate::serialized_projection_bytes(&metadata).unwrap()
+        > target + crate::MAX_PROFILE_STRING_BYTES
+    {
+        metadata.sheets[1].rows.pop();
+    }
+    let excess = crate::serialized_projection_bytes(&metadata).unwrap() - target;
+    let format = metadata.sheets[1].rows.last_mut().unwrap().styles[0]
+        .number_format
+        .as_mut()
+        .unwrap();
+    format.truncate(format.len() - excess);
+    let project = runtime.export_project_v3("resident/0").unwrap().bytes;
+    let (mut runtime, _) =
+        crate::admit_imported_project_working_size(&project, OCCURRENCE, &metadata).unwrap();
+    runtime.delete_table("resident/0", "sheet_2").unwrap();
+    let before = snapshot(&runtime);
+    let entry = runtime.undo.last().unwrap().clone();
+    let result = runtime.preflight_imported_reply(&metadata, |candidate| {
+        let mut detached = entry;
+        detached.imported = None;
+        candidate.undo.push(detached);
+        let mut publication = candidate.history_edit("resident/0", false).unwrap();
+        publication.import_metadata = Some(metadata.clone());
+        let response = DesignerResponse::Published(publication);
+        assert!(
+            crate::ensure_wire_reply_size(
+                &crate::DesignerWireReply::Ok {
+                    response: response.clone()
+                },
+                candidate.profile,
+            )
+            .is_ok()
+        );
+        assert!(
+            crate::ensure_wire_reply_size(
+                &crate::DesignerWireReply::Ok {
+                    response: candidate.with_changed_cells(response.clone())
+                },
+                candidate.profile,
+            )
+            .is_err()
+        );
+        Ok(response)
+    });
+    assert!(matches!(
+        result,
+        Err(crate::DesignerError::ProjectionTooLarge { .. })
+    ));
+    let mut resident = Some(runtime);
+    let request = serde_json::to_vec(&DesignerRequest::Undo {
+        expected_revision: "resident/1".into(),
+    })
+    .unwrap();
+    let reply: crate::DesignerWireReply =
+        serde_json::from_slice(&crate::process_wire_request(&mut resident, &request)).unwrap();
+    assert!(matches!(reply, crate::DesignerWireReply::Error { error }
+        if error.code == "query_too_large" && error.current_revision == "resident/1"));
+    let runtime = resident.as_ref().unwrap();
+    assert_eq!(snapshot(runtime), before);
+    assert_eq!(runtime.undo.len(), 1);
+    assert!(runtime.redo.is_empty());
+}
+
+#[test]
 fn legacy_working_metadata_v2_stays_byte_stable_and_supports_lifecycle() {
     let source = import_xlsx(&export_xlsx(&fixture(false)).unwrap()).unwrap();
     let (runtime, projection) =
