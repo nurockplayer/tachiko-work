@@ -64,7 +64,7 @@ fn auto_admits_classifier_scalar_tags_losslessly() {
             other => panic!("unexpected input {other:?}"),
         };
         assert_eq!(value, expected);
-        assert!(validate_document_core(&auto_document(Some(value))).is_empty());
+        assert_eq!(validate_document_core(&auto_document(Some(value))), []);
     }
 }
 
@@ -86,7 +86,7 @@ fn auto_empty_text_and_absence_are_distinct_valid_states() {
     let blank = auto_document(None);
     assert_ne!(text, blank);
     for state in [text, blank] {
-        assert!(validate_document_core(&state).is_empty());
+        assert_eq!(validate_document_core(&state), []);
     }
     assert_eq!(classify_input("", None), ClassifiedInput::Blank);
 }
@@ -118,7 +118,7 @@ fn auto_required_constraint_and_reference_are_refused() {
         constrained,
         auto_document(Some(Value::Reference("r".into()))),
     ] {
-        assert!(!validate_document_core(&state).is_empty());
+        assert_ne!(validate_document_core(&state), []);
     }
 }
 

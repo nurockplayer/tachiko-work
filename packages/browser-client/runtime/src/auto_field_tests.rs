@@ -94,15 +94,9 @@ fn auto_scalar_edits_publish_each_classifier_tag_in_windows() {
         runtime
             .edit_scalar(&revision, &target, &auto(input))
             .unwrap();
+        let revision = runtime.current_revision().to_owned();
         let window = runtime
-            .query_table_window(
-                runtime.current_revision(),
-                &collection,
-                &TableView::default(),
-                0,
-                10,
-                true,
-            )
+            .query_table_window(&revision, &collection, &TableView::default(), 0, 10, true)
             .unwrap();
         assert_eq!(window.rows[0].fields[0].stored, expected);
         assert_eq!(

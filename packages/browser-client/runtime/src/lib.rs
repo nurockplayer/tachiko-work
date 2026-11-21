@@ -8737,7 +8737,7 @@ impl DesignerRuntime {
             entity: entity.id.clone(),
         });
         forward.push(SemanticCommand::AppendEntity { entity });
-        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
+        let publication = self.record_edit(expected, forward, inverse)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -8970,7 +8970,7 @@ impl DesignerRuntime {
             forward.push(SemanticCommand::AppendEntity { entity });
         }
         inverse.reverse();
-        let publication = self.record_edit(expected, forward, inverse)?;
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
