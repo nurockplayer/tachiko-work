@@ -1,23 +1,16 @@
 # Issue #860: Date outcome decision handoff
 
-Status: blocked on a public projection decision; no implementation is included.
+Status: implementation pending; the projection decision has been made.
 Checked: 2026-11-21 19:37 JST.
 Base: `f5d3b2b59d695d95244b21647cc53bf4b302de9c`.
 
-## Required decision
+## Projection decision
 
-What does the legacy `CalculationProjection::Value.value: f64` contain when
-`result` is a tagged Date?
-
-- Retain the required numeric member as a documented `0` placeholder, with
-  `result` authoritative and Number-only readers rejecting tagged Dates
-  (recommendation, pending approval).
-- Omit the numeric member for Dates. This changes the current required wire
-  member and needs an explicit amendment to the brief's no-wire-change boundary.
-
-An Excel serial is not recommended: ADR-0047 §5 reserves serial conversion for
-the XLSX boundary. No epoch, serial convention or placeholder is currently
-specified for this public projection.
+For a Date outcome, legacy `CalculationProjection::Value.value: f64` carries
+the engine's Date day number, days since 1970-01-01. The tagged Date in `result`
+is authoritative. The existing `days_from_civil` calculation uses that epoch.
+The engine lead recorded this decision on
+[#860](https://github.com/nurockplayer/tachiko-work/issues/860#issuecomment-7061375538).
 
 Authority:
 
@@ -35,8 +28,7 @@ Authority:
 
 The current `CalculationProjection` serializer and deserializer require
 `value: f64`; `CalculationProjection::number()` returns it for every successful
-outcome. A choice here affects existing numeric consumers as well as encoding.
-Resolve the decision on #860 before implementing the Date publication path.
+outcome. Numeric consumers must account for Date-tagged results.
 
 The engine path is `Calculation.values`, retained calculation state,
 `evaluation::Evaluation::number`, and `FormulaCalculationOutcome::Value`.
