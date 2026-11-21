@@ -424,11 +424,14 @@ export type PublicationProjection = {
 export type ProjectExportProjection = {
   revision: string;
   byte_length: number;
+  import_metadata?: InteropMetadata;
 };
 
 export type ProjectExport = {
   revision: string;
   bytes: ArrayBuffer;
+  /** Persist alongside bytes and pass to spreadsheet open_project. */
+  import_metadata?: InteropMetadata;
 };
 
 /** Opaque canonical path/byte entries from Rust; named/v3 occurrences use v3. */

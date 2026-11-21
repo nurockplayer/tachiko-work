@@ -30,6 +30,8 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
     tachiko_designer_project_reserve: () => 4096,
     tachiko_designer_spreadsheet_run: () => undefined,
     tachiko_designer_project_export_v3: selectedExport,
+    tachiko_designer_project_export: selectedExport,
+    tachiko_designer_portable_ro_export: selectedExport,
     tachiko_designer_response_ptr: () => responseOffset,
     tachiko_designer_response_len: () => response.length,
     tachiko_designer_project_ptr: pointer,
@@ -108,6 +110,7 @@ describe("selected v3 WASM export ownership", () => {
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("Expected selected export");
     expect(result.export.revision).toBe("resident/1");
+    expect(result.export).not.toHaveProperty("import_metadata");
     expect([...new Uint8Array(result.export.bytes)]).toEqual([1, 2, 3]);
     expect(release).toHaveBeenCalledOnce();
   });
@@ -121,6 +124,22 @@ describe("selected v3 WASM export ownership", () => {
   it("releases the arena when the response has the wrong operation type", async () => {
     const { bridge, release } = await fixture(3, 3);
     expect(() => bridge.exportProjectV3("resident/1")).toThrow("Expected 'project_exported'");
+    expect(release).toHaveBeenCalledOnce();
+  });
+});
+
+describe("import mapping export companion", () => {
+  it.each(["exportProject", "exportProjectV3", "exportPortableRo"] as const)("%s retains the companion outside the bytes", async method => {
+    const metadata = { version: 1, sheets: [{ schema_id: "sheet_1", name: "Renamed Input", has_header: true,
+      columns: [], rows: [] }, { schema_id: "table_3", name: "A Added", has_header: true, columns: [], rows: [] }] };
+    const response = method === "exportPortableRo" ? "portable_ro_exported" : "project_exported";
+    const { bridge, release } = await fixture(3, 3, response, {
+      revision: "resident/5", byte_length: 3, import_metadata: metadata,
+    });
+    const result = bridge[method]("resident/5");
+    if (result.status !== "ok") throw new Error("Expected export");
+    expect(result.export.import_metadata).toEqual(metadata);
+    expect([...new Uint8Array(result.export.bytes)]).toEqual([1, 2, 3]);
     expect(release).toHaveBeenCalledOnce();
   });
 });

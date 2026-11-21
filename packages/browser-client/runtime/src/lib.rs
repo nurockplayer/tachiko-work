@@ -1820,16 +1820,20 @@ pub struct DuplicateCollectionProjection {
 }
 
 /// One exact-revision canonical project prepared for a host durability commit.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProjectExport {
     pub revision: String,
     pub bytes: Vec<u8>,
+    /// Host-held companion; never part of the canonical tree or portable bytes.
+    pub import_metadata: Option<InteropMetadata>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ProjectExportProjection {
     pub revision: String,
     pub byte_length: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<InteropMetadata>,
 }
 
 /// An app-private transfer record containing every exact canonical v1 file.
@@ -4509,6 +4513,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -4539,6 +4544,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -4606,6 +4612,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
+            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
         })
     }
 
@@ -9778,7 +9785,7 @@ pub(crate) fn admit_imported_project(
         document,
         opened_from_v3,
         presentation,
-    } = decode_project_bundle(input)?;
+    } = decode_imported_project(input, DecodeProfile::Admitted)?;
     if opened_from_v3 {
         // A capacity-profile v3 save of an import keeps the same provenance
         // gate as the legacy capacity retry below.
@@ -9858,7 +9865,7 @@ pub(crate) fn admit_imported_project_working_size(
         document,
         opened_from_v3,
         presentation,
-    } = decode_project_bundle_working_size(input)?;
+    } = decode_imported_project(input, DecodeProfile::WorkingSize)?;
     capacity::check_working_saved_bytes(
         &document,
         save_size::presentation_saved_bytes(&presentation)?,
@@ -10289,6 +10296,23 @@ enum DecodeProfile {
     /// rectangle.
     Admitted,
     WorkingSize,
+}
+
+fn decode_imported_project(
+    input: &[u8],
+    profile: DecodeProfile,
+) -> Result<DecodedProject, DesignerError> {
+    enforce_project_transfer_limit(input.len())?;
+    if input.starts_with(b"PK\x03\x04") {
+        let verified = decode_portable_package_v1(input)?;
+        let tree = verified.tree();
+        return Ok(DecodedProject {
+            document: decode_roproj_v3(tree)?,
+            opened_from_v3: true,
+            presentation: presentation_from_tree(tree)?,
+        });
+    }
+    decode_project_bundle_for(input, profile)
 }
 
 fn decode_project_bundle(input: &[u8]) -> Result<DecodedProject, DesignerError> {

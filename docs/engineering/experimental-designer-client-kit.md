@@ -611,6 +611,30 @@ is required. The existing private transfer path retains its Date round trip;
 those private bytes must not be relabeled as `.ro`. Export produces a snapshot.
 Only the separate host persistence operation can confirm a durable save.
 
+Imported-workbook exports (`exportProject`, `exportProjectV3` and
+`exportPortableRo`) return an optional `import_metadata` companion beside
+`revision` and `bytes`. Persist the companion with the export, including after
+add/rename/delete and Undo/Redo. It is returned for every imported occurrence so
+repeated saves after reopen retain it; native exports omit it. Neither the
+private project bytes nor the `.ro` package contains it. ADR-0042 §5 excludes
+this attachment, and ADR-0046 does not authorize an additional package entry;
+this is #869's companion fallback.
+
+```ts
+const saved = await client.exportPortableRo(revision);
+// Persist saved.bytes and JSON.stringify(saved.import_metadata) separately.
+if (saved.import_metadata !== undefined) {
+  await client.openImportedProject(saved.bytes.slice(0), saved.import_metadata);
+}
+```
+
+`openImportedProject` / `inspectImportedProject` and their working-size variants
+accept portable `.ro` bytes as well as private project transfers together with
+the companion. Existing mapping validation runs before installation. The client
+supplies the authoritative mapping; there is no packaged mapping to override.
+A `.ro` opened alone still has CORE-only behavior. An untouched import and every
+existing CORE package retain exact export bytes.
+
 This implements the CORE package capability in #519. Sheet attachments and
 consumer qualification remain separate; #488 is not complete.
 
