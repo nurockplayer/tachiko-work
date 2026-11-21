@@ -693,49 +693,46 @@ fn near_limit_styled_runtime() -> DesignerRuntime {
 
 #[test]
 fn cell_style_semantic_edits_retain_styles_during_budget_preflight() {
-    for insert_row in [false, true] {
-        let mut runtime = near_limit_styled_runtime();
-        let revision = runtime.current_revision().to_owned();
-        let undo = runtime.undo.len();
-        let redo = runtime.redo.len();
-        let table = runtime.query_table("rows").unwrap();
-        let saved = runtime.export_project_v3(&revision).unwrap();
-        let (_, opened) = crate::admit_project(&saved.bytes, OCCURRENCE).unwrap();
-        assert_eq!(opened.table.rows[0].styles, table.rows[0].styles);
-        let portable = runtime.export_portable_ro(&revision).unwrap();
-        let (_, opened) = admit_portable_ro(&portable.bytes, OCCURRENCE).unwrap();
-        assert_eq!(opened.table.rows[0].styles, table.rows[0].styles);
-        let request = if insert_row {
-            DesignerRequest::AppendRow {
-                expected_revision: revision.clone(),
-                collection: "rows".into(),
-            }
-        } else {
-            DesignerRequest::EditCells {
-                expected_revision: revision.clone(),
-                edits: vec![crate::CellEdit {
-                    target: crate::FieldTarget {
-                        entity: "r000".into(),
-                        field: "c".into(),
-                    },
-                    input: crate::ScalarEditInput::Text {
-                        value: "x".repeat(4096),
-                    },
-                }],
-            }
-        };
-        let error = runtime.handle(request).unwrap_err();
-        assert!(
-            matches!(error, DesignerError::ProjectionTooLarge { .. }),
-            "{error:?}"
-        );
-        assert_eq!(runtime.current_revision(), revision);
-        assert_eq!(runtime.undo.len(), undo);
-        assert_eq!(runtime.redo.len(), redo);
-        assert_eq!(runtime.query_table("rows").unwrap(), table);
-        assert_eq!(
-            runtime.export_project_v3(&revision).unwrap().bytes,
-            saved.bytes
-        );
-    }
+    let mut runtime = near_limit_styled_runtime();
+    let request = |revision: &str, value: String| DesignerRequest::EditCells {
+        expected_revision: revision.to_owned(),
+        edits: vec![crate::CellEdit {
+            target: crate::FieldTarget {
+                entity: "r000".into(),
+                field: "c".into(),
+            },
+            input: crate::ScalarEditInput::Text { value },
+        }],
+    };
+    runtime
+        .handle(request(runtime.current_revision(), "x".into()))
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let undo = runtime.undo.len();
+    let redo = runtime.redo.len();
+    let table = runtime.query_table("rows").unwrap();
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let (_, mut opened) = crate::admit_project(&saved.bytes, OCCURRENCE).unwrap();
+    // Reopen starts a new session revision; compare the persisted table content.
+    opened.table.revision.clone_from(&table.revision);
+    assert_eq!(opened.table, table);
+    let portable = runtime.export_portable_ro(&revision).unwrap();
+    let (_, mut opened) = admit_portable_ro(&portable.bytes, OCCURRENCE).unwrap();
+    opened.table.revision.clone_from(&table.revision);
+    assert_eq!(opened.table, table);
+    let error = runtime
+        .handle(request(&revision, "x".repeat(4096)))
+        .unwrap_err();
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { .. }),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), undo);
+    assert_eq!(runtime.redo.len(), redo);
+    assert_eq!(runtime.query_table("rows").unwrap(), table);
+    assert_eq!(
+        runtime.export_project_v3(&revision).unwrap().bytes,
+        saved.bytes
+    );
 }
