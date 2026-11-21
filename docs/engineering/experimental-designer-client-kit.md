@@ -386,6 +386,35 @@ When strengthening is refused for blank values, the failure code is
 reports the authoritative blank count. The message says how many rows have no
 value in the column.
 
+## Auto scalar columns
+
+Create an Auto field with `{name: "Value", field_type: "auto", required: false}`
+through `newTable`, `newTableWorkingSize`, or `add_column`. Auto is always
+optional and unconstrained; strengthening it to required is refused. Windows
+project `field_type: "auto"` and `editable_scalar: "auto"`, including blanks.
+Each present cell uses the existing tagged `stored` union.
+
+```ts
+await client.editAuto(revision, {entity: rowId, field: valueFieldId}, "00123");
+await client.editAuto(nextRevision, {entity: rowId, field: valueFieldId},
+  "22/11/2026", "day_first");
+```
+
+The wire input is `{kind: "auto", input: string, date_order?: "month_first" |
+"day_first"}`. Work runs its existing classifier: `42` is Number, `00123` is
+exact Text, ISO dates are Date, `TRUE` is Boolean, and other text stays exact.
+Full-width, grouped, currency and percent input follow that same classifier;
+implied formats are per-cell presentation and survive portable `.ro` save/reopen
+and the same Undo/Redo action as the value. Raw paste into Auto uses the
+classifier without a date order; typed paste cells may supply `date_order`.
+Raw empty input clears; explicit `{kind: "text", value: ""}` stores empty Text.
+
+Auto formulas, including raw input starting with `=`, return an explicit
+unsupported refusal without publishing or storing Text. Auto retyping and
+aggregates remain separate slices. `exportPortableRo` and v3 exports preserve
+Auto; frozen legacy project/direct-ro and v1 delta/conflict writers refuse it.
+The v2 evidence contracts preserve Auto fields and their tagged values.
+
 ## Changing a column's type
 
 `changeColumnType(expectedRevision, collection, field, fieldType)` encodes

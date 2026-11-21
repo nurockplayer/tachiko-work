@@ -475,6 +475,15 @@ fn imported_styles_and_native_styles_use_the_same_projection() {
     let neighbour = &shown.rows[1].styles[0];
     assert!(neighbour.bold);
     assert_eq!(neighbour.fill.as_deref(), Some("FFFF00"));
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let (_, opened) = crate::admit_imported_project(
+        &saved.bytes,
+        OCCURRENCE,
+        saved.import_metadata.as_ref().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(opened.table.rows[0].styles, shown.rows[0].styles);
+    assert_eq!(opened.table.rows[1].styles, shown.rows[1].styles);
     history(&mut runtime, false);
     assert_eq!(runtime.presentation, before);
 }
@@ -578,6 +587,7 @@ fn cell_style_rejects_projection_over_budget_before_publication() {
         "unexpected style edit result: {result:?}"
     );
     assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), 0);
     let result = edit(
         &mut runtime,
         &entities,
@@ -590,8 +600,155 @@ fn cell_style_rejects_projection_over_budget_before_publication() {
     ));
     assert_eq!(runtime.current_revision(), revision);
     assert!(runtime.presentation.is_empty());
-    assert!(runtime.undo.is_empty());
+    assert_eq!(runtime.undo.len(), 0);
+    let result = runtime.set_column_wrap(&revision, "rows", "b", Some(true));
+    assert!(
+        matches!(result, Err(DesignerError::ProjectionTooLarge { .. })),
+        "unexpected column style result: {result:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), 0);
     let exported = runtime.export_project_v3(&revision).unwrap();
     crate::admit_project(&exported.bytes, OCCURRENCE).unwrap();
     runtime.export_portable_ro(&revision).unwrap();
+}
+
+fn blank_style_document(rows: usize) -> Document {
+    let mut document = fixture();
+    let schema = document.schemas.get_mut(&SchemaId::from("rows")).unwrap();
+    let field = schema.fields[&FieldId::from("a")].clone();
+    schema.fields = "abcdefghijklmnop"
+        .chars()
+        .map(|name| {
+            let name = name.to_string();
+            let mut definition = field.clone();
+            definition.id = FieldId::from(name.clone());
+            definition.key = FieldKey::from(name);
+            if definition.id == FieldId::from("c") {
+                definition.field_type = FieldType::Text;
+            }
+            (definition.id.clone(), definition)
+        })
+        .collect();
+    document.entities = (0..rows)
+        .map(|index| {
+            let name = format!("r{index:03}");
+            let id = EntityId::from(name.clone());
+            (
+                id.clone(),
+                Entity {
+                    rank: None,
+                    id,
+                    key: EntityKey::from(name),
+                    schema: SchemaId::from("rows"),
+                    fields: BTreeMap::new(),
+                },
+            )
+        })
+        .collect();
+    document
+}
+
+#[test]
+fn cell_style_blank_rectangle_refuses_oversized_style_arrays() {
+    let mut runtime = DesignerRuntime::from_document(blank_style_document(48), OCCURRENCE).unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let names = runtime
+        .query_table("rows")
+        .unwrap()
+        .rows
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<_>>();
+    let entities = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let error = edit(
+        &mut runtime,
+        &entities,
+        &["b"],
+        &json!([{"kind":"bold","value":true}]),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { .. }),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), 0);
+    assert_eq!(runtime.redo.len(), 0);
+    assert_eq!(
+        runtime.presentation,
+        tachiko_workspace_engine::PresentationStore::default()
+    );
+}
+
+fn near_limit_styled_runtime() -> DesignerRuntime {
+    let runtime = (1..=48)
+        .rev()
+        .find_map(|rows| {
+            let mut runtime =
+                DesignerRuntime::from_document(blank_style_document(rows), OCCURRENCE).unwrap();
+            let revision = runtime.current_revision().to_owned();
+            match runtime.set_column_wrap(&revision, "rows", "b", Some(true)) {
+                Ok(_) => {}
+                Err(DesignerError::ProjectionTooLarge { .. }) => return None,
+                Err(error) => panic!("unexpected fixture failure: {error:?}"),
+            }
+            let table = runtime.query_table("rows").ok()?;
+            let opened = crate::OpenedProjection {
+                bootstrap: runtime.bootstrap_projection(),
+                table,
+            };
+            crate::ensure_opened_wire_projection_size(&opened, runtime.profile).ok()?;
+            assert!(crate::serialized_projection_bytes(&opened).unwrap() > 60_000);
+            Some(runtime)
+        })
+        .expect("a styled table must fit just below the complete projection limit");
+    assert_eq!(runtime.profile, SessionProfile::Ordinary);
+    runtime
+}
+
+#[test]
+fn cell_style_semantic_edits_retain_styles_during_budget_preflight() {
+    let mut runtime = near_limit_styled_runtime();
+    let request = |revision: &str, value: String| DesignerRequest::EditCells {
+        expected_revision: revision.to_owned(),
+        edits: vec![crate::CellEdit {
+            target: crate::FieldTarget {
+                entity: "r000".into(),
+                field: "c".into(),
+            },
+            input: crate::ScalarEditInput::Text { value },
+        }],
+    };
+    runtime
+        .handle(request(runtime.current_revision(), "x".into()))
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let undo = runtime.undo.len();
+    let redo = runtime.redo.len();
+    let table = runtime.query_table("rows").unwrap();
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let (_, mut opened) = crate::admit_project(&saved.bytes, OCCURRENCE).unwrap();
+    // Reopen starts a new session revision; compare the persisted table content.
+    opened.table.revision.clone_from(&table.revision);
+    assert_eq!(opened.table, table);
+    let portable = runtime.export_portable_ro(&revision).unwrap();
+    let (_, mut opened) = admit_portable_ro(&portable.bytes, OCCURRENCE).unwrap();
+    opened.table.revision.clone_from(&table.revision);
+    assert_eq!(opened.table, table);
+    let error = runtime
+        .handle(request(&revision, "x".repeat(4096)))
+        .unwrap_err();
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { .. }),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), undo);
+    assert_eq!(runtime.redo.len(), redo);
+    assert_eq!(runtime.query_table("rows").unwrap(), table);
+    assert_eq!(
+        runtime.export_project_v3(&revision).unwrap().bytes,
+        saved.bytes
+    );
 }

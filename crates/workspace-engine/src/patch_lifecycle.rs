@@ -3941,7 +3941,11 @@ impl PatchLifecycle {
     ) -> Result<(), WorkspaceError> {
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
@@ -3990,7 +3994,10 @@ impl PatchLifecycle {
         for (entity, value) in values {
             if !matches!(
                 (value, &field.field_type),
-                (Value::Text(_), FieldType::Text)
+                (
+                    Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_),
+                    FieldType::Auto
+                ) | (Value::Text(_), FieldType::Text)
                     | (Value::Number(_), FieldType::Number)
                     | (Value::Boolean(_), FieldType::Boolean)
                     | (Value::Date(_), FieldType::Date)
@@ -4062,7 +4069,11 @@ impl PatchLifecycle {
         }
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::MissingField {
                 field: FieldRef::new("schema", field.id.clone()),
@@ -4220,7 +4231,11 @@ impl PatchLifecycle {
             })?;
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::MissingField {
                 field: FieldRef::new("schema", field_id.clone()),
@@ -4502,7 +4517,11 @@ impl PatchLifecycle {
                     })?;
                     if !matches!(
                         definition.field_type,
-                        FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                        FieldType::Auto
+                            | FieldType::Text
+                            | FieldType::Number
+                            | FieldType::Boolean
+                            | FieldType::Date
                     ) || !has_native_scalar_shape(&candidate, record)
                     {
                         return Err(WorkspaceError::TypeMismatch {
@@ -4549,7 +4568,7 @@ impl PatchLifecycle {
                             schema: schema.clone(),
                             field: field.clone(),
                         })?;
-                    if definition.field_type != FieldType::Number {
+                    if !matches!(definition.field_type, FieldType::Number | FieldType::Auto) {
                         return Err(WorkspaceError::InvalidNumberFormat {
                             source: super::NumberFormatError::NonNumberField,
                         });
@@ -6235,7 +6254,11 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         })
         && document
@@ -6251,7 +6274,13 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                         entity.fields.get(id).map_or(!field.required, |value| {
                             matches!(
                                 (&field.field_type, value),
-                                (FieldType::Text, Value::Text(_))
+                                (
+                                    FieldType::Auto,
+                                    Value::Number(_)
+                                        | Value::Text(_)
+                                        | Value::Boolean(_)
+                                        | Value::Date(_)
+                                ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
@@ -6355,6 +6384,11 @@ fn reject_legacy_field_orders(
     candidate: &Document,
     body: &SemanticPatchBody,
 ) -> Result<(), PatchLifecycleError> {
+    if base.has_auto_fields() || candidate.has_auto_fields() {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedAutoField)),
+        });
+    }
     if base.has_row_ranks() || candidate.has_row_ranks() {
         return Err(PatchLifecycleError::CommandRejected {
             source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedRowRank)),

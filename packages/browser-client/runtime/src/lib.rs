@@ -22,6 +22,9 @@ pub use capacity::{
 #[cfg(test)]
 mod authored_input_tests;
 #[cfg(test)]
+mod auto_field_tests;
+mod auto_input;
+#[cfg(test)]
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
@@ -129,6 +132,8 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "capacity-bench"))]
+mod capacity_809_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -1127,6 +1132,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_date_formats()
         || document.has_field_orders()
         || document.has_row_ranks()
+        || document.has_auto_fields()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -1413,21 +1419,42 @@ pub struct FieldDependencyProjection {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScalarKind {
+    Auto,
     Number,
     Text,
     Boolean,
     Date,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoDateOrder {
+    MonthFirst,
+    DayFirst,
+}
+
 /// Private typed input for one directly stored scalar edit.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScalarEditInput {
+    Auto {
+        input: String,
+        #[serde(default)]
+        date_order: Option<AutoDateOrder>,
+    },
     Clear,
-    Number { input: String },
-    Text { value: String },
-    Boolean { value: bool },
-    Date { value: String },
+    Number {
+        input: String,
+    },
+    Text {
+        value: String,
+    },
+    Boolean {
+        value: bool,
+    },
+    Date {
+        value: String,
+    },
 }
 
 /// One named entity initializer; optional columns may omit any or all entities.
@@ -2476,6 +2503,10 @@ type ColumnPresentationFacts = (SchemaId, FieldId, Option<CellStyle>, Option<u32
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
+    InputCommands {
+        commands: Vec<SemanticCommand>,
+        styles: Vec<auto_input::CellDisplay>,
+    },
     Commands(Vec<SemanticCommand>),
     TableCommands {
         commands: Vec<SemanticCommand>,
@@ -2504,6 +2535,16 @@ enum HistoryAction {
 impl HistoryAction {
     fn approx_bytes(&self) -> usize {
         match self {
+            Self::InputCommands { commands, styles } => {
+                commands
+                    .iter()
+                    .map(SemanticCommand::approx_bytes)
+                    .sum::<usize>()
+                    + styles
+                        .iter()
+                        .map(auto_input::CellDisplay::approx_bytes)
+                        .sum::<usize>()
+            }
             Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
             Self::TableCommands {
                 commands,
@@ -2622,7 +2663,7 @@ impl ViewKind {
             FieldType::Text => Some(Self::Text),
             FieldType::Boolean => Some(Self::Boolean),
             FieldType::Date => Some(Self::Date),
-            FieldType::Reference { .. } => None,
+            FieldType::Auto | FieldType::Reference { .. } => None,
         }
     }
 }
@@ -3452,6 +3493,7 @@ impl DesignerRuntime {
         presentation: PresentationStore,
     ) -> Result<String, DesignerError> {
         self.check_revision(expected_revision)?;
+        self.preflight_presentation(self.session.document(), &presentation)?;
         let bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let bytes = save_size::presentation_saved_bytes(&presentation)?;
@@ -4509,6 +4551,11 @@ impl DesignerRuntime {
         // A constrained document has no legacy representation at all, so this
         // answer is more specific than the generic v3-origin prohibition and
         // applies to both origins.
+        if snapshot.document().has_auto_fields() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "Auto fields require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
         if snapshot.document().has_number_formats() || snapshot.document().has_date_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
@@ -5736,7 +5783,19 @@ impl DesignerRuntime {
             blank: false,
             target: field_target(&field.field),
             address: field.presentation_address.to_string(),
-            editable_scalar: scalar_kind(field.stored_value.as_ref()),
+            editable_scalar: if self
+                .session
+                .document()
+                .entities
+                .get(&field.field.entity)
+                .and_then(|entity| self.session.document().schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(&field.field.field))
+                .is_some_and(|definition| definition.field_type == FieldType::Auto)
+            {
+                Some(ScalarKind::Auto)
+            } else {
+                scalar_kind(field.stored_value.as_ref())
+            },
             stored,
             formula,
             calculated: field.calculated_value.as_ref().map(calculation_projection),
@@ -5951,11 +6010,18 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error(
                 "requiredness changes support only scalar columns",
             ));
+        }
+        if definition.field_type == FieldType::Auto && required {
+            return Err(table_error("Auto fields must be optional"));
         }
         if definition.required == required {
             return Err(PatchLifecycleError::NoChange.into());
@@ -6224,7 +6290,7 @@ impl DesignerRuntime {
             .fields
             .get(&FieldId::from(field.to_owned()))
             .ok_or_else(|| table_error("column is unavailable"))?;
-        if definition.field_type != FieldType::Number {
+        if !matches!(definition.field_type, FieldType::Number | FieldType::Auto) {
             return Err(DesignerError::InvalidNumberFormat {
                 source: tachiko_workspace_engine::NumberFormatError::NonNumberField,
             });
@@ -6514,7 +6580,11 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             old.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
@@ -6558,7 +6628,11 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
@@ -6634,11 +6708,18 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
         let kind = native_table_field_type(field_type)?;
+        if kind == FieldType::Auto || definition.field_type == FieldType::Auto {
+            return Err(table_error("Auto column retyping is unsupported"));
+        }
         if kind == definition.field_type {
             return Err(table_error("column already has that type"));
         }
@@ -6938,7 +7019,7 @@ impl DesignerRuntime {
         }];
         let imported_before = self.imported.clone();
         let publication =
-            self.publish_commands_with_imported(expected, &forward, None, Some(&key))?;
+            self.publish_commands_with_imported(expected, &forward, None, Some(&key), None)?;
         self.duplicate_serial = serial;
         self.record_history_entry(
             HistoryEntry::new(
@@ -7151,6 +7232,7 @@ impl DesignerRuntime {
             &forward,
             None,
             Some(&target_key),
+            None,
         )?;
         self.duplicate_serial = ids.serial;
         self.record_history_entry(
@@ -7240,6 +7322,17 @@ impl DesignerRuntime {
         source: &str,
         inverse: Option<&mut Option<HistoryAction>>,
     ) -> Result<(PublicationProjection, String), DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        if snapshot
+            .document()
+            .entities
+            .get(&target.as_field_ref().entity)
+            .and_then(|entity| snapshot.document().schemas.get(&entity.schema))
+            .and_then(|schema| schema.fields.get(&target.as_field_ref().field))
+            .is_some_and(|field| field.field_type == FieldType::Auto)
+        {
+            return Err(table_error("Auto formulas are unsupported"));
+        }
         self.publish_formula_update_unmapped(expected_revision, target, source, inverse)
             .map_err(|error| match &error {
                 DesignerError::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
@@ -7618,7 +7711,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         commands: &[SemanticCommand],
     ) -> Result<PublicationProjection, DesignerError> {
-        self.publish_commands_with_imported(expected_revision, commands, None, None)
+        self.publish_commands_with_imported(expected_revision, commands, None, None, None)
     }
 
     #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
@@ -7628,6 +7721,7 @@ impl DesignerRuntime {
         commands: &[SemanticCommand],
         restored_import: Option<&imported_lifecycle::ImportedState>,
         added_collection: Option<&str>,
+        input_presentation: Option<PresentationStore>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
@@ -7646,6 +7740,8 @@ impl DesignerRuntime {
                 source: Box::new(source),
             })?;
         let candidate = prepared.document();
+        let input_presentation_bytes =
+            auto_input::admit_presentation(input_presentation.as_ref(), candidate, self.profile)?;
         let imported = match restored_import {
             Some(state) => Some(state.clone()),
             None => self.plan_imported_state(candidate, commands)?,
@@ -7694,7 +7790,7 @@ impl DesignerRuntime {
                 );
                 capacity::check_working_saved_bytes_bound(
                     document_bytes,
-                    self.presentation_saved_bytes,
+                    input_presentation_bytes.unwrap_or(self.presentation_saved_bytes),
                 )?;
                 Some(document_bytes)
             }
@@ -7766,6 +7862,9 @@ impl DesignerRuntime {
                         )?;
                     }
                 }
+                if !self.presentation.is_empty() {
+                    self.preflight_presentation(prepared.document(), &self.presentation)?;
+                }
             }
             // Preflight only upgrades a constraint mismatch into its typed
             // refusal. Every other invalid candidate is still refused
@@ -7832,7 +7931,8 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => {
-                    field.display_name.is_some()
+                    field.field_type == FieldType::Auto
+                        || field.display_name.is_some()
                         || field.number_format.is_some()
                         || field.date_format.is_some()
                 }
@@ -7840,7 +7940,8 @@ impl DesignerRuntime {
                     schema.display_name.is_some()
                         || schema.field_order.is_some()
                         || schema.fields.values().any(|field| {
-                            field.display_name.is_some()
+                            field.field_type == FieldType::Auto
+                                || field.display_name.is_some()
                                 || field.number_format.is_some()
                                 || field.date_format.is_some()
                         })
@@ -7905,6 +8006,11 @@ impl DesignerRuntime {
                 .ok_or(DesignerError::MissingInvalidation)?
                 .clone()
         };
+        if let Some(presentation) = input_presentation {
+            self.presentation = presentation;
+            self.presentation_saved_bytes =
+                input_presentation_bytes.expect("input presentation was measured");
+        }
         self.capacity_usage = capacity_usage;
         // The Valid arm above always fills both for a working-size publish;
         // any other published path measures again on its next full walk.
@@ -7943,7 +8049,7 @@ impl DesignerRuntime {
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(all(test, not(feature = "capacity-bench")))]
         if keep_formula_sources {
             if let Ok(sources) = self.session.formula_source_projections() {
                 assert_eq!(self.formula_sources, sources);
@@ -8410,6 +8516,7 @@ impl DesignerRuntime {
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
+        let mut displays = Vec::new();
         let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
         for spec in self.collection_specs.values() {
             for entity in &spec.entities {
@@ -8470,6 +8577,7 @@ impl DesignerRuntime {
             if present && old.is_none() {
                 return Err(DesignerError::UnsupportedScalarEdit { field });
             }
+            auto_input::collect_display(column, &field, &edit.input, &mut displays);
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
                 let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
@@ -8477,7 +8585,7 @@ impl DesignerRuntime {
                 inverse.extend(undo);
             }
         }
-        self.record_edit(expected, forward, inverse)
+        self.record_input_edit(expected, forward, inverse, displays)
     }
 
     fn history_edit(
@@ -8517,15 +8625,18 @@ impl DesignerRuntime {
             })?;
         }
         let mut result = match action {
+            HistoryAction::InputCommands { commands, styles } => {
+                self.publish_input_commands(expected, commands, styles)
+            }
             HistoryAction::Commands(commands) => {
-                self.publish_commands_with_imported(expected, commands, imported, None)
+                self.publish_commands_with_imported(expected, commands, imported, None, None)
             }
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
                 let result =
-                    self.publish_commands_with_imported(expected, commands, imported, None)?;
+                    self.publish_commands_with_imported(expected, commands, imported, None, None)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
             }
@@ -8855,6 +8966,7 @@ impl DesignerRuntime {
         };
         let mut new_rows = Vec::new();
         let mut typed_rows = Vec::new();
+        let mut displays = Vec::new();
         let mut edited = Vec::new();
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(
@@ -8902,6 +9014,7 @@ impl DesignerRuntime {
                     PasteCellInput::Text(text) => pasted_column_input(&column.field_type, text)?,
                     PasteCellInput::Typed(input) => input.clone(),
                 };
+                auto_input::collect_display(column, &field, &input, &mut displays);
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
                     fills.remove(&field.field);
@@ -8942,7 +9055,7 @@ impl DesignerRuntime {
             forward.push(SemanticCommand::AppendEntity { entity });
         }
         inverse.reverse();
-        let publication = self.record_edit(expected, forward, inverse)?;
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -9035,10 +9148,21 @@ fn columns_revision(columns: &[ColumnProjection]) -> Result<String, DesignerErro
 }
 
 fn admit_native_requiredness(kind: &FieldType, required: bool) -> Result<(), DesignerError> {
+    if *kind == FieldType::Auto {
+        return if required {
+            Err(table_error("Auto fields must be optional"))
+        } else {
+            Ok(())
+        };
+    }
     if required
         || matches!(
             kind,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         )
     {
         Ok(())
@@ -9090,6 +9214,9 @@ fn cell_edit_value(
     input: &ScalarEditInput,
     field: &FieldRef,
 ) -> Result<Option<Value>, DesignerError> {
+    if column.field_type == FieldType::Auto {
+        return auto_input::value(input);
+    }
     if matches!(input, ScalarEditInput::Clear) {
         // Clearing a formula cell removes its formula; a required column keeps
         // the existing refusal because clearing would leave it blank.
@@ -9101,7 +9228,11 @@ fn cell_edit_value(
         if column.required
             || !matches!(
                 column.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         {
             return Err(table_error("clear requires an optional column"));
@@ -9113,7 +9244,11 @@ fn cell_edit_value(
     } else if !column.required
         && matches!(
             column.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         )
     {
         parse_column_initializer(&column.field_type, input).map(Some)
@@ -9230,7 +9365,7 @@ fn group_dimension_columns<'a>(
                 }
             }
             FieldType::Date => {}
-            _ => {
+            FieldType::Auto | FieldType::Number | FieldType::Reference { .. } => {
                 return Err(invalid_group_query(format!(
                     "dimension '{}' is a Number column; group by Text, Date or Yes/No",
                     dimension.field
@@ -9415,6 +9550,7 @@ fn blank_field_projection(
         diagnostics: Vec::new(),
         editable_scalar: if native_table_rows && !column.required {
             match column.field_type {
+                FieldType::Auto => Some(ScalarKind::Auto),
                 FieldType::Text => Some(ScalarKind::Text),
                 FieldType::Number => Some(ScalarKind::Number),
                 FieldType::Boolean => Some(ScalarKind::Boolean),
@@ -9430,6 +9566,12 @@ fn blank_field_projection(
 
 fn pasted_column_input(kind: &FieldType, text: &str) -> Result<ScalarEditInput, DesignerError> {
     let sample = match kind {
+        FieldType::Auto => {
+            return Ok(ScalarEditInput::Auto {
+                input: text.to_owned(),
+                date_order: None,
+            });
+        }
         FieldType::Text => Value::Text(String::new()),
         FieldType::Number => Value::Number(Number::new(0.0).expect("finite zero")),
         FieldType::Boolean => Value::Boolean(false),
@@ -9853,9 +9995,10 @@ pub(crate) fn admit_imported_project(
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
+        opened.table = candidate.query_table(&candidate.default_collection)?;
+        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
     }
 
@@ -9875,6 +10018,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error)
@@ -9896,6 +10041,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -12396,6 +12543,7 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
 
 const fn field_type_name(field_type: &FieldType) -> &'static str {
     match field_type {
+        FieldType::Auto => "auto",
         FieldType::Number => "number",
         FieldType::Text => "text",
         FieldType::Boolean => "boolean",
@@ -12724,6 +12872,7 @@ fn native_table_row(
                     continue;
                 }
                 let value = match &column.field_type {
+                    FieldType::Auto => return Err(table_error("Auto fields must be optional")),
                     FieldType::Text => Value::Text(String::new()),
                     FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
                     FieldType::Boolean => Value::Boolean(false),
@@ -12758,7 +12907,11 @@ fn has_scalar_row_authoring_shape(
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         })
         && entities.iter().all(|id| {
@@ -12772,7 +12925,13 @@ fn has_scalar_row_authoring_shape(
                         entity.fields.get(id).map_or(!field.required, |value| {
                             matches!(
                                 (field.field_type.clone(), value),
-                                (FieldType::Text, Value::Text(_))
+                                (
+                                    FieldType::Auto,
+                                    Value::Number(_)
+                                        | Value::Text(_)
+                                        | Value::Boolean(_)
+                                        | Value::Date(_)
+                                ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
@@ -12933,12 +13092,13 @@ fn appended_field_id(schema: &Schema, serial: u64, namespace: &str) -> FieldId {
 
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
     match input.to_ascii_lowercase().as_str() {
+        "auto" => Ok(FieldType::Auto),
         "text" => Ok(FieldType::Text),
         "number" => Ok(FieldType::Number),
         "boolean" => Ok(FieldType::Boolean),
         "date" => Ok(FieldType::Date),
         _ => Err(table_error(
-            "column type must be Text, Number, Boolean, or Date",
+            "column type must be Auto, Text, Number, Boolean, or Date",
         )),
     }
 }
@@ -13113,6 +13273,10 @@ fn parse_column_initializer(
     field_type: &FieldType,
     input: &ScalarEditInput,
 ) -> Result<Value, DesignerError> {
+    if *field_type == FieldType::Auto {
+        return auto_input::value(input)?
+            .ok_or_else(|| table_error("blank Auto initializers must be omitted"));
+    }
     match (field_type, input) {
         (FieldType::Number, ScalarEditInput::Number { input }) => authored_number(input)
             .map(Value::Number)
@@ -14554,6 +14718,10 @@ mod tests {
             .map(|column| RowInitializer {
                 field: column.id.to_string(),
                 input: match &column.field_type {
+                    FieldType::Auto => ScalarEditInput::Auto {
+                        input: "42".into(),
+                        date_order: None,
+                    },
                     FieldType::Text => ScalarEditInput::Text {
                         value: "new".to_owned(),
                     },

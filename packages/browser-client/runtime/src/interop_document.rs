@@ -530,6 +530,7 @@ fn append_value_command(
 
 fn input_value(input: &ScalarEditInput) -> Result<Value, DesignerError> {
     match input {
+        ScalarEditInput::Auto { .. } => Err(tracker_error("Auto cleanup fill is unsupported")),
         ScalarEditInput::Clear => Err(tracker_error("cleanup fill requires a typed stored value")),
         ScalarEditInput::Text { value } => Ok(Value::Text(value.clone())),
         ScalarEditInput::Number { input } => {
@@ -553,6 +554,7 @@ pub(crate) fn convert_value(value: &Value, kind: &FieldType) -> Result<Value, De
         }
     };
     match kind {
+        FieldType::Auto => Err(tracker_error("Auto column retyping is unsupported")),
         FieldType::Text => Ok(Value::Text(text)),
         FieldType::Number => text
             .parse::<f64>()
