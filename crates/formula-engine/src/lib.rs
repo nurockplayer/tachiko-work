@@ -2571,7 +2571,10 @@ fn pregraph_failures(
             continue;
         }
         let mut invalid_targets = BTreeMap::new();
-        if let Some(failure) = reference_failure(document, field, true) {
+        if let Some(failure) = matches!(value, Value::Formula(_))
+            .then(|| reference_failure(document, field, true))
+            .flatten()
+        {
             invalid_targets.insert(field.clone(), failure);
         }
         if let Value::Formula(expression) = value {

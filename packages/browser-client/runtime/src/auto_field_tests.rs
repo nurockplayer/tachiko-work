@@ -53,7 +53,7 @@ fn tags(runtime: &DesignerRuntime, collection: &str) -> Vec<Option<StoredValuePr
         .unwrap()
         .rows
         .iter()
-        .map(|row| row.fields[0].stored.clone())
+        .map(|row| row.fields.first().and_then(|field| field.stored.clone()))
         .collect()
 }
 
