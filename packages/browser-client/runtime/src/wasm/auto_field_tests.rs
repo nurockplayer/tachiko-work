@@ -57,10 +57,10 @@ fn scalar_edits(host: &mut DesignerHost, target: &Value, collection: &Value) -> 
             &json!({"type":"edit_scalar", "expected_revision":revision,
             "target":target, "input":{"kind":"auto", "input":input}}),
         );
-        revision = publication["resulting_revision"]
+        publication["resulting_revision"]
             .as_str()
             .unwrap()
-            .to_owned();
+            .clone_into(&mut revision);
         let window = ok(
             host,
             &json!({"type":"query_table_window", "expected_revision":revision,
@@ -74,20 +74,20 @@ fn scalar_edits(host: &mut DesignerHost, target: &Value, collection: &Value) -> 
             &json!({"type":"edit_scalar", "expected_revision":revision,
             "target":target, "input":input}),
         );
-        revision = publication["resulting_revision"]
+        publication["resulting_revision"]
             .as_str()
             .unwrap()
-            .to_owned();
+            .clone_into(&mut revision);
     }
     for direction in ["undo", "undo", "undo", "redo"] {
         let publication = ok(
             host,
             &json!({"type":direction, "expected_revision":revision}),
         );
-        revision = publication["resulting_revision"]
+        publication["resulting_revision"]
             .as_str()
             .unwrap()
-            .to_owned();
+            .clone_into(&mut revision);
     }
     revision
 }

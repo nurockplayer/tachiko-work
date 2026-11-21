@@ -136,7 +136,7 @@ fn auto_paste_undo_redo_restores_values_tags_and_implied_displays() {
     let presentation = runtime.presentation.clone();
     let revision = runtime.current_revision().to_owned();
     runtime.history_edit(&revision, false).unwrap();
-    assert!(runtime.query_table(&collection).unwrap().rows.is_empty());
+    assert_eq!(runtime.query_table(&collection).unwrap().rows.len(), 0);
     assert!(runtime.presentation.is_empty());
     let revision = runtime.current_revision().to_owned();
     runtime.history_edit(&revision, true).unwrap();
