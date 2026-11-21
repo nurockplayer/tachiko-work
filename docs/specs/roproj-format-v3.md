@@ -43,6 +43,21 @@ unknown-member rejection, ID ordering, formula rules, definition rules, and
 canonical JSON/JSONL bytes remain exactly as incorporated. No extension member,
 nullable member, sidecar, or alternate alias exists.
 
+## Imported workbook companion — #869
+
+Import metadata is not a v3 DTO or tree member. ADR-0042 §5 excludes the
+client-held mapping/fidelity ledger from CORE packages, and ADR-0046's closed
+revision list does not admit an import-metadata entry. Neither the v3 tree nor
+portable-package entry vocabulary changes for #869.
+
+The browser kit instead returns an optional `import_metadata` companion beside
+project export bytes when the occurrence has an imported workbook mapping.
+Hosts persist it separately and supply it to imported-project open. The supplied
+mapping is authoritative and passes the existing identity, profile and export
+closure validation; the package supplies none. Omitting it retains existing
+CORE-only open behavior. Exporting an untouched import or reopening and exporting
+a previously saved CORE package preserves its exact canonical/package bytes.
+
 ## Manifest and tree envelope
 
 `manifest.json` has fixed member order `format`, `format_version`, `document`:

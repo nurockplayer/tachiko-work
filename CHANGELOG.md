@@ -10,6 +10,12 @@ All notable changes to Tachiko Work are documented in this file.
   styles follow record identity and survive v3/portable `.ro` save and reopen.
   First slice of #815; border editing and complete edited-style XLSX export follow.
 
+- Imported workbook project and portable `.ro` exports return an
+  `import_metadata` companion. Imported-project open accepts that companion
+  with `.ro` bytes, retaining sheet names, source order and XLSX export after
+  add/rename/delete. CORE package bytes stay unchanged; standalone CORE-only
+  open still requires the companion for import fidelity (#869, ADR-0042 fallback).
+
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes
   for large selections (#839).
