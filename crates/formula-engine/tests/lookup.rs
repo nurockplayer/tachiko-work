@@ -143,7 +143,7 @@ fn result(document: &Document) -> Number {
     let CalculationOutcome::Complete(calculation) = calculate_complete(document) else {
         panic!("lookup must succeed")
     };
-    calculation.values()[&owner()]
+    calculation.value(&owner()).unwrap()
 }
 
 fn failure(document: &Document) -> CalculationFailure {
@@ -338,7 +338,7 @@ fn update(
     let CalculationOutcome::Complete(calculation) = retained.outcome() else {
         panic!("lookup succeeds after edit")
     };
-    assert_eq!(calculation.values()[&owner()], number(expected));
+    assert_eq!(calculation.value(&owner()), Some(number(expected)));
 }
 
 #[test]

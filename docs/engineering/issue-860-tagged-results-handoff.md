@@ -1,6 +1,7 @@
 # Issue #860: Date outcome decision handoff
 
-Status: Date projection support added; engine production of Date outcomes is pending.
+Status: Date projection support and tagged retained value storage added; engine
+production of Date outcomes is pending.
 Checked: 2026-11-21 19:37 JST.
 Base: `f5d3b2b59d695d95244b21647cc53bf4b302de9c`.
 
@@ -30,10 +31,10 @@ The current `CalculationProjection` serializer and deserializer require
 `value: f64`; `CalculationProjection::number()` returns it for every successful
 outcome. Numeric consumers must account for Date-tagged results.
 
-The remaining engine path is `Calculation.values`, retained calculation state,
-`evaluation::Evaluation::number`, and `FormulaCalculationOutcome::Value`.
-The partitioned map is already generic; its lookup integration and direct
-numeric consumers also need updating. The current type surface contains only
+The remaining engine path is `evaluation::Evaluation::number`, Date references,
+and connecting retained tagged outcomes to `FormulaCalculationOutcome`. The
+partitioned value map now carries Number or Date; its numeric lookup currently
+exposes only Numbers. The current type surface contains only
 Number/Condition expressions and no Auto field type. Keep declared-column
 admission atomic under ADR-0047 §4; introducing Auto is outside this brief.
 

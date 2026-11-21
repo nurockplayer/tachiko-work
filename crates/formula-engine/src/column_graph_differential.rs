@@ -784,7 +784,7 @@ mod reference {
                 expected
                     .values
                     .iter()
-                    .map(|(key, value)| (key.clone(), *value)),
+                    .map(|(key, value)| (key.clone(), crate::CalculatedValue::Number(*value))),
             );
             for (owner, expression) in formulas {
                 for column in crate::extract_column_totals(expression) {
@@ -1312,7 +1312,13 @@ fn retained_update_matches_the_expanded_reference_after_row_edits() {
             );
             match (retained.outcome(), expected.failures.is_empty()) {
                 (CalculationOutcome::Complete(calculation), true) => {
-                    assert!(calculation.values().iter().eq(expected.values.iter()));
+                    assert!(
+                        calculation
+                            .values()
+                            .iter()
+                            .map(|(field, value)| (field, value.number().unwrap()))
+                            .eq(expected.values.iter())
+                    );
                 }
                 (CalculationOutcome::Failed(failures), false) => {
                     assert_eq!(failures.failures(), &expected.failures);
@@ -1392,7 +1398,11 @@ fn retained_update_matches_the_expanded_reference_after_schema_moves() {
             match retained.outcome() {
                 CalculationOutcome::Complete(calculation) => {
                     assert!(
-                        calculation.values().iter().eq(expected.values.iter()),
+                        calculation
+                            .values()
+                            .iter()
+                            .map(|(field, value)| (field, value.number().unwrap()))
+                            .eq(expected.values.iter()),
                         "{from} to {to}"
                     );
                 }
@@ -1787,7 +1797,12 @@ fn fixed_failures(document: &Document) -> BTreeMap<FieldRef, CalculationFailure>
 
 fn fixed_values(document: &Document) -> crate::PartitionedMap<FieldRef, Number> {
     match calculate_complete(document) {
-        CalculationOutcome::Complete(calculation) => calculation.values().clone(),
+        CalculationOutcome::Complete(calculation) => crate::PartitionedMap::from_sorted_iter(
+            calculation
+                .values()
+                .iter()
+                .map(|(field, value)| (field.clone(), *value.number().unwrap())),
+        ),
         CalculationOutcome::Failed(failures) => {
             panic!(
                 "expected a complete calculation, got {} failures",
@@ -1967,7 +1982,12 @@ fn if_branch_document() -> Document {
 /// A partial view of the value map even when the document has failures.
 fn fixed_values_ignoring_failures(document: &Document) -> crate::PartitionedMap<FieldRef, Number> {
     let parts = super::full_calculation_parts(document);
-    parts.values
+    crate::PartitionedMap::from_sorted_iter(
+        parts
+            .values
+            .iter()
+            .map(|(field, value)| (field.clone(), *value.number().unwrap())),
+    )
 }
 
 fn flip_if_branch(document: &mut Document) -> BTreeSet<FieldRef> {
@@ -2402,7 +2422,11 @@ fn fixed_column_documents_match_the_expanded_reference() {
         match retained.outcome() {
             CalculationOutcome::Complete(calculation) => {
                 assert!(
-                    calculation.values().iter().eq(expected.values.iter()),
+                    calculation
+                        .values()
+                        .iter()
+                        .map(|(field, value)| (field, value.number().unwrap()))
+                        .eq(expected.values.iter()),
                     "{name}: values after a retained edit"
                 );
             }

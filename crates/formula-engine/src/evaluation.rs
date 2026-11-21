@@ -109,7 +109,7 @@ impl ColumnCache {
             let cell = match value {
                 Value::Number(_) | Value::Formula(_) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.formula_value(&reference) else {
+                    let Some(value) = values.number_value(&reference) else {
                         // The walk fails at this row whatever its key says.
                         index.scan = true;
                         continue;
@@ -147,7 +147,7 @@ impl ColumnCache {
             let cell = match entity.fields.get(&column.field) {
                 Some(Value::Number(_) | Value::Formula(_)) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.formula_value(&reference) else {
+                    let Some(value) = values.number_value(&reference) else {
                         continue;
                     };
                     CriterionCell::Number(value.get())
@@ -184,7 +184,7 @@ impl ColumnCache {
             if first_failed.is_none() && failures.contains_key(&reference) {
                 first_failed = Some(reference.clone());
             }
-            match values.formula_value(&reference) {
+            match values.number_value(&reference) {
                 Some(value) => {
                     present.push(value.get());
                     total += value.get();
@@ -736,7 +736,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
         {
             if entity.fields.contains_key(&column.field) {
                 let reference = FieldRef::new(entity.id.clone(), column.field.clone());
-                let Some(value) = self.values.formula_value(&reference) else {
+                let Some(value) = self.values.number_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -786,7 +786,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             // Excel compares a blank referenced cell as zero.
             None => Ok(CriterionTest::equal_number(0.0)),
             Some(Value::Number(_) | Value::Formula(_)) => {
-                let Some(value) = self.values.formula_value(reference) else {
+                let Some(value) = self.values.number_value(reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference.clone()]),
                     });
@@ -811,7 +811,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             None => Ok(None),
             Some(Value::Number(_) | Value::Formula(_)) => {
                 let reference = FieldRef::new(entity.id.clone(), field.clone());
-                let Some(value) = self.values.formula_value(&reference) else {
+                let Some(value) = self.values.number_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -859,7 +859,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
     }
 
     fn reference(&self, reference: &FieldRef) -> Result<Number, CalculationFailure> {
-        if let Some(value) = self.values.formula_value(reference) {
+        if let Some(value) = self.values.number_value(reference) {
             return Ok(*value);
         }
         if self

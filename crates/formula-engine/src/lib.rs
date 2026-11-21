@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Document, Expression, FieldAddress, FieldRef, FieldType,
+    ConditionalAggregate, Date, Document, Expression, FieldAddress, FieldRef, FieldType,
     FormulaExpressionType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
@@ -1113,9 +1113,25 @@ pub fn extract_dependencies(
     dependencies
 }
 
+/// A successful, runtime-only formula result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CalculatedValue {
+    Number(Number),
+    Date(Date),
+}
+
+impl CalculatedValue {
+    fn number(&self) -> Option<&Number> {
+        match self {
+            Self::Number(number) => Some(number),
+            Self::Date(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
     graph: DependencyGraph,
 }
 
@@ -1170,7 +1186,7 @@ pub struct IncrementalCalculationTransition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RetainedNodeProjection {
-    Value(Number),
+    Value(CalculatedValue),
     Failure(CalculationFailure),
     Unavailable,
 }
@@ -1184,7 +1200,7 @@ struct DirtyCalculationImpact {
 
 struct FullCalculationParts {
     nodes: PartitionedSet<FieldRef>,
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
     failures: FailureMap,
     graph: DependencyGraph,
 }
@@ -1507,14 +1523,14 @@ impl RetainedCalculationState {
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
         self.failures
             .is_empty()
-            .then(|| self.calculation.values.get(field).copied())
+            .then(|| self.calculation.value(field))
             .flatten()
     }
 
     /// Return the complete published value map only for an atomic successful
     /// outcome.
     #[must_use]
-    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, Number>> {
+    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, CalculatedValue>> {
         self.failures.is_empty().then_some(&self.calculation.values)
     }
 
@@ -1840,11 +1856,19 @@ pub enum ColumnFailure {
 impl Calculation {
     #[must_use]
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
+        self.values
+            .get(field)
+            .and_then(CalculatedValue::number)
+            .copied()
+    }
+
+    #[must_use]
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
         self.values.get(field).copied()
     }
 
     #[must_use]
-    pub fn values(&self) -> &PartitionedMap<FieldRef, Number> {
+    pub fn values(&self) -> &PartitionedMap<FieldRef, CalculatedValue> {
         &self.values
     }
 
@@ -1859,7 +1883,7 @@ impl Calculation {
             .into_iter()
             .filter_map(|(field, before, value)| {
                 if self.graph.is_formula(field) || after.graph.is_formula(field) {
-                    Some((field.clone(), *before?, *value?))
+                    Some((field.clone(), *before?.number()?, *value?.number()?))
                 } else {
                     None
                 }
@@ -2640,14 +2664,17 @@ fn assign_cycle_failures(
     }
 }
 
-fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<FieldRef, Number> {
+fn initial_values(
+    nodes: &ValueNodes<'_>,
+    failures: &FailureMap,
+) -> BTreeMap<FieldRef, CalculatedValue> {
     // Valid stored numbers are the initial ready values. Failed stored nodes
     // remain primary failures but never become partial published state.
     nodes
         .iter()
         .filter_map(|(field, value)| match value {
             Value::Number(number) if !failures.contains_key(field) => {
-                Some((field.clone(), *number))
+                Some((field.clone(), CalculatedValue::Number(*number)))
             }
             _ => None,
         })
@@ -2697,18 +2724,25 @@ fn remaining_counts(
     (dependency_counts, column_counts)
 }
 
-trait ValueStore: tachiko_semantic_core::FormulaValueLookup {
-    fn put(&mut self, field: FieldRef, value: Number);
+trait ValueStore {
+    fn number_value(&self, field: &FieldRef) -> Option<&Number>;
+    fn put(&mut self, field: FieldRef, value: CalculatedValue);
 }
 
-impl ValueStore for BTreeMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for BTreeMap<FieldRef, CalculatedValue> {
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
 
-impl ValueStore for PartitionedMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for PartitionedMap<FieldRef, CalculatedValue> {
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
@@ -2759,7 +2793,7 @@ fn evaluate_remaining_formulas<V: ValueStore>(
         if failed_dependencies.is_empty() {
             match evaluation.number(expression) {
                 Ok(value) => {
-                    values.put(formula.clone(), value);
+                    values.put(formula.clone(), CalculatedValue::Number(value));
                 }
                 Err(failure) => {
                     failures.insert(formula.clone(), failure);
@@ -3071,8 +3105,8 @@ mod causal_visits {
     }
 }
 
-impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, Number> {
+impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, CalculatedValue> {
     fn formula_value(&self, field: &FieldRef) -> Option<&Number> {
-        self.get(field)
+        self.get(field).and_then(CalculatedValue::number)
     }
 }
