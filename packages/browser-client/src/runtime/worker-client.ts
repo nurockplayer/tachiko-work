@@ -10,6 +10,7 @@ import type {
   FormulaCopy,
   TrackerCommand,
   BootstrapProjection,
+  ProjectInspectionProjection,
   CapacityProjection,
   CanonicalTreeExport,
   CanonicalProjectFile,
@@ -297,6 +298,11 @@ export class WorkerDesignerClient implements DesignerClient {
         occurrence_id: freshOccurrenceId(),
       }),
     );
+  }
+
+  /** Recover the current imported mapping without reopening saved bytes. */
+  async inspectCurrentProject(): Promise<ProjectInspectionProjection> {
+    return expectResponse("project_inspected", await this.#command({type: "inspect_project"}));
   }
 
   async queryCapacity(expectedRevision?: string): Promise<CapacityProjection> {
@@ -851,6 +857,7 @@ function expectResponse(type: "imported", response: DesignerResponse): ImportedP
 function expectResponse(type: "imported_window", response: DesignerResponse): ImportedWindowProjection;
 function expectResponse(type: "cleanup_preview", response: DesignerResponse): CleanupPreview;
 function expectResponse(type: "capacity", response: DesignerResponse): CapacityProjection;
+function expectResponse(type: "project_inspected", response: DesignerResponse): ProjectInspectionProjection;
 function expectResponse(
   type: "bootstrap",
   response: DesignerResponse,
@@ -927,6 +934,9 @@ function expectResponse(
   // Validate the additive optional-field metadata without normalizing the
   // sparse Rust payload (or fabricating empty Text for absent slots).
   switch (response.type) {
+    case "project_inspected":
+      if (response.payload.import_metadata !== undefined) validateImportMetadata(response.payload.import_metadata);
+      break;
     case "table": validateTablePresence(response.payload); break;
     case "table_window": validateTablePresence(response.payload); break;
     case "located_in_view": validateLocatedInView(response.payload); break;

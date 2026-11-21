@@ -263,6 +263,7 @@ pub struct SelectionStatisticsRange {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DesignerRequest {
+    InspectProject,
     Bootstrap {
         occurrence_id: String,
     },
@@ -561,6 +562,7 @@ pub enum DesignerRequest {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum DesignerResponse {
+    ProjectInspected(ProjectInspectionProjection),
     Bootstrap(BootstrapProjection),
     Capacity(CapacityProjection),
     Opened(Box<OpenedProjection>),
@@ -596,6 +598,14 @@ pub enum DesignerResponse {
 pub struct OpenedProjection {
     pub bootstrap: BootstrapProjection,
     pub table: TableProjection,
+}
+
+/// Read-only inspection of the resident occurrence, without admitting saved bytes.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ProjectInspectionProjection {
+    pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_metadata: Option<InteropMetadata>,
 }
 
 /// A profile a host can ask for. Serialized `"working_size"`.
@@ -2429,6 +2439,8 @@ pub struct DesignerRuntime {
     /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
     imported: Option<imported_lifecycle::ImportedState>,
+    /// Remains true after Undo restores the untouched mapping.
+    import_metadata_published: bool,
 }
 
 /// Most bytes a working-size session's undo and redo history holds together.
@@ -3424,6 +3436,7 @@ impl DesignerRuntime {
             presentation: PresentationStore::default(),
             presentation_saved_bytes: 0,
             imported: None,
+            import_metadata_published: false,
         };
         Ok(runtime)
     }
@@ -4092,6 +4105,16 @@ impl DesignerRuntime {
             DesignerRequest::Bootstrap { .. } => {
                 Ok(DesignerResponse::Bootstrap(self.bootstrap_projection()))
             }
+            DesignerRequest::InspectProject => Ok(DesignerResponse::ProjectInspected(
+                ProjectInspectionProjection {
+                    revision: self.current_revision().to_owned(),
+                    import_metadata: self
+                        .imported
+                        .as_ref()
+                        .filter(|_| self.import_metadata_published)
+                        .map(|state| state.metadata.clone()),
+                },
+            )),
             DesignerRequest::QueryCapacity { expected_revision } => {
                 if let Some(expected) = expected_revision {
                     self.check_revision(&expected)?;
@@ -7991,6 +8014,7 @@ impl DesignerRuntime {
         }
         let mut publication = self.published_projection(&invalidation);
         if mapping_changed {
+            self.import_metadata_published = true;
             publication.import_metadata =
                 self.imported.as_ref().map(|state| state.metadata.clone());
         }

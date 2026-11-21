@@ -11,6 +11,12 @@ All notable changes to Tachiko Work are documented in this file.
   delta/conflict v2 preserve it, frozen writers refuse it, and Auto formula
   entry remains explicitly unsupported (#887, #668 PR1).
 
+- Resident project inspection (`inspectCurrentProject`) recovers the current
+  imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
+  callers can export without reopening. The optional mapping is omitted for
+  untouched imports and non-imported projects; existing replies stay unchanged
+  (#870).
+
 - Imported workbook project and portable `.ro` exports return an
   `import_metadata` companion. Imported-project open accepts that companion
   with `.ro` bytes, retaining sheet names, source order and XLSX export after

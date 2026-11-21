@@ -261,6 +261,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         redo: Vec::new(),
         pending_cleanup: None,
         imported: None,
+        import_metadata_published: false,
         duplicate_serial: 0,
         opened_from_v3: false,
         presentation: crate::PresentationStore::default(),
