@@ -2304,10 +2304,12 @@ pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &Fie
         (
             SemanticValueKind::Number | SemanticValueKind::Formula,
             FieldType::Number
-        ) | (SemanticValueKind::Formula, FieldType::Date)
+        ) | (
+            SemanticValueKind::Formula | SemanticValueKind::Date,
+            FieldType::Date
+        )
             | (SemanticValueKind::Text, FieldType::Text)
             | (SemanticValueKind::Boolean, FieldType::Boolean)
-            | (SemanticValueKind::Date, FieldType::Date)
             | (SemanticValueKind::Reference, FieldType::Reference { .. })
     )
 }
