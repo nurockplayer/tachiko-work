@@ -4,6 +4,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Formula calculations retain Date results for Date references and whole-day
+  addition and subtraction, and publish their Date tag to browser clients (#860).
+
 - Selection statistics accept compact inclusive stored-row ranges crossed with
   field lists, preserving per-cell results while avoiding per-cell request bytes
   for large selections (#839).

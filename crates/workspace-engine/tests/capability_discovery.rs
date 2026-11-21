@@ -356,7 +356,7 @@ fn value_for_kind(kind: SemanticValueKind) -> Value {
     }
 }
 
-/// A blank optional Number slot can take a formula; other blank types cannot.
+/// Blank optional Number and Date slots can take a formula.
 fn assert_blank_formula_capability(capabilities: &FieldCapabilities, authorable: bool) {
     assert_eq!(
         capability(
@@ -375,9 +375,14 @@ fn assert_blank_formula_capability(capabilities: &FieldCapabilities, authorable:
     );
 }
 
-/// Formula authoring may fill a blank optional Number slot; the generic value
+/// Formula authoring may fill a blank optional Number or Date slot; the generic value
 /// path still refuses to initialize any absent slot as a formula.
 fn assert_missing_formula_admission(document: &Document, target: FieldRef, authorable: bool) {
+    let source = if document.schemas["source"].fields["optional"].field_type == FieldType::Date {
+        "[.published]"
+    } else {
+        "1"
+    };
     let mut lifecycle = lifecycle();
     grant_formula_propose(&mut lifecycle);
     let proposed = lifecycle.propose_formula_update(
@@ -388,18 +393,18 @@ fn assert_missing_formula_admission(document: &Document, target: FieldRef, autho
             ProposalId::from("missing-formula"),
             SemanticRevision::from("r1"),
             target.clone(),
-            "1",
+            source,
             PrincipalId::from("agent"),
         ),
         NOW,
     );
-    assert_eq!(proposed.is_ok(), authorable);
+    assert_eq!(proposed.is_ok(), authorable, "{proposed:?}");
     // The direct authoring API (`tachiko formula set`) agrees.
     assert_eq!(
         set_formula(
             document,
             &FieldAddress::new(target.entity.as_str(), target.field.as_str()),
-            "1"
+            source
         )
         .is_ok(),
         authorable
@@ -493,7 +498,7 @@ fn absent_optional_discovery_matches_all_typed_initializers_and_preserves_absenc
             );
             assert_eq!(result.is_ok(), input_kind == kind, "{result:?}");
         }
-        let authorable = field_type == FieldType::Number;
+        let authorable = matches!(field_type, FieldType::Number | FieldType::Date);
         assert_blank_formula_capability(&capabilities, authorable);
         for (family, input) in [
             (

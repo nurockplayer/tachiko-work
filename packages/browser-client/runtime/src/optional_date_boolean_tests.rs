@@ -514,3 +514,99 @@ fn date_format_lifecycle_refusals_and_v3_roundtrip() {
         Some("2026年11月7日")
     );
 }
+
+#[test]
+fn date_formula_authoring_recalculates_and_undo_restores_date() {
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Tasks",
+        &[column("Due", "date", false), column("Later", "date", false)],
+    )
+    .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let ids: Vec<_> = runtime
+        .query_table(&collection)
+        .unwrap()
+        .columns
+        .iter()
+        .map(|c| c.id.clone())
+        .collect();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .insert_row(
+            None,
+            &revision,
+            &collection,
+            &[
+                RowInitializer {
+                    field: ids[0].clone(),
+                    input: ScalarEditInput::Date {
+                        value: "2026-01-02".into(),
+                    },
+                },
+                RowInitializer {
+                    field: ids[1].clone(),
+                    input: ScalarEditInput::Date {
+                        value: "2026-02-01".into(),
+                    },
+                },
+            ],
+        )
+        .unwrap();
+    let row = row_ids(&runtime, &collection)[0].clone();
+    let target = FieldTarget {
+        entity: row.clone(),
+        field: ids[1].clone(),
+    };
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .update_formula(&revision, &target, "=[.due] + 7")
+        .unwrap();
+    let calculated = |runtime: &DesignerRuntime| {
+        table(runtime, &collection).rows[0]
+            .fields
+            .iter()
+            .find(|f| f.target.field == ids[1])
+            .unwrap()
+            .calculated
+            .clone()
+    };
+    let result = |date: &str| {
+        Some(CalculationProjection::Value {
+            value: if date == "2026-01-09" {
+                20462.0
+            } else {
+                20463.0
+            },
+            result: Some(super::StoredValueProjection::Date {
+                value: super::Date::parse(date).unwrap(),
+            }),
+        })
+    };
+    assert_eq!(calculated(&runtime), result("2026-01-09"));
+    history(&mut runtime, false);
+    let field = table(&runtime, &collection).rows[0]
+        .fields
+        .iter()
+        .find(|f| f.target.field == ids[1])
+        .unwrap()
+        .clone();
+    assert_eq!(
+        field.stored,
+        Some(super::StoredValueProjection::Date {
+            value: super::Date::parse("2026-02-01").unwrap()
+        })
+    );
+    history(&mut runtime, true);
+    edit(
+        &mut runtime,
+        &row,
+        &ids[0],
+        ScalarEditInput::Date {
+            value: "2026-01-03".into(),
+        },
+    );
+    assert_eq!(calculated(&runtime), result("2026-01-10"));
+    history(&mut runtime, false);
+    assert_eq!(calculated(&runtime), result("2026-01-09"));
+}

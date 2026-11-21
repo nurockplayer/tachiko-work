@@ -6,6 +6,16 @@ use super::{
 };
 
 #[test]
+fn calculated_date_projects_tag_and_day_number() {
+    let date = tachiko_semantic_core::Date::parse("2026-01-02").unwrap();
+    let projection = calculation_projection(&FormulaCalculationOutcome::Date(date));
+    assert_eq!(
+        serde_json::to_value(projection).unwrap(),
+        json!({"status": "value", "value": 20455.0, "result": {"kind": "date", "value": "2026-01-02"}})
+    );
+}
+
+#[test]
 fn calculated_number_preserves_main_wire_bytes_and_failure_keeps_its_code() {
     let number =
         calculation_projection(&FormulaCalculationOutcome::Value(Number::new(2.5).unwrap()));
@@ -96,4 +106,54 @@ fn budget_table_wire_omits_number_tags_beside_stored_dates() {
     }
     assert!(formulas > 0);
     assert!(stored_dates > 0);
+}
+
+#[test]
+fn published_row_contains_calculated_date_and_number() {
+    use tachiko_semantic_core::{Expression, FieldId, FieldRef, Value};
+
+    let mut document =
+        DesignerRuntime::budget_document("00000000-0000-4000-8000-000000000860").unwrap();
+    let date = FieldRef::new("rent", "due_date");
+    let expression = Expression::Add {
+        left: Box::new(Expression::Reference(date)),
+        right: Box::new(Expression::Number(Number::new(7.0).unwrap())),
+    };
+    document
+        .entities
+        .get_mut("utilities")
+        .unwrap()
+        .fields
+        .insert(FieldId::from("due_date"), Value::Formula(expression));
+    let mut runtime =
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000860").unwrap();
+    let DesignerResponse::Table(table) = runtime
+        .handle(DesignerRequest::QueryTable {
+            collection: "budget_items".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected budget table");
+    };
+    let wire = serde_json::to_value(table).unwrap();
+    let fields = wire["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["fields"].as_array().unwrap())
+        .find(|fields| {
+            fields
+                .iter()
+                .any(|field| field["calculated"]["result"]["kind"] == "date")
+        })
+        .expect("a row with a calculated Date");
+    assert!(fields.iter().any(
+        |field| field["calculated"]["result"] == json!({"kind": "date", "value": "2026-09-08"})
+    ));
+    assert!(
+        fields
+            .iter()
+            .any(|field| field["calculated"]["status"] == "value"
+                && field["calculated"].get("result").is_none())
+    );
 }
