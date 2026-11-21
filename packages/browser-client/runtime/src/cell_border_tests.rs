@@ -257,13 +257,16 @@ fn imported_styles_are_promoted_edited_saved_and_exported_in_both_profiles() {
         extra_columns: vec![Vec::new()],
     };
     for working in [false, true] {
-        let (mut runtime, opened) = if working {
-            crate::import_workbook_working_size(&source, &selection, OCCURRENCE)
+        let (mut runtime, metadata) = if working {
+            let (runtime, opened) =
+                crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+            (runtime, opened.metadata)
         } else {
-            crate::import_workbook(&source, &selection, OCCURRENCE)
-        }
-        .unwrap();
-        let sheet = &opened.metadata.sheets[0];
+            let (runtime, opened) =
+                crate::import_workbook(&source, &selection, OCCURRENCE).unwrap();
+            (runtime, opened.metadata)
+        };
+        let sheet = &metadata.sheets[0];
         let fields: Vec<_> = sheet.columns[1..]
             .iter()
             .map(|column| &column.field_id)
@@ -285,7 +288,7 @@ fn imported_styles_are_promoted_edited_saved_and_exported_in_both_profiles() {
             .unwrap();
         let (reopened, _) = crate::admit_portable_ro(&saved.bytes, OCCURRENCE).unwrap();
         let workbook = reopened
-            .export_workbook(reopened.current_revision(), &opened.metadata)
+            .export_workbook(reopened.current_revision(), &metadata)
             .unwrap();
         let result = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
         let rows = &result.sheets[0].rows;
