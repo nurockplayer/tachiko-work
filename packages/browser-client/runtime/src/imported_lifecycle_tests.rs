@@ -9,13 +9,13 @@ use crate::interop_adapter::{
 };
 use crate::{
     DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, NewTableColumnInput, import_workbook,
-    import_workbook_working_size, open_imported_project, open_project,
+    ImportSelection, InteropMetadata, NewTableColumnInput, ProjectInspectionProjection,
+    import_workbook, import_workbook_working_size, open_imported_project, open_project,
 };
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000859";
 
-fn fixture(formula: bool) -> SourceWorkbook {
+pub(super) fn fixture(formula: bool) -> SourceWorkbook {
     SourceWorkbook {
         ledger: Vec::new(),
         sheets: ["Input", "Scratch"]
@@ -42,7 +42,7 @@ fn fixture(formula: bool) -> SourceWorkbook {
     }
 }
 
-fn selection() -> ImportSelection {
+pub(super) fn selection() -> ImportSelection {
     ImportSelection {
         column_types: vec![vec![ImportFieldType::Number]; 2],
         extra_columns: vec![vec![]; 2],
@@ -54,6 +54,63 @@ fn imported(formula: bool) -> (DesignerRuntime, InteropMetadata) {
     let source = import_xlsx(&export_xlsx(&fixture(formula)).unwrap()).unwrap();
     let (runtime, projection) = import_workbook(&source, &selection(), OCCURRENCE).unwrap();
     (runtime, projection.metadata)
+}
+
+fn inspect_current(runtime: &mut DesignerRuntime) -> ProjectInspectionProjection {
+    let DesignerResponse::ProjectInspected(inspection) =
+        runtime.handle(DesignerRequest::InspectProject).unwrap()
+    else {
+        panic!("expected resident project inspection");
+    };
+    inspection
+}
+
+#[test]
+fn inspect_recovers_lost_rename_mapping_for_xlsx_export() {
+    let (mut runtime, _) = imported(false);
+    let published = runtime
+        .rename_table("resident/0", "sheet_1", "Renamed Input")
+        .unwrap();
+    let inspection = inspect_current(&mut runtime);
+    assert_eq!(inspection.revision, "resident/1");
+    assert_eq!(inspection.import_metadata, published.import_metadata);
+    let recovered = inspection.import_metadata.unwrap();
+    let workbook = import_xlsx(&xlsx(&runtime, &recovered)).unwrap();
+    assert_eq!(workbook.sheets.len(), 2);
+    assert_eq!(workbook.sheets[0].name, "Renamed Input");
+}
+
+#[test]
+fn inspect_recovers_post_undo_mapping_for_xlsx_export() {
+    let (mut runtime, original) = imported(false);
+    runtime
+        .rename_table("resident/0", "sheet_1", "Renamed Input")
+        .unwrap();
+    let undone = runtime.history_edit("resident/1", false).unwrap();
+    let inspection = inspect_current(&mut runtime);
+    assert_eq!(inspection.revision, "resident/2");
+    assert_eq!(inspection.import_metadata, undone.import_metadata);
+    assert_eq!(inspection.import_metadata.as_ref(), Some(&original));
+    let workbook = import_xlsx(&xlsx(&runtime, &inspection.import_metadata.unwrap())).unwrap();
+    assert_eq!(workbook.sheets[0].name, "Input");
+}
+
+#[test]
+fn inspect_omits_mapping_and_preserves_untouched_import_and_native_replies() {
+    let (mut runtime, _) = imported(false);
+    let before = snapshot(&runtime);
+    let bootstrap = serde_json::to_vec(&runtime.bootstrap_projection()).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&inspect_current(&mut runtime)).unwrap(),
+        br#"{"revision":"resident/0"}"#,
+    );
+    assert_eq!(
+        serde_json::to_vec(&runtime.bootstrap_projection()).unwrap(),
+        bootstrap
+    );
+    assert_eq!(snapshot(&runtime), before);
+    let mut native = DesignerRuntime::moonfall(OCCURRENCE).unwrap();
+    assert!(inspect_current(&mut native).import_metadata.is_none());
 }
 
 fn columns() -> Vec<NewTableColumnInput> {

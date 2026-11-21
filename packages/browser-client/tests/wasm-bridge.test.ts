@@ -45,6 +45,16 @@ async function fixture(receiptLength: number, arenaLength: number, responseType 
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+describe("resident project inspection WASM transport", () => {
+  it.each([false, true])("preserves optional import metadata (%s)", async present => {
+    const payload = {revision: "resident/1", ...(present ? {import_metadata: {version: 2, sheets: []}} : {})};
+    const {bridge} = await fixture(0, 0, "project_inspected", payload);
+    expect(bridge.request({type: "inspect_project"})).toEqual({
+      status: "ok", response: {type: "project_inspected", payload},
+    });
+  });
+});
+
 describe("table WASM projection transport", () => {
   it.each([false, true])("preserves explicit-name presence without inferring it from spelling (%s)", async explicit => {
     const column = {id: "field", key: "column_1", display_name: "column_1", field_type: "text", required: false,
