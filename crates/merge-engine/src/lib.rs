@@ -30,6 +30,7 @@ pub enum MergeOutcome {
     UnsupportedNumberFormat,
     UnsupportedFieldOrder,
     UnsupportedRowRank,
+    UnsupportedAutoField,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -498,6 +499,16 @@ impl From<&Entity> for EntitySubject {
 /// semantic validation and operation-specific gates to inputs and candidates.
 #[must_use]
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
+    if [base, ours, theirs]
+        .iter()
+        .any(|document| document.has_auto_fields())
+    {
+        return MergeOutcome::UnsupportedAutoField;
+    }
+    merge_supported(base, ours, theirs)
+}
+
+fn merge_supported(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     if [base, ours, theirs]
         .iter()
         .any(|document| document.has_row_ranks())

@@ -705,6 +705,14 @@ fn validate_field_constraint(
     subject: SemanticSubject,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if definition.field_type == FieldType::Auto && definition.required {
+        diagnostics.push(core_diagnostic(
+            format!("{field_path}.required"),
+            DiagnosticCode::new("core.auto_field_required"),
+            "Auto fields must be optional",
+            vec![subject.clone()],
+        ));
+    }
     if let Some(format) = &definition.number_format {
         if let Err(error) = format.validate_for(&definition.field_type) {
             diagnostics.push(core_diagnostic(
@@ -779,10 +787,20 @@ fn validate_value(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match (expected, value) {
-        (FieldType::Number, Value::Number(_))
+        (
+            FieldType::Auto,
+            Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_),
+        )
+        | (FieldType::Number, Value::Number(_))
         | (FieldType::Text, Value::Text(_))
         | (FieldType::Boolean, Value::Boolean(_))
         | (FieldType::Date, Value::Date(_)) => {}
+        (FieldType::Auto, Value::Formula(_)) => diagnostics.push(core_diagnostic(
+            path(),
+            DiagnosticCode::new("core.auto_formula_unsupported"),
+            "Auto formulas are unsupported",
+            vec![SemanticSubject::EntityField(field())],
+        )),
         (FieldType::Number, Value::Formula(expression)) => {
             if include_formula_references {
                 validate_expression(document, &field(), expression, &path(), diagnostics);
@@ -1257,6 +1275,7 @@ fn validate_formula_column(
 
 fn field_type_name(field_type: &FieldType) -> &'static str {
     match field_type {
+        FieldType::Auto => "auto",
         FieldType::Number => "number",
         FieldType::Text => "text",
         FieldType::Boolean => "boolean",
@@ -1718,10 +1737,20 @@ mod issue_175_research {
     ) -> ValidationControl {
         poll_cancellation(cancelled)?;
         match (expected, value) {
-            (FieldType::Number, Value::Number(_))
+            (
+                FieldType::Auto,
+                Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_),
+            )
+            | (FieldType::Number, Value::Number(_))
             | (FieldType::Text, Value::Text(_))
             | (FieldType::Boolean, Value::Boolean(_))
             | (FieldType::Date, Value::Date(_)) => {}
+            (FieldType::Auto, Value::Formula(_)) => diagnostics.push(core_diagnostic(
+                path,
+                DiagnosticCode::new("core.auto_formula_unsupported"),
+                "Auto formulas are unsupported",
+                vec![SemanticSubject::EntityField(field.clone())],
+            )),
             (FieldType::Number, Value::Formula(expression)) => {
                 if include_formula_references {
                     validate_expression(document, field, expression, path, diagnostics, cancelled)?;

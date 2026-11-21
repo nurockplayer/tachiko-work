@@ -900,6 +900,7 @@ impl FieldDefinitionV1 {
 impl FieldTypeV1 {
     fn from_semantic(field_type: &FieldType) -> Result<Self, FormatError> {
         Ok(match field_type {
+            FieldType::Auto => return Err(FormatError::UnsupportedAutoField),
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,

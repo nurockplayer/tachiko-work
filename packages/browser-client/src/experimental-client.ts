@@ -40,7 +40,9 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 export interface ExperimentalDesignerClient extends DesignerClient {
   translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation>;
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
-  /** Explicit absence for one optional native Text/Number slot. */
+  /** Classify raw input in one Auto scalar cell. */
+  editAuto(expectedRevision: string, target: FieldTarget, input: string, dateOrder?: "month_first" | "day_first"): Promise<PublicationProjection>;
+  /** Explicit absence for one optional native scalar slot. */
   clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection>;
   /** Convert every value of one scalar column to another scalar type as one undoable edit. */
   changeColumnType(expectedRevision: string, collection: string, field: string, fieldType: string): Promise<PublicationProjection>;
@@ -192,6 +194,7 @@ export type {
   FieldTarget,
   NewTableColumnInput,
   PasteCellInput,
+  AutoDateOrder,
   ScalarEditInput,
   TrackerCommand,
   OpenedProjection,

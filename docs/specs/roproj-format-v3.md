@@ -160,11 +160,12 @@ stay omitted, so existing bytes and hashes remain exact.
 
 ### FieldType
 
-The complete v3 tag set is `number`, `text`, `boolean`, `date`, and
-`reference`, plus `auto` under the ADR-0047 section below once implemented. Scalar shapes have the sole member `type`; a reference has the
+The complete v3 tag set is `auto`, `number`, `text`, `boolean`, `date`, and
+`reference`. Scalar shapes have the sole member `type`; a reference has the
 incorporated v2 member order `type`, `schema`:
 
 ```json
+{"type":"auto"}
 {"type":"number"}
 {"type":"text"}
 {"type":"boolean"}
@@ -197,7 +198,7 @@ trimming, or repair are invalid.
 members are finite Accepted binary64 values with normalized zero, and
 `min <= max`. NaN and infinity are invalid. Constraint pairing is intrinsic:
 Text accepts `none` or `text_literal_set`, Number accepts `none` or
-`number_inclusive_range`, and Boolean/Date/Reference accept only `none`.
+`number_inclusive_range`, and Auto/Boolean/Date/Reference accept only `none`.
 
 Unknown constraint tags or members, missing members, nulls, duplicate object
 members, or a mismatched constraint/type pair fail closed. An authoring writer
@@ -206,13 +207,18 @@ decoder rejects duplicate or noncanonical input without repairing it.
 
 ### Auto field type and tagged literals — ADR-0047
 
-Implementation state: pending. Until the implementing PR lands, the writer can't
-emit these and a reader refuses them, as for any unknown tag.
+Implementation state: Auto scalar fields and their tagged Number, Text, Boolean
+and Date values are implemented (#887). Auto fields are always optional and
+unconstrained. Auto formula entry is explicitly unsupported until #668 PR5;
+the new bound literals and host input below remain pending. Frozen direct-ro/v2,
+roproj/v1 and v2, and semantic delta/conflict v1 writers refuse Auto fields;
+semantic delta/conflict v2 preserve the tag.
 
 [ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
 adds the FieldType tag `auto`, whose sole member is `type`. An Auto field has
 `required: false` and constraint `none`; anything else fails admission. Its entity
-values are Number, Text, Boolean, Date or Formula, never Reference. Optional
+values in this scalar slice are Number, Text, Boolean or Date, never Reference.
+Formula storage and evaluation remain pending under #668 PR5. Optional
 `number_format` is admitted, as on a Number field.
 
 Bound Expression gains three literals, in the existing `op` and `args` form:

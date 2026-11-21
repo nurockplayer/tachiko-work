@@ -2571,7 +2571,15 @@ fn pregraph_failures(
             continue;
         }
         let mut invalid_targets = BTreeMap::new();
-        if let Some(failure) = reference_failure(document, field, true) {
+        let auto_scalar = !matches!(value, Value::Formula(_))
+            && document.entities.get(&field.entity).is_some_and(|entity| {
+                document.schemas.get(&entity.schema).is_some_and(|schema| {
+                    schema.fields.get(&field.field).is_some_and(|definition| {
+                        definition.field_type == FieldType::Auto
+                    })
+                })
+            });
+        if let Some(failure) = reference_failure(document, field, !auto_scalar) {
             invalid_targets.insert(field.clone(), failure);
         }
         if let Value::Formula(expression) = value {

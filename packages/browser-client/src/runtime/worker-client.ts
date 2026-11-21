@@ -245,6 +245,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("published", await this.#command(request));
   }
 
+  async editAuto(expectedRevision: string, target: FieldTarget, input: string, dateOrder?: "month_first" | "day_first"): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "auto", input, ...(dateOrder === undefined ? {} : {date_order: dateOrder})}}));
+  }
+
   async clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "clear"}}));
   }
