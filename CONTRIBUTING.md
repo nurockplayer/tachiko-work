@@ -80,6 +80,22 @@ for behavior changes and prove the failure before the implementation when
 practical. Deterministic serialization, formula results, semantic diffs,
 conflict order, and diagnostics need exact assertions.
 
+Before pushing, delivery agents can run the advisory local gate for common
+late-failing Rust and documentation checks:
+
+```sh
+bash scripts/pre-push-check.sh
+```
+
+Use `bash scripts/pre-push-check.sh --fast` to skip the Rust 1.85.0 and wasm32
+checks during a quick iteration, or `--help` for toolchain selection details.
+The script honors `CARGO_TARGET_DIR`, does not install a Git hook, and does not
+replace hosted CI or the applicable exact-head validation. To keep the cargo
+load off your machine, run it through the `Remote check` workflow described
+below (`-f command='bash scripts/pre-push-check.sh'`); there Clippy uses the
+workflow's toolchain and a missing Rust 1.85.0 is installed (about 2 minutes
+end to end on a warm cache).
+
 Before requesting review, run the fast workspace gate:
 
 ```sh

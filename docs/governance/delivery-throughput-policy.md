@@ -124,6 +124,11 @@ Run the smallest targeted unit, acceptance, integration, lint, build, or documen
 
 Before merge, run the applicable Steward-authored acceptance surface, applicable delivery-agent unit tests, and all repository-required or risk-applicable checks against the exact final head. For each non-applicable acceptance or unit-test class, the owning Issue must contain a separate explicit bounded applicability exception decided by the Steward and identify the document/refactor checks and review evidence that replace that class; an exception never waives the other applicable class. Fast/Standard classification never waives a required hosted check.
 
+For a quick local pre-push pass over common late-failing Rust and documentation
+checks, the delivery agent may run `bash scripts/pre-push-check.sh` (or use
+`--fast` to omit its Rust 1.85.0 and wasm32 checks). This advisory helper does
+not replace the exact-head checks or required hosted CI above.
+
 ### Guarded, milestone, and release gates
 
 Run the broader regression/compatibility surface appropriate to the affected subsystem. At milestone or release boundaries, run the repository's full integrated regression/release gate where available, or explicitly record the bounded substitute when an external requirement cannot be executed in the current environment.
