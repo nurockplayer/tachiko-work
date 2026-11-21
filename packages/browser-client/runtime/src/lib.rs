@@ -7110,6 +7110,7 @@ impl DesignerRuntime {
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         let mut inverse = None;
+        let source = source.strip_prefix('=').unwrap_or(source);
         let (publication, forward) =
             self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
         let inverse =
