@@ -83,7 +83,8 @@ mod enabled {
         CapacityCounters {
             document_clones: DOCUMENT_CLONES.load(Ordering::Relaxed),
             publication_entities_inspected: PUBLICATION_ENTITIES_INSPECTED.load(Ordering::Relaxed),
-            publication_field_slots_enumerated: PUBLICATION_FIELD_SLOTS_ENUMERATED.load(Ordering::Relaxed),
+            publication_field_slots_enumerated: PUBLICATION_FIELD_SLOTS_ENUMERATED
+                .load(Ordering::Relaxed),
             publication_document_comparisons: PUBLICATION_DOCUMENT_COMPARISONS
                 .load(Ordering::Relaxed),
             json_bytes_serialized: JSON_BYTES_SERIALIZED.load(Ordering::Relaxed),
