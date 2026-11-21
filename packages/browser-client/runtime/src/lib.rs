@@ -3450,6 +3450,7 @@ impl DesignerRuntime {
         presentation: PresentationStore,
     ) -> Result<String, DesignerError> {
         self.check_revision(expected_revision)?;
+        self.preflight_presentation(self.session.document(), &presentation)?;
         let bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let bytes = save_size::presentation_saved_bytes(&presentation)?;
@@ -7764,6 +7765,9 @@ impl DesignerRuntime {
                         )?;
                     }
                 }
+                if !self.presentation.is_empty() {
+                    self.preflight_presentation(prepared.document(), &self.presentation)?;
+                }
             }
             // Preflight only upgrades a constraint mismatch into its typed
             // refusal. Every other invalid candidate is still refused
@@ -9851,9 +9855,10 @@ pub(crate) fn admit_imported_project(
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
+        opened.table = candidate.query_table(&candidate.default_collection)?;
+        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
     }
 
@@ -9873,6 +9878,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error)
@@ -9894,6 +9901,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),

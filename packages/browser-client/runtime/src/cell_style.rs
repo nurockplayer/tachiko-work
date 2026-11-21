@@ -217,24 +217,31 @@ impl DesignerRuntime {
         })
     }
 
+    pub(super) fn preflight_presentation(
+        &self,
+        document: &tachiko_workspace_engine::Document,
+        store: &PresentationStore,
+    ) -> Result<(), DesignerError> {
+        if self.profile != crate::SessionProfile::WorkingSize {
+            // Reopen selects its profile before installing saved presentation.
+            let (mut candidate, mut opened) =
+                crate::admit_v3_document(document.clone(), crate::PREFLIGHT_OCCURRENCE)?;
+            candidate.set_presentation(prune_presentation(store, document))?;
+            for collection in &candidate.collections {
+                candidate.query_table(&collection.key)?;
+            }
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            crate::ensure_opened_wire_projection_size(&opened, candidate.profile)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn apply_cell_presentation(
         &mut self,
         expected: &str,
         store: PresentationStore,
     ) -> Result<PublicationProjection, DesignerError> {
         self.validate_cell_presentation(&store)?;
-        if self.profile != crate::SessionProfile::WorkingSize {
-            let (mut candidate, mut opened) = crate::admit_v3_document(
-                self.session.document().clone(),
-                crate::PREFLIGHT_OCCURRENCE,
-            )?;
-            candidate.set_presentation(prune_presentation(&store, self.session.document()))?;
-            for collection in &candidate.collections {
-                candidate.query_table(&collection.key)?;
-            }
-            opened.table = candidate.query_table(&candidate.default_collection)?;
-            crate::ensure_opened_projection_size(&opened, candidate.profile)?;
-        }
         let resulting_revision = self.publish_presentation(expected, store)?;
         Ok(PublicationProjection {
             base_revision: expected.to_owned(),
