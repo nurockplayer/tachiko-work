@@ -134,8 +134,8 @@ fn capacity_809_formula_table() {
     let started = Instant::now();
     let document = formula_table_809(ROWS);
     let tree = encode_roproj_v3(&document).unwrap();
-    let bytes = encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes())))
-        .unwrap();
+    let bytes =
+        encode_project_bundle(tree.files().iter().map(|file| (file.path(), file.bytes()))).unwrap();
     drop(tree);
     drop(document);
 
@@ -143,9 +143,8 @@ fn capacity_809_formula_table() {
     let mut opens = Vec::new();
     for _ in 0..3 {
         // Replacing the preceding resident (including its destruction) stays inside the timer.
-        let (opened, elapsed) = measure(|| {
-            open_project_working_size(&mut resident, &bytes, OCCURRENCE).unwrap()
-        });
+        let (opened, elapsed) =
+            measure(|| open_project_working_size(&mut resident, &bytes, OCCURRENCE).unwrap());
         opens.push(elapsed);
         assert_eq!(opened.window.total_rows, ROWS);
         assert_eq!(opened.window.columns.len(), 10);
@@ -221,17 +220,22 @@ fn capacity_809_formula_table() {
         let document = runtime.session.document();
         assert_eq!(document.entities.len(), ROWS);
         assert!(document.entities.values().all(|entity| {
-            !entity.fields.contains_key(&FieldId::from("column_0"))
-                && entity.fields.len() == 9
+            !entity.fields.contains_key(&FieldId::from("column_0")) && entity.fields.len() == 9
         }));
     }
 
     let open = report("open request", &mut opens);
     let edit = report("edit + zero-row window", &mut round_trips);
     let clear = report("clear 10,000 cells", &mut clears);
-    println!("capacity_809 total runtime: {:.3}s", started.elapsed().as_secs_f64());
+    println!(
+        "capacity_809 total runtime: {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
     assert!(open <= Duration::from_millis(1_500), "open p50: {open:?}");
     // 20% runner-noise margin over the 50 ms target; also the #809 1.0 native edit gate.
-    assert!(edit <= Duration::from_millis(60), "edit round-trip p50: {edit:?}");
+    assert!(
+        edit <= Duration::from_millis(60),
+        "edit round-trip p50: {edit:?}"
+    );
     assert!(clear <= Duration::from_millis(500), "clear p50: {clear:?}");
 }
