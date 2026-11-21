@@ -290,6 +290,66 @@ fn auto_currency_and_full_width_display_survive_history_and_save() {
 }
 
 #[test]
+fn auto_presentation_only_edit_and_history_publish_changed_cell() {
+    let mut runtime = DesignerRuntime::new_working_size_table(
+        OCCURRENCE,
+        "Mixed",
+        &[NewTableColumnInput {
+            name: "Value".into(),
+            field_type: "auto".into(),
+            required: false,
+        }],
+    )
+    .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let field = runtime.query_table(&collection).unwrap().columns[0]
+        .id
+        .clone();
+    runtime
+        .insert_row(None, "resident/0", &collection, &[])
+        .unwrap();
+    let target = FieldTarget {
+        entity: runtime.query_table(&collection).unwrap().rows[0].id.clone(),
+        field,
+    };
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .edit_scalar(&revision, &target, &auto("1200"))
+        .unwrap();
+
+    for step in 0..3 {
+        let expected_revision = runtime.current_revision().to_owned();
+        let request = match step {
+            0 => DesignerRequest::EditScalar {
+                expected_revision,
+                target: target.clone(),
+                input: auto("￥１，２００"),
+            },
+            1 => DesignerRequest::Undo { expected_revision },
+            _ => DesignerRequest::Redo { expected_revision },
+        };
+        let crate::DesignerResponse::Published(publication) = runtime.handle(request).unwrap()
+        else {
+            panic!("expected publication");
+        };
+        assert!(!publication.many);
+        assert_eq!(publication.fields, vec![target.clone()]);
+        let window = runtime
+            .query_table_window(
+                runtime.current_revision(),
+                &collection,
+                &TableView::default(),
+                0,
+                10,
+                true,
+            )
+            .unwrap();
+        assert_eq!(publication.changed, vec![window.rows[0].fields[0].clone()]);
+        assert_eq!(publication.changed[0].target, target);
+    }
+}
+
+#[test]
 fn declared_columns_keep_their_input_meaning_and_saved_bytes_on_refusal() {
     let mut runtime = DesignerRuntime::new_table(
         OCCURRENCE,

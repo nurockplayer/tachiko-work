@@ -170,18 +170,21 @@ impl DesignerRuntime {
             )
             .map_err(|error| table_error(&format!("invalid Auto input presentation: {error:?}")))?;
             let resulting_revision = self.publish_presentation(expected, presentation)?;
-            return Ok(PublicationProjection {
+            return Ok(crate::bound_publication_targets(PublicationProjection {
                 base_revision: expected.to_owned(),
                 resulting_revision,
                 schemas: Vec::new(),
                 schema_fields: Vec::new(),
                 entities: Vec::new(),
-                fields: Vec::new(),
+                fields: styles
+                    .iter()
+                    .map(|style| crate::field_target(&style.field))
+                    .collect(),
                 affected_calculations: Vec::new(),
                 many: false,
                 changed: Vec::new(),
                 import_metadata: None,
-            });
+            }));
         }
         self.publish_commands_with_imported(expected, commands, None, None, Some(presentation))
     }
