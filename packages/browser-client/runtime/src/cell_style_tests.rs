@@ -68,7 +68,7 @@ pub(crate) fn edit(
     runtime: &mut DesignerRuntime,
     entities: &[&str],
     fields: &[&str],
-    changes: serde_json::Value,
+    changes: &serde_json::Value,
 ) -> Result<PublicationProjection, DesignerError> {
     let request = serde_json::from_value(json!({
         "type": "set_cell_style", "expected_revision": runtime.current_revision(),
@@ -116,14 +116,14 @@ fn rectangle_toggle_and_each_undo_are_presentation_only_in_every_profile() {
             &mut runtime,
             &["r1", "r2", "r3"],
             &["b"],
-            json!([
+            &json!([
                 {"kind": "toggle_bold"}, {"kind": "italic", "value": true},
             ]),
         )
         .unwrap();
         assert_ne!(first.base_revision, first.resulting_revision);
         assert!(first.many);
-        assert!(first.affected_calculations.is_empty());
+        assert_eq!(first.affected_calculations.len(), 0);
         assert_eq!(runtime.undo.len(), 1);
         let bold = runtime.presentation.clone();
         let shown = window(&mut runtime, &TableView::default());
@@ -143,7 +143,7 @@ fn rectangle_toggle_and_each_undo_are_presentation_only_in_every_profile() {
             &mut runtime,
             &["r1", "r2", "r3"],
             &["b"],
-            json!([{"kind": "toggle_bold"}]),
+            &json!([{"kind": "toggle_bold"}]),
         )
         .unwrap();
         let not_bold = runtime.presentation.clone();
@@ -171,7 +171,7 @@ fn fill_follows_identity_through_sort_and_portable_save_reopen() {
         &mut runtime,
         &["r2"],
         &["c"],
-        json!([
+        &json!([
             {"kind": "fill", "color": "#FFFF00"}, {"kind": "italic", "value": true},
         ]),
     )
@@ -210,7 +210,7 @@ fn fill_follows_identity_through_sort_and_portable_save_reopen() {
         &mut reopened,
         &["r2"],
         &["c"],
-        json!([
+        &json!([
             {"kind": "fill", "color": null}, {"kind": "italic", "value": false},
         ]),
     )
@@ -246,7 +246,7 @@ fn clearing_inherited_fill_preserves_neighbours_and_undo_restores_column_style()
         &mut runtime,
         &["r2"],
         &["b"],
-        json!([{"kind": "fill", "color": null}]),
+        &json!([{"kind": "fill", "color": null}]),
     )
     .unwrap();
     let shown = window(&mut runtime, &TableView::default());
@@ -270,7 +270,7 @@ fn stale_colour_unknown_ids_and_read_only_refuse_atomically() {
             &mut runtime,
             &["r1"],
             &["b"],
-            json!([
+            &json!([
                 {"kind": "bold", "value": true}, {"kind": "fill", "color": color},
             ]),
         )
@@ -285,7 +285,7 @@ fn stale_colour_unknown_ids_and_read_only_refuse_atomically() {
             &mut runtime,
             &["r1", "missing"],
             &["b"],
-            json!([{ "kind": "toggle_bold" }])
+            &json!([{ "kind": "toggle_bold" }])
         ),
         Err(DesignerError::UnknownEntity { .. })
     ));
@@ -294,7 +294,7 @@ fn stale_colour_unknown_ids_and_read_only_refuse_atomically() {
             &mut runtime,
             &["r1"],
             &["b", "missing"],
-            json!([{ "kind": "toggle_bold" }])
+            &json!([{ "kind": "toggle_bold" }])
         ),
         Err(DesignerError::UnknownViewField { .. })
     ));
@@ -325,14 +325,14 @@ fn stale_colour_unknown_ids_and_read_only_refuse_atomically() {
         &mut runtime,
         &["r1"],
         &["b"],
-        json!([{ "kind": "toggle_bold" }]),
+        &json!([{ "kind": "toggle_bold" }]),
     )
     .unwrap_err();
     assert_eq!(error.failure_projection(&revision).code, "read_only_table");
     assert_eq!(runtime.current_revision(), revision);
     assert!(runtime.presentation.is_empty());
-    assert!(runtime.undo.is_empty());
-    assert!(runtime.redo.is_empty());
+    assert_eq!(runtime.undo.len(), 0);
+    assert_eq!(runtime.redo.len(), 0);
 }
 
 #[test]
@@ -342,14 +342,14 @@ fn mixed_selection_toggle_sets_all_and_repeated_set_is_no_change() {
         &mut runtime,
         &["r1"],
         &["b"],
-        json!([{"kind": "bold", "value": true}]),
+        &json!([{"kind": "bold", "value": true}]),
     )
     .unwrap();
     edit(
         &mut runtime,
         &["r1", "r2"],
         &["b", "c"],
-        json!([
+        &json!([
             {"kind": "toggle_bold"}, {"kind": "toggle_italic"},
         ]),
     )
@@ -371,7 +371,7 @@ fn mixed_selection_toggle_sets_all_and_repeated_set_is_no_change() {
         &mut runtime,
         &["r1", "r2"],
         &["b", "c"],
-        json!([
+        &json!([
             {"kind": "bold", "value": true}, {"kind": "italic", "value": true},
         ]),
     )

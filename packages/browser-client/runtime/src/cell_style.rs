@@ -138,12 +138,12 @@ impl DesignerRuntime {
             ));
         }
         for entity in entities {
-            if !self
+            if self
                 .session
                 .document()
                 .entities
                 .get(&EntityId::from(entity.clone()))
-                .is_some_and(|entity| entity.schema == schema)
+                .is_none_or(|entity| entity.schema != schema)
             {
                 return Err(DesignerError::UnknownEntity {
                     collection: collection.to_owned(),
