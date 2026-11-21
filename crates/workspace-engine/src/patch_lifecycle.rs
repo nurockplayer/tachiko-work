@@ -5916,13 +5916,11 @@ impl<'a> DisclosureDerivation<'a> {
                 let definition = crate::field_definition(self.before, field)
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = self.before.entities[&field.entity].fields.get(&field.field);
-                let formula_restore = matches!(
-                    definition.field_type,
-                    FieldType::Number | FieldType::Date
-                )
-                    && !definition.required
-                    && matches!(value, Value::Formula(_))
-                    && families.contains(&OperationFamily::FormulaUpdate);
+                let formula_restore =
+                    matches!(definition.field_type, FieldType::Number | FieldType::Date)
+                        && !definition.required
+                        && matches!(value, Value::Formula(_))
+                        && families.contains(&OperationFamily::FormulaUpdate);
                 if existing.is_some()
                     || definition.required
                     || (matches!(value, Value::Formula(_)) && !formula_restore)
