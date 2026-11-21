@@ -6,6 +6,7 @@ use tachiko_semantic_core::{
 };
 
 use super::*;
+use crate::merge;
 
 fn number(value: f64) -> Number {
     Number::new(value).unwrap()

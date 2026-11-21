@@ -77,6 +77,27 @@ orchestrates them.
 | `retained-workspace` | Across deterministic 10/100/1,000-entity generated workspaces and 20 edits, retained calculation/validation equals the fresh full oracle and the exact recompute/reuse counters remain bounded. | `crates/workspace-engine/tests/retained_state_benchmark.rs`. |
 | `lookup-benchmark` | Release-mode full calculations report timings for 1,000 and 10,000 LOOKUPs, verify results, and guard against quadratic scaling. | `crates/formula-engine/tests/lookup_benchmark.rs` (run explicitly with `--ignored --nocapture`). |
 
+
+The #809 working-size capacity guard follows the LOOKUP benchmark's opt-in,
+ignored release-test route; it is not part of ordinary CI. Run it with:
+
+```sh
+cargo test --release --manifest-path packages/browser-client/runtime/Cargo.toml --locked --features capacity-bench capacity_809_formula_table -- --ignored --test-threads=1 --nocapture
+```
+
+`packages/browser-client/runtime/src/capacity_809_bench.rs` uses the #816
+fixture: 10,000 rows, seven stored columns and three same-row formula columns.
+It guards nearest-rank p50 for three open requests (including resident
+replacement), 30 paired one-cell mutation + zero-row window requests, and
+three fresh clears of the 10,000 populated Text cells. Limits are 1,500 ms,
+60 ms and 500 ms. The edit limit gives a 20% runner-noise margin over #809's
+50 ms target, consistent with its amended 1.0 native gate; this does not
+change the product target. Output includes p50/p95/max and total benchmark
+runtime including fixture setup and untimed opens. Correctness checks verify
+admission shape, changed formula values, window revision and cleared cells.
+No sublinear edit scale assertion is imposed: the measured zero-row window
+still computes whole-table totals. These native timings do not qualify WASM.
+
 The Git-review stage supplies durable intentional-failure proof through normal
 product boundaries. It creates a noncanonical extra `.roproj` shard and a
 division-by-zero edit, requires both operations to fail, checks the diagnostic,

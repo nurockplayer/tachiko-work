@@ -110,6 +110,7 @@ struct DirectoryField {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum FieldTypeFact {
+    Auto,
     Number,
     Text,
     Boolean,
@@ -1819,6 +1820,7 @@ fn validate_directory_coverage(directory: &Directory) -> Result<(), FormatError>
 
 fn field_type_fact(field_type: &FieldType) -> FieldTypeFact {
     match field_type {
+        FieldType::Auto => FieldTypeFact::Auto,
         FieldType::Number => FieldTypeFact::Number,
         FieldType::Text => FieldTypeFact::Text,
         FieldType::Boolean => FieldTypeFact::Boolean,
@@ -2506,7 +2508,9 @@ fn wide_field_document(entity_count: usize, field_count: usize) -> Document {
                         }
                         FieldType::Text => Value::Text(format!("wide value {index}/{offset}")),
                         FieldType::Boolean => Value::Boolean((index + offset) % 2 == 0),
-                        FieldType::Date | FieldType::Reference { .. } => unreachable!(),
+                        FieldType::Auto | FieldType::Date | FieldType::Reference { .. } => {
+                            unreachable!()
+                        }
                     };
                     (field.clone(), value)
                 })
