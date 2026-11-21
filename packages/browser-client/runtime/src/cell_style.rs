@@ -23,6 +23,7 @@ pub enum CellStyleChange {
     ToggleBold,
     ToggleItalic,
     Fill {
+        #[serde(deserialize_with = "deserialize_fill_color")]
         color: Option<String>,
     },
     Border {
@@ -41,6 +42,12 @@ pub enum CellBorderTarget {
     Left,
     Outline,
     All,
+}
+
+fn deserialize_fill_color<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
 }
 
 impl DesignerRuntime {
@@ -236,6 +243,18 @@ impl DesignerRuntime {
         store: PresentationStore,
     ) -> Result<PublicationProjection, DesignerError> {
         self.validate_cell_presentation(&store)?;
+        if self.profile != crate::SessionProfile::WorkingSize {
+            let (mut candidate, mut opened) = crate::admit_v3_document(
+                self.session.document().clone(),
+                crate::PREFLIGHT_OCCURRENCE,
+            )?;
+            candidate.set_presentation(prune_presentation(&store, self.session.document()))?;
+            for collection in &candidate.collections {
+                candidate.query_table(&collection.key)?;
+            }
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            crate::ensure_opened_projection_size(&opened, candidate.profile)?;
+        }
         let resulting_revision = self.publish_presentation(expected, store)?;
         Ok(PublicationProjection {
             base_revision: expected.to_owned(),

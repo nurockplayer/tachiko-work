@@ -19,7 +19,7 @@ fn outline_save_reopen_export_and_undo_preserve_exact_sides_and_slice_one_styles
             &mut runtime,
             &["r1", "r2", "r3"],
             &["b", "c"],
-            json!([
+            &json!([
                 {"kind":"bold", "value":true}, {"kind":"italic", "value":true},
                 {"kind":"fill", "color":"#FFFF00"}
             ]),
@@ -31,7 +31,7 @@ fn outline_save_reopen_export_and_undo_preserve_exact_sides_and_slice_one_styles
             &mut runtime,
             &["r1", "r2", "r3"],
             &["b", "c"],
-            json!([
+            &json!([
                 {"kind":"border", "target":"outline", "value":true}
             ]),
         )
@@ -128,7 +128,7 @@ fn per_side_all_and_clear_override_inherited_borders_without_changing_neighbours
             &mut runtime,
             &["r2"],
             &["b"],
-            json!([
+            &json!([
                 {"kind":"border", "target":target, "value":value}
             ]),
         )
@@ -150,7 +150,7 @@ fn per_side_all_and_clear_override_inherited_borders_without_changing_neighbours
         &mut runtime,
         &["r2"],
         &["b"],
-        json!([
+        &json!([
             {"kind":"border", "target":"all", "value":false}
         ]),
     )
@@ -168,7 +168,7 @@ fn outline_uses_selection_order_and_clear_preserves_unselected_sides() {
         &mut runtime,
         &["r3", "r1"],
         &["c", "b"],
-        json!([
+        &json!([
             {"kind":"border", "target":"outline", "value":true}
         ]),
     )
@@ -187,7 +187,7 @@ fn outline_uses_selection_order_and_clear_preserves_unselected_sides() {
         &mut runtime,
         &["r3", "r1"],
         &["c", "b"],
-        json!([
+        &json!([
             {"kind":"border", "target":"bottom", "value":true},
             {"kind":"border", "target":"outline", "value":false}
         ]),
@@ -200,7 +200,7 @@ fn outline_uses_selection_order_and_clear_preserves_unselected_sides() {
         &mut runtime,
         &["r2"],
         &["a"],
-        json!([
+        &json!([
             {"kind":"border", "target":"outline", "value":true}
         ]),
     )
@@ -309,5 +309,16 @@ fn imported_styles_are_promoted_edited_saved_and_exported_in_both_profiles() {
         }
         history(&mut runtime, false);
         assert_eq!(runtime.presentation, before);
+    }
+}
+
+#[test]
+fn border_requires_explicit_target_and_value() {
+    for change in [
+        json!({"kind": "border", "target": "all"}),
+        json!({"kind": "border", "value": false}),
+        json!({"kind": "border", "target": "all", "value": null}),
+    ] {
+        assert!(serde_json::from_value::<crate::CellStyleChange>(change).is_err());
     }
 }
