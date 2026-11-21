@@ -609,4 +609,46 @@ fn date_formula_authoring_recalculates_and_undo_restores_date() {
     assert_eq!(calculated(&runtime), result("2026-01-10"));
     history(&mut runtime, false);
     assert_eq!(calculated(&runtime), result("2026-01-09"));
+    let revision = runtime.current_revision().to_owned();
+    for workbook in [
+        runtime
+            .export_native_tables_workbook(&revision, &collection)
+            .unwrap(),
+        runtime
+            .export_native_tables_csv_workbook(&revision, &collection)
+            .unwrap(),
+    ] {
+        assert_eq!(
+            workbook.sheets[0].rows[0][1].value,
+            SourceValue::Date {
+                value: "2026-01-09".into()
+            }
+        );
+    }
+    let workbook = runtime
+        .export_native_tables_workbook(&revision, &collection)
+        .unwrap();
+    assert!(
+        workbook
+            .ledger
+            .iter()
+            .any(|finding| finding.code == "native_tables_formula_value_only")
+    );
+    let csv_workbook = runtime
+        .export_native_tables_csv_workbook(&revision, &collection)
+        .unwrap();
+    let csv = super::interop_adapter::export_csv(&csv_workbook.sheets[0]).unwrap();
+    assert!(String::from_utf8(csv).unwrap().contains("2026-01-09"));
+    let xlsx = super::interop_adapter::export_xlsx(&workbook).unwrap();
+    let reopened = super::interop_adapter::import_xlsx(&xlsx).unwrap();
+    assert_eq!(
+        reopened.sheets[0].rows[0][1].value,
+        SourceValue::Date {
+            value: "2026-01-09".into()
+        }
+    );
+    runtime
+        .insert_row(None, &revision, &collection, &[])
+        .unwrap();
+    assert_eq!(row_ids(&runtime, &collection).len(), 2);
 }

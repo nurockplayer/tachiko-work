@@ -206,8 +206,8 @@ fn change_analysis_returns_semantic_diff_and_affected_areas() {
         change,
         SemanticChange::FormulaImpact { field, before, after, causes }
             if field == &FieldRef::new("iron_sword", "dps")
-                && *before == Number::new(40.0).unwrap()
-                && *after == Number::new(50.0).unwrap()
+                && *before == tachiko_formula_engine::CalculatedValue::Number(Number::new(40.0).unwrap())
+                && *after == tachiko_formula_engine::CalculatedValue::Number(Number::new(50.0).unwrap())
                 && causes.as_slice() == [FieldRef::new("iron_sword", "damage")]
     )));
     assert_eq!(

@@ -1896,13 +1896,16 @@ impl Calculation {
     /// A key must be a formula in either calculation and have a value in both.
     /// Shared immutable value partitions are skipped without reading entries.
     #[must_use]
-    pub fn changed_formula_values(&self, after: &Self) -> Vec<(FieldRef, Number, Number)> {
+    pub fn changed_formula_values(
+        &self,
+        after: &Self,
+    ) -> Vec<(FieldRef, CalculatedValue, CalculatedValue)> {
         self.values
             .differing_entries(&after.values)
             .into_iter()
             .filter_map(|(field, before, value)| {
                 if self.graph.is_formula(field) || after.graph.is_formula(field) {
-                    Some((field.clone(), *before?.number()?, *value?.number()?))
+                    Some((field.clone(), *before?, *value?))
                 } else {
                     None
                 }

@@ -265,7 +265,9 @@ impl<V: ValueStore> Evaluation<'_, V> {
                     _ => Err(CalculationFailure::TypeMismatch),
                 }
             }
-            _ => self.number(expression).map(CalculatedValue::Number),
+            _ => self
+                .number_expression(expression)
+                .map(CalculatedValue::Number),
         }
     }
 
@@ -499,6 +501,13 @@ impl<V: ValueStore> Evaluation<'_, V> {
 
     #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
+        match self.calculated(expression)? {
+            CalculatedValue::Number(number) => Ok(number),
+            CalculatedValue::Date(_) => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
+    fn number_expression(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
             Expression::Reference(reference) => self.reference(reference),

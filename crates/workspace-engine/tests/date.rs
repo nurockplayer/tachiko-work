@@ -5,8 +5,8 @@ use tachiko_semantic_core::{
     Value,
 };
 use tachiko_workspace_engine::{
-    FieldAddress, RuntimeValue, WorkspaceError, calculate_fields, runtime_export, set_scalar,
-    validate, validate_field_value_suggestion,
+    FieldAddress, RuntimeValue, WorkspaceError, calculate_fields, explain_field, runtime_export,
+    set_scalar, validate, validate_field_value_suggestion,
 };
 use tachiko_workspace_engine::{
     patch_lifecycle::DocumentScopeId, resident_session::ResidentWorkspaceSession,
@@ -90,6 +90,11 @@ fn runtime_export_carries_calculated_date() {
         runtime_export(&document).unwrap().entities["launch"].fields["later"],
         RuntimeValue::Date("2026-01-09".parse().unwrap())
     );
+    let explanation = explain_field(&document, &FieldAddress::new("launch", "later")).unwrap();
+    assert_eq!(explanation.display_value, "2026-01-09");
+    let source = explain_field(&document, &FieldAddress::new("launch", "published")).unwrap();
+    assert_eq!(source.affected_formulas.len(), 1);
+    assert_eq!(source.affected_formulas[0].display_value, "2026-01-09");
 }
 
 #[test]

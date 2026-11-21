@@ -1569,7 +1569,17 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value, .. } => Some(*value),
+            Self::Value {
+                result: Some(StoredValueProjection::Number { value }),
+                ..
+            }
+            | Self::Value {
+                value,
+                result: None,
+            } => Some(*value),
+            Self::Value {
+                result: Some(_), ..
+            } => None,
             Self::Failure { .. } | Self::Unavailable => None,
         }
     }
@@ -11253,7 +11263,7 @@ fn is_text_capacity_document(document: &Document) -> bool {
                             (&field.field_type, value),
                             (FieldType::Text, Value::Text(_))
                                 | (FieldType::Number, Value::Number(_))
-                                | (FieldType::Date, Value::Date(_))
+                                | (FieldType::Date, Value::Date(_) | Value::Formula(_))
                                 | (FieldType::Boolean, Value::Boolean(_))
                         )
                     })
@@ -12759,7 +12769,7 @@ fn has_scalar_row_authoring_shape(
                                 (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
-                                    | (FieldType::Date, Value::Date(_))
+                                    | (FieldType::Date, Value::Date(_) | Value::Formula(_))
                             )
                         })
                     })

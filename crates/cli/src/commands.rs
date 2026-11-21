@@ -807,8 +807,14 @@ fn field_change_output(change: &SemanticChange) -> serde_json::Value {
         } => json!({
             "kind": "formula_impact",
             "field": field,
-            "before": before,
-            "after": after,
+            "before": match before {
+                tachiko_workspace_engine::CalculatedValue::Number(number) => json!(number),
+                tachiko_workspace_engine::CalculatedValue::Date(date) => json!(tachiko_workspace_engine::Value::Date(*date)),
+            },
+            "after": match after {
+                tachiko_workspace_engine::CalculatedValue::Number(number) => json!(number),
+                tachiko_workspace_engine::CalculatedValue::Date(date) => json!(tachiko_workspace_engine::Value::Date(*date)),
+            },
             "causes": causes,
         }),
         _ => unreachable!("field change adapter called for non-field change"),

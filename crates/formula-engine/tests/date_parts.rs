@@ -128,6 +128,26 @@ fn date_functions_calculate_and_compose() {
 }
 
 #[test]
+fn date_subtraction_composes_with_numeric_operators_and_functions() {
+    for (source, expected) in [
+        ("([r.end] - [r.d]) * 2", 38.0),
+        ("ROUND([r.end] - [r.d], 0)", 19.0),
+        ("IFERROR([r.end] - [r.d], 0)", 19.0),
+        ("ABS([r.d] - [r.end])", 19.0),
+        ("IF([r.end] - [r.d] = 19, 1, 0)", 1.0),
+    ] {
+        let CalculationOutcome::Complete(result) = calculate(source) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(
+            result.value(&FieldRef::new("r", "output")).unwrap().get(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn date_functions_accept_calculated_dates() {
     for (source, expected) in [
         ("MONTH([.later])", 11.0),

@@ -15,14 +15,14 @@ pub use tachiko_diff_engine::{
 };
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
+pub use tachiko_formula_engine::{
+    CalculatedValue, CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
+    ColumnFailure, ExpressionComplexityError, FormulaBindError, ReferenceFailure,
+};
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
     calculate, calculate_complete, parse_expression, project_expression,
     project_expression_with_index, validate_expression_structure,
-};
-pub use tachiko_formula_engine::{
-    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
-    ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
     ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,
@@ -1579,9 +1579,13 @@ pub fn explain_field(
     let calculation = require_validated_calculation(document)?;
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
-    let display_value = calculation
-        .value(&field)
-        .map_or_else(|| format_value(document, value), format_number);
+    let display_value = calculation.calculated_value(&field).map_or_else(
+        || format_value(document, value),
+        |value| match value {
+            CalculatedValue::Number(number) => format_number(number),
+            CalculatedValue::Date(date) => date.to_string(),
+        },
+    );
     let expression = match value {
         Value::Formula(expression) => Some(
             project_expression(document, &field, expression).map_err(|source| {
@@ -1603,11 +1607,14 @@ pub fn explain_field(
         .collect::<Result<Vec<_>, _>>()?;
     let mut affected_formulas = Vec::new();
     for affected in calculation.affected_by(&field) {
-        if let Some(value) = calculation.value(&affected) {
+        if let Some(value) = calculation.calculated_value(&affected) {
             affected_formulas.push(AffectedFormula {
                 address: index.field_address(document, &affected)?,
                 field: affected,
-                display_value: format_number(value),
+                display_value: match value {
+                    CalculatedValue::Number(number) => format_number(number),
+                    CalculatedValue::Date(date) => date.to_string(),
+                },
             });
         }
     }

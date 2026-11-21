@@ -22,7 +22,7 @@ use tachiko_diff_engine::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, DiffScope, canonical_delta,
     canonical_delta_scoped,
 };
-use tachiko_formula_engine::Calculation;
+use tachiko_formula_engine::{CalculatedValue, Calculation};
 use tachiko_semantic_core::{
     FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, Schema,
 };
@@ -1062,8 +1062,8 @@ pub struct PatchRisk {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormulaImpactEvidence {
     pub field: FieldRef,
-    pub before: Number,
-    pub after: Number,
+    pub before: CalculatedValue,
+    pub after: CalculatedValue,
     pub causes: Vec<FieldRef>,
 }
 
@@ -8293,4 +8293,26 @@ mod tests {
             14,
         );
     }
+}
+
+#[test]
+fn calculated_date_formula_impacts_reach_patch_evidence() {
+    let before = CalculatedValue::Date("2026-11-19".parse().unwrap());
+    let after = CalculatedValue::Date("2026-11-20".parse().unwrap());
+    let field = FieldRef::new("r", "end");
+    let causes = vec![FieldRef::new("r", "d")];
+    assert_eq!(
+        formula_impacts(&[SemanticChange::FormulaImpact {
+            field: field.clone(),
+            before,
+            after,
+            causes: causes.clone(),
+        }]),
+        vec![FormulaImpactEvidence {
+            field,
+            before,
+            after,
+            causes
+        }]
+    );
 }

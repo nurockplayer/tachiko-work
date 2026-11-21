@@ -90,8 +90,8 @@ fn scoped_ten_thousand_rows_reports_three_ordered_impacts_with_full_diff_causes(
         .collect::<Vec<_>>();
     let expected = ["a", "b", "c"].map(|field| SemanticChange::FormulaImpact {
         field: FieldRef::new(entity.clone(), field),
-        before: number(1.0),
-        after: number(2.0),
+        before: tachiko_formula_engine::CalculatedValue::Number(number(1.0)),
+        after: tachiko_formula_engine::CalculatedValue::Number(number(2.0)),
         causes: vec![root.clone()],
     });
     assert_eq!(impacts, expected);
@@ -115,8 +115,8 @@ fn changed_formula_values_filters_stored_nodes_and_accepts_formulas_on_either_si
         before_calculation.changed_formula_values(&after_calculation),
         [("a", 1.0, 2.0), ("b", 1.0, 3.0), ("n", 1.0, 3.0)].map(|(field, a, b)| (
             FieldRef::new("row-00000", field),
-            number(a),
-            number(b)
+            CalculatedValue::Number(number(a)),
+            CalculatedValue::Number(number(b))
         ))
     );
     for (before, after, a, b) in [
@@ -140,4 +140,53 @@ fn changed_formula_values_filters_stored_nodes_and_accepts_formulas_on_either_si
                 .changes()
         );
     }
+}
+
+#[test]
+fn calculated_date_changes_are_reported_in_full_and_scoped_impacts() {
+    let mut before = formula_table(1);
+    for definition in before.schemas.get_mut("s").unwrap().fields.values_mut() {
+        definition.field_type = FieldType::Date;
+    }
+    before
+        .entities
+        .get_mut("row-00000")
+        .unwrap()
+        .fields
+        .insert("n".into(), Value::Date("2026-11-12".parse().unwrap()));
+    let mut after = before.clone();
+    after
+        .entities
+        .get_mut("row-00000")
+        .unwrap()
+        .fields
+        .insert("n".into(), Value::Date("2026-11-13".parse().unwrap()));
+    let a = calculate(&before).unwrap();
+    let b = calculate(&after).unwrap();
+    let expected = ["a", "b", "c"].map(|field| SemanticChange::FormulaImpact {
+        field: FieldRef::new("row-00000", field),
+        before: CalculatedValue::Date("2026-11-12".parse().unwrap()),
+        after: CalculatedValue::Date("2026-11-13".parse().unwrap()),
+        causes: vec![FieldRef::new("row-00000", "n")],
+    });
+    let full = diff_with_calculations(&before, &after, &a, &b).unwrap();
+    assert!(full.render_text().contains("2026-11-12 -> 2026-11-13"));
+    let scoped = diff_changes_scoped(
+        &before,
+        &after,
+        &a,
+        &b,
+        &DiffScope {
+            entities: BTreeSet::from([EntityId::from("row-00000")]),
+            ..DiffScope::default()
+        },
+    );
+    assert_eq!(scoped, full.changes());
+    assert_eq!(
+        scoped
+            .into_iter()
+            .filter(|c| matches!(c, SemanticChange::FormulaImpact { .. }))
+            .collect::<Vec<_>>(),
+        expected
+    );
 }

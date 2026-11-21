@@ -47,10 +47,13 @@ fn tagged_results_roundtrip_and_legacy_value_still_decodes() {
         json!({"kind": "boolean", "value": false}),
         json!({"kind": "date", "value": "2026-01-02"}),
     ] {
-        // The legacy numeric field is independent of the result's tag.
+        // Numeric access follows the result tag when present.
         let wire = json!({"status": "value", "value": 2.5, "result": result});
         let decoded: CalculationProjection = serde_json::from_value(wire.clone()).unwrap();
-        assert_eq!(decoded.number(), Some(2.5));
+        assert_eq!(
+            decoded.number(),
+            (result["kind"] == "number").then_some(2.5)
+        );
         assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
     }
     let legacy = json!({"status": "value", "value": 2.5});
@@ -59,6 +62,7 @@ fn tagged_results_roundtrip_and_legacy_value_still_decodes() {
         decoded,
         CalculationProjection::Value { result: None, .. }
     ));
+    assert_eq!(decoded.number(), Some(2.5));
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }
 
