@@ -123,6 +123,8 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "capacity-bench")))]
+mod capacity_809_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
