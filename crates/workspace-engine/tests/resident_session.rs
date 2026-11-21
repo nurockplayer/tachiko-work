@@ -1177,23 +1177,28 @@ fn scalar_edit_invalidates_only_the_edited_field() {
 }
 
 #[cfg(feature = "capacity-instrumentation")]
-fn scalar_edit_fields_inspected(rows: usize) -> u64 {
+fn scalar_edit_publication_work(rows: usize) -> (u64, u64) {
     let mut session = ResidentWorkspaceSession::new(document_scope_id(), row_document(rows));
     let mut candidate = session.export_snapshot().document().clone();
     set_number(&mut candidate, "row-1", "value", 7.0);
-    let before = tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected;
+    let before = tachiko_workspace_engine::instrumentation::counters();
     publish_candidate(&mut session, &candidate);
-    tachiko_workspace_engine::instrumentation::counters().publication_fields_inspected - before
+    let after = tachiko_workspace_engine::instrumentation::counters();
+    (
+        after.publication_entities_inspected - before.publication_entities_inspected,
+        after.publication_field_slots_enumerated - before.publication_field_slots_enumerated,
+    )
 }
 
 #[test]
 #[cfg(feature = "capacity-instrumentation")]
 #[ignore = "reads process-global counters; run with --ignored --test-threads=1"]
-fn scalar_edit_inspection_does_not_grow_with_row_count() {
-    let three_rows = scalar_edit_fields_inspected(3);
-    let three_hundred_rows = scalar_edit_fields_inspected(300);
-
-    assert_eq!(three_hundred_rows, three_rows);
+fn unscoped_scalar_publication_compares_all_rows_but_enumerates_only_changed_row_fields() {
+    // Each entity equality check can compare field values, including unchanged
+    // rows. Only the changed row's two slots and the schema's two definitions
+    // reach the explicit field enumeration counted by the second value.
+    assert_eq!(scalar_edit_publication_work(3), (3, 4));
+    assert_eq!(scalar_edit_publication_work(300), (300, 4));
 }
 
 #[test]

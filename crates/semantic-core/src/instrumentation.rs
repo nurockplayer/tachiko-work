@@ -15,8 +15,9 @@ pub struct CapacityCounters {
     pub document_clones: u64,
     /// Entities visited by the publication invalidation scan.
     pub publication_entities_inspected: u64,
-    /// Fields compared by the publication invalidation scan.
-    pub publication_fields_inspected: u64,
+    /// Field slots explicitly enumerated by the publication invalidation scan.
+    /// Excludes field/value comparisons inside whole-entity equality checks.
+    pub publication_field_slots_enumerated: u64,
     /// Full-document equality comparisons attempted by publication.
     pub publication_document_comparisons: u64,
     /// JSON bytes emitted by projection serialization checks.
@@ -46,10 +47,11 @@ pub fn record_publication_entities_inspected(count: u64) {
     enabled::record_publication_entities_inspected(count);
 }
 
-/// Record fields compared by the publication invalidation scan.
+/// Record field slots explicitly enumerated by the publication invalidation scan.
+/// Excludes field/value comparisons inside whole-entity equality checks.
 #[inline]
-pub fn record_publication_fields_inspected(count: u64) {
-    enabled::record_publication_fields_inspected(count);
+pub fn record_publication_field_slots_enumerated(count: u64) {
+    enabled::record_publication_field_slots_enumerated(count);
 }
 
 /// Record one attempted full-document equality comparison.
@@ -73,7 +75,7 @@ mod enabled {
 
     static DOCUMENT_CLONES: AtomicU64 = AtomicU64::new(0);
     static PUBLICATION_ENTITIES_INSPECTED: AtomicU64 = AtomicU64::new(0);
-    static PUBLICATION_FIELDS_INSPECTED: AtomicU64 = AtomicU64::new(0);
+    static PUBLICATION_FIELD_SLOTS_ENUMERATED: AtomicU64 = AtomicU64::new(0);
     static PUBLICATION_DOCUMENT_COMPARISONS: AtomicU64 = AtomicU64::new(0);
     static JSON_BYTES_SERIALIZED: AtomicU64 = AtomicU64::new(0);
 
@@ -81,7 +83,8 @@ mod enabled {
         CapacityCounters {
             document_clones: DOCUMENT_CLONES.load(Ordering::Relaxed),
             publication_entities_inspected: PUBLICATION_ENTITIES_INSPECTED.load(Ordering::Relaxed),
-            publication_fields_inspected: PUBLICATION_FIELDS_INSPECTED.load(Ordering::Relaxed),
+            publication_field_slots_enumerated: PUBLICATION_FIELD_SLOTS_ENUMERATED
+                .load(Ordering::Relaxed),
             publication_document_comparisons: PUBLICATION_DOCUMENT_COMPARISONS
                 .load(Ordering::Relaxed),
             json_bytes_serialized: JSON_BYTES_SERIALIZED.load(Ordering::Relaxed),
@@ -91,7 +94,7 @@ mod enabled {
     pub(super) fn reset() {
         DOCUMENT_CLONES.store(0, Ordering::Relaxed);
         PUBLICATION_ENTITIES_INSPECTED.store(0, Ordering::Relaxed);
-        PUBLICATION_FIELDS_INSPECTED.store(0, Ordering::Relaxed);
+        PUBLICATION_FIELD_SLOTS_ENUMERATED.store(0, Ordering::Relaxed);
         PUBLICATION_DOCUMENT_COMPARISONS.store(0, Ordering::Relaxed);
         JSON_BYTES_SERIALIZED.store(0, Ordering::Relaxed);
     }
@@ -104,8 +107,8 @@ mod enabled {
         PUBLICATION_ENTITIES_INSPECTED.fetch_add(count, Ordering::Relaxed);
     }
 
-    pub(super) fn record_publication_fields_inspected(count: u64) {
-        PUBLICATION_FIELDS_INSPECTED.fetch_add(count, Ordering::Relaxed);
+    pub(super) fn record_publication_field_slots_enumerated(count: u64) {
+        PUBLICATION_FIELD_SLOTS_ENUMERATED.fetch_add(count, Ordering::Relaxed);
     }
 
     pub(super) fn record_publication_document_comparison() {
@@ -131,7 +134,7 @@ mod enabled {
 
     pub(super) const fn record_publication_entities_inspected(_count: u64) {}
 
-    pub(super) const fn record_publication_fields_inspected(_count: u64) {}
+    pub(super) const fn record_publication_field_slots_enumerated(_count: u64) {}
 
     pub(super) const fn record_publication_document_comparison() {}
 
