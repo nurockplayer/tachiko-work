@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ColumnSpec, DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey,
+    DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey,
     FieldRef, FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput,
     SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input, cell_edit_commands,
     native_table_row, parse_column_initializer, table_error,
@@ -162,19 +162,8 @@ impl DesignerRuntime {
             id
         };
         let target = FieldRef::new(entity_id, field_id);
-        let display_column = ColumnSpec {
-            id: definition.id.clone(),
-            key: definition.key.to_string(),
-            display_name: definition.effective_name().to_owned(),
-            display_name_explicit: definition.display_name.is_some(),
-            field_type: definition.field_type.clone(),
-            required: definition.required,
-            constraint: definition.constraint.clone(),
-            number_format: definition.number_format.clone(),
-            date_format: definition.date_format,
-        };
         let mut displays = Vec::new();
-        auto_input::collect_display(&display_column, &target, input, &mut displays);
+        auto_input::collect_display(&definition.field_type, &target, input, &mut displays);
         if let Some(field) = added {
             inverse.push(SemanticCommand::RemoveSchemaField {
                 schema: schema_id.clone(),
