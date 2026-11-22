@@ -132,6 +132,8 @@ mod capacity_809_bench;
 mod capacity_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_fixtures;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_stage5_bench;
 #[cfg(all(target_arch = "wasm32", feature = "capacity-bench"))]
 compile_error!(
     "the capacity-bench feature is native test-only; it must not be enabled for WASM builds"
