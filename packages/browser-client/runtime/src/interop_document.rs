@@ -979,7 +979,7 @@ fn import_workbook_candidate(
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
-    let (runtime, mut metadata, ledger) = import_workbook_document(
+    let (runtime, mut metadata, ledger, export_maps) = import_workbook_document(
         workbook,
         selection,
         occurrence_id,
@@ -995,13 +995,15 @@ fn import_workbook_candidate(
         SessionProfile::TextCapacity | SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
     }
     normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
-    validate_import_metadata_for_profile(
-        runtime.session.export_snapshot().document(),
-        &metadata,
-        runtime.profile,
+    validate_import_metadata_for_profile(runtime.session.document(), &metadata, runtime.profile)?;
+    let (mut runtime, mut projection) = finish_import(
+        runtime,
+        workbook,
+        metadata,
+        ledger,
+        occurrence_id,
+        &export_maps,
     )?;
-    let (mut runtime, mut projection) =
-        finish_import(runtime, workbook, metadata, ledger, occurrence_id)?;
     // TextCapacity requires the original complete source presentation metadata.
     if runtime.profile != SessionProfile::TextCapacity {
         runtime = promote_import_presentation(
@@ -1048,7 +1050,7 @@ fn import_workbook_working_size_candidate(
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
-    let (mut runtime, mut metadata, mut ledger) = import_workbook_document(
+    let (mut runtime, mut metadata, mut ledger, export_maps) = import_workbook_document(
         workbook,
         selection,
         occurrence_id,
@@ -1056,11 +1058,7 @@ fn import_workbook_working_size_candidate(
         true,
     )?;
     normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
-    validate_import_metadata_for_profile(
-        runtime.session.export_snapshot().document(),
-        &metadata,
-        runtime.profile,
-    )?;
+    validate_import_metadata_for_profile(runtime.session.document(), &metadata, runtime.profile)?;
     runtime =
         promote_import_presentation(runtime, workbook, &mut metadata, &mut ledger, occurrence_id)?;
     for sheet in &mut metadata.sheets {
@@ -1096,7 +1094,12 @@ fn import_workbook_working_size_candidate(
     }
     metadata.version = 2;
     // The same representation proof as an ordinary import, without promotion.
-    drop(runtime.export_workbook(runtime.current_revision(), &metadata)?);
+    drop(runtime.export_imported_workbook_with_maps(
+        runtime.current_revision(),
+        &metadata,
+        ImportedOutput::Projection,
+        Some(&export_maps),
+    )?);
     ledger.push(stable_reference_binding());
     super::interop_adapter::cap_ledger(&mut ledger);
     // The reply also carries the metadata and ledger, so the window gets what
@@ -1128,7 +1131,15 @@ fn import_workbook_document(
     occurrence_id: &str,
     admit: fn(Document, &str) -> Result<DesignerRuntime, DesignerError>,
     working: bool,
-) -> Result<(DesignerRuntime, InteropMetadata, Vec<FidelityFinding>), DesignerError> {
+) -> Result<
+    (
+        DesignerRuntime,
+        InteropMetadata,
+        Vec<FidelityFinding>,
+        ExportA1Maps,
+    ),
+    DesignerError,
+> {
     validate_selection(workbook, selection, working)?;
     // One for the document, then each sheet's schema, fields and rows.
     let total_ids = 1 + workbook
@@ -1240,7 +1251,19 @@ fn import_workbook_document(
         };
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
-    let export_maps = export_a1_maps(&document, &metadata);
+    let mut referenced = BTreeMap::<EntityId, BTreeSet<FieldId>>::new();
+    for (_, references, _) in pending.values() {
+        for reference in &references.cells {
+            referenced
+                .entry(reference.entity.clone())
+                .or_default()
+                .insert(reference.field.clone());
+        }
+    }
+    // Guards wrap existing references; neither binding nor guarding introduces
+    // another cell. Column ranges still cover every row in the metadata.
+    let export_maps = export_a1_maps(&document, &metadata, Some(&referenced));
+    drop(referenced);
     // Binding only replaces field values, so one index serves every formula.
     let index = AddressIndex::build(&document)
         .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
@@ -1267,7 +1290,7 @@ fn import_workbook_document(
         )?;
     }
     let runtime = admit(document, occurrence_id)?;
-    Ok((runtime, metadata, ledger))
+    Ok((runtime, metadata, ledger, export_maps))
 }
 
 fn finish_import(
@@ -1276,6 +1299,7 @@ fn finish_import(
     mut metadata: InteropMetadata,
     mut ledger: Vec<FidelityFinding>,
     occurrence_id: &str,
+    export_maps: &ExportA1Maps,
 ) -> Result<(DesignerRuntime, ImportedProjection), DesignerError> {
     // Admission covers the final typed candidate, including user-added columns
     // and bound formulas. Reuse the same representation proof as saved-project
@@ -1286,7 +1310,12 @@ fn finish_import(
         }
         SessionProfile::TextCapacity => false,
     };
-    let exported = match runtime.export_workbook(runtime.current_revision(), &metadata) {
+    let exported = match runtime.export_imported_workbook_with_maps(
+        runtime.current_revision(),
+        &metadata,
+        ImportedOutput::Projection,
+        Some(export_maps),
+    ) {
         Ok(exported) => exported,
         Err(error) if promote => {
             let candidate = DesignerRuntime::from_document_profile(
@@ -2095,74 +2124,76 @@ pub(crate) fn criterion_type(
     }
 }
 
-/// The A1 address of every exported cell and one whole-column range per
-/// exported column, as the imported-workbook export writes them.
+type ExportA1Maps = (
+    BTreeMap<FieldRef, ExportCell>,
+    BTreeMap<ColumnRef, ExportColumn>,
+);
+
+/// A1 addresses and whole-column ranges as the workbook export writes them.
+/// Import supplies the exact referenced cells already collected by translation.
 fn export_a1_maps(
     document: &Document,
     metadata: &InteropMetadata,
-) -> (
-    BTreeMap<FieldRef, ExportCell>,
-    BTreeMap<ColumnRef, ExportColumn>,
-) {
+    referenced: Option<&BTreeMap<EntityId, BTreeSet<FieldId>>>,
+) -> ExportA1Maps {
     let mut addresses = BTreeMap::new();
-    // One whole-column range per exported column, so a column total keeps
-    // meaning every exported row instead of the rows present today.
     let mut columns = BTreeMap::new();
     for sheet in &metadata.sheets {
         let present: Vec<_> = sheet
             .rows
             .iter()
-            .filter(|row| {
-                document
-                    .entities
-                    .contains_key(&EntityId::from(row.entity_id.clone()))
+            .filter_map(|row| document.entities.get(row.entity_id.as_str()))
+            .collect();
+        let schema = document.schemas.get(sheet.schema_id.as_str());
+        let definitions: Vec<_> = sheet
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(column, definition)| {
+                (
+                    definition,
+                    column_letters(column),
+                    schema.and_then(|schema| schema.fields.get(definition.field_id.as_str())),
+                )
             })
             .collect();
         let first = 1 + usize::from(sheet.has_header);
         let last = present.len() + usize::from(sheet.has_header);
         let quoted = sheet.name.replace('\'', "''");
-        for (column, definition) in sheet.columns.iter().enumerate() {
-            let letters = column_letters(column);
-            // An exported table without rows maps its columns to no range.
+        for (definition, letters, field) in &definitions {
             let range = if present.is_empty() {
                 String::new()
             } else {
                 format!("'{quoted}'!${letters}${first}:${letters}${last}")
             };
-            let field_type = document
-                .schemas
-                .get(sheet.schema_id.as_str())
-                .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                .map(|field| field.field_type.clone());
             columns.insert(
                 ColumnRef::new(sheet.schema_id.clone(), definition.field_id.clone()),
-                ExportColumn::new(range, field_type),
+                ExportColumn::new(range, field.map(|field| field.field_type.clone())),
             );
         }
-        for (row_index, row) in present.iter().enumerate() {
-            for (column, definition) in sheet.columns.iter().enumerate() {
+        for (row_index, entity) in present.iter().enumerate() {
+            let selected = match referenced {
+                Some(referenced) => match referenced.get(&entity.id) {
+                    Some(fields) => Some(fields),
+                    None => continue,
+                },
+                None => None,
+            };
+            for (definition, letters, field) in &definitions {
+                if selected.is_some_and(|fields| !fields.contains(definition.field_id.as_str())) {
+                    continue;
+                }
                 addresses.insert(
-                    FieldRef::new(row.entity_id.clone(), definition.field_id.clone()),
+                    FieldRef::new(entity.id.clone(), definition.field_id.clone()),
                     ExportCell::new(
                         quoted.clone(),
-                        column_letters(column),
-                        row_index + 1 + usize::from(sheet.has_header),
+                        letters.clone(),
+                        row_index + first,
                         criterion_type(
-                            document
-                                .schemas
-                                .get(sheet.schema_id.as_str())
-                                .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                                .map(|field| &field.field_type),
-                            document
-                                .entities
-                                .get(row.entity_id.as_str())
-                                .and_then(|entity| entity.fields.get(definition.field_id.as_str())),
+                            field.map(|field| &field.field_type),
+                            entity.fields.get(definition.field_id.as_str()),
                         ),
-                        document
-                            .schemas
-                            .get(sheet.schema_id.as_str())
-                            .and_then(|schema| schema.fields.get(definition.field_id.as_str()))
-                            .is_some_and(|field| !field.required),
+                        field.is_some_and(|field| !field.required),
                     ),
                 );
             }
@@ -2275,10 +2306,7 @@ fn bind_import_formula(
     source: &str,
     cell: &SourceCell,
     location: &str,
-    export_maps: &(
-        BTreeMap<FieldRef, ExportCell>,
-        BTreeMap<ColumnRef, ExportColumn>,
-    ),
+    export_maps: &ExportA1Maps,
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
     let unbound = match parse_expression(source) {
@@ -2338,20 +2366,21 @@ fn bind_import_formula(
     let projected = match excel_extremum(expression, target, document) {
         Ok(expression) => match project_expression_with_index(document, index, target, &expression)
         {
-            Ok(source)
-                if parse_expression(&source).is_err()
-                    || export_expression(&expression, target, &export_maps.0, &export_maps.1)
+            Ok(source) => match parse_expression(&source) {
+                Ok(projected_unbound)
+                    if !export_expression(&expression, target, &export_maps.0, &export_maps.1)
                         .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
-            {
-                None
-            }
-            Ok(source) => Some(source),
+                {
+                    Some((expression, projected_unbound))
+                }
+                Ok(_) | Err(_) => None,
+            },
             Err(CanonicalAuthoringProjectionError::Complexity(_)) => None,
             Err(error) => return Err(tracker_error(&error.to_string())),
         },
         Err(_) => None,
     };
-    let Some(source) = projected else {
+    let Some((expression, projected_unbound)) = projected else {
         return keep_import_cache(
             document,
             target,
@@ -2361,23 +2390,20 @@ fn bind_import_formula(
             "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows",
         );
     };
-    // `FormulaUpdate` parsed and bound the projected text again before
-    // publishing it; do the same here, then write the bound expression into
-    // its slot. The final `from_document` validates and calculates the
-    // complete document once, including the required Number target rule.
-    let unbound = parse_expression(&source).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
-            field: target.clone(),
-            input: source.clone(),
-            source: error,
-        }
-    })?;
-    let bound = bind_expression_with_index(document, index, target, &unbound).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::FormulaBinding {
-            field: target.clone(),
-            source: Box::new(error),
-        }
-    })?;
+    // The parser above checks the projected text once, including its node
+    // bound. The final admission validates and calculates the whole document.
+    // Canonical projection often preserves the parsed tree exactly. Its
+    // addresses already resolved against this same document and index.
+    let bound = if projected_unbound == unbound {
+        expression
+    } else {
+        bind_expression_with_index(document, index, target, &projected_unbound).map_err(
+            |error| tachiko_workspace_engine::WorkspaceError::FormulaBinding {
+                field: target.clone(),
+                source: Box::new(error),
+            },
+        )?
+    };
     let entity = document
         .entities
         .get_mut(&target.entity)
@@ -4116,13 +4142,25 @@ impl DesignerRuntime {
         metadata: &InteropMetadata,
         output: ImportedOutput<'_>,
     ) -> Result<SourceWorkbook, DesignerError> {
+        self.export_imported_workbook_with_maps(expected_revision, metadata, output, None)
+    }
+
+    // Import binding changes only Number slots to Number results/formulas;
+    // schema types, presence and worksheet coordinates stay identical. Reuse
+    // those maps for the representation proof after all metadata checks.
+    fn export_imported_workbook_with_maps(
+        &self,
+        expected_revision: &str,
+        metadata: &InteropMetadata,
+        output: ImportedOutput<'_>,
+        export_maps: Option<&ExportA1Maps>,
+    ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
-        let snapshot = self.session.export_snapshot();
-        let (metadata, ledger) =
-            current_import_metadata(snapshot.document(), metadata, output, self.profile)?;
+        let document = self.session.document();
+        let (metadata, ledger) = current_import_metadata(document, metadata, output, self.profile)?;
         match self.profile {
             SessionProfile::TextCapacity => {
-                validate_capacity_metadata(snapshot.document(), &metadata)
+                validate_capacity_metadata(document, &metadata)
                     .map_err(|error| imported_export_error("workbook", &error.to_string()))?;
             }
             SessionProfile::Ordinary | SessionProfile::WorkingSize => {}
@@ -4131,10 +4169,11 @@ impl DesignerRuntime {
         let mut workbook = self
             .rebuild_workbook_from_metadata(
                 expected_revision,
-                snapshot.document(),
+                document,
                 &metadata,
                 profile,
                 matches!(output, ImportedOutput::Csv(_)),
+                export_maps,
             )
             .map_err(|error| match error {
                 DesignerError::CapacityExceeded(_) | DesignerError::ProjectionTooLarge { .. }
@@ -4170,19 +4209,17 @@ impl DesignerRuntime {
         let mut workbook = if matches!(output, ImportedOutput::Csv(_)) {
             // Formula definitions, worksheet labels, widths and styles never
             // enter CSV bytes. Do not run an XLSX validator on them.
-            append_saved_export_findings(snapshot.document(), &mut workbook);
+            append_saved_export_findings(document, &mut workbook);
             workbook
         } else {
-            finalize_export_workbook(snapshot.document(), workbook, profile).map_err(|error| {
-                match error {
-                    DesignerError::CapacityExceeded(_)
-                    | DesignerError::ImportCapacityExceeded { .. }
-                        if profile == OutputProfile::WorkingSize =>
-                    {
-                        error
-                    }
-                    other => imported_export_error("workbook", &other.to_string()),
+            finalize_export_workbook(document, workbook, profile).map_err(|error| match error {
+                DesignerError::CapacityExceeded(_)
+                | DesignerError::ImportCapacityExceeded { .. }
+                    if profile == OutputProfile::WorkingSize =>
+                {
+                    error
                 }
+                other => imported_export_error("workbook", &other.to_string()),
             })?
         };
         workbook.ledger.extend(ledger);
@@ -4387,6 +4424,7 @@ impl DesignerRuntime {
             metadata,
             profile,
             false,
+            None,
         )?;
         finalize_export_workbook(document, workbook, profile)
     }
@@ -4399,19 +4437,31 @@ impl DesignerRuntime {
         metadata: &InteropMetadata,
         profile: OutputProfile,
         values_only: bool,
+        export_maps: Option<&ExportA1Maps>,
     ) -> Result<SourceWorkbook, DesignerError> {
         self.check_revision(expected_revision)?;
         // The caller holds the exact immutable snapshot already used for
         // metadata admission. No second owned document is needed here.
         // Capacity admission excludes formulas, the sole consumers of A1
         // addresses. Other profiles retain their full reference index.
+        let built_maps;
         let (addresses, columns) = if profile == OutputProfile::TextCapacity || values_only {
-            (BTreeMap::new(), BTreeMap::new())
+            built_maps = (BTreeMap::new(), BTreeMap::new());
+            &built_maps
+        } else if let Some(maps) = export_maps {
+            maps
         } else {
-            export_a1_maps(document, metadata)
+            built_maps = export_a1_maps(document, metadata, None);
+            &built_maps
         };
         let mut sheets = Vec::new();
         for sheet in &metadata.sheets {
+            let schema = &document.schemas[sheet.schema_id.as_str()];
+            let fields: Vec<_> = sheet
+                .columns
+                .iter()
+                .map(|column| &schema.fields[column.field_id.as_str()])
+                .collect();
             let mut rows = Vec::new();
             for row in &sheet.rows {
                 let Some(entity) = document
@@ -4431,9 +4481,7 @@ impl DesignerRuntime {
                         let formula = if values_only {
                             None
                         } else {
-                            Some(export_expression(
-                                expression, &target, &addresses, &columns,
-                            )?)
+                            Some(export_expression(expression, &target, addresses, columns)?)
                         };
                         if let Some(formula) = formula
                             .as_ref()
@@ -4456,8 +4504,7 @@ impl DesignerRuntime {
                     let style = if values_only {
                         CellStyle::default()
                     } else {
-                        let schema = &document.schemas[&SchemaId::from(sheet.schema_id.clone())];
-                        let field = &schema.fields[&FieldId::from(definition.field_id.clone())];
+                        let field = fields[column];
                         crate::interop_date_format::cell_style(
                             &self.presentation,
                             &schema.id,
@@ -5777,6 +5824,129 @@ mod import_dependency_tests {
             },
             (0, 0, 0),
         )
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // One fixture compares sparse maps and both canonical binding paths.
+    fn import_binding_matches_canonical_rebinding_and_reuses_number_slot_maps() {
+        use super::{AddressIndex, Number, Value, bind_import_formula, export_a1_maps};
+        use tachiko_formula_engine::{
+            bind_expression_with_index, parse_expression, project_expression_with_index,
+        };
+        let mut document = document();
+        document
+            .schemas
+            .get_mut("sheet")
+            .unwrap()
+            .fields
+            .get_mut("value")
+            .unwrap()
+            .required = false;
+        for entity in document.entities.values_mut() {
+            for field in ["value", "total"] {
+                entity
+                    .fields
+                    .insert(field.into(), Value::Number(Number::new(2.0).unwrap()));
+            }
+        }
+        let metadata = InteropMetadata {
+            version: 1,
+            sheets: vec![InteropSheetMetadata {
+                schema_id: "sheet".into(),
+                name: "Sheet's".into(),
+                has_header: true,
+                columns: ["value", "total"]
+                    .into_iter()
+                    .map(|id| InteropColumnMetadata {
+                        field_id: id.into(),
+                        name: id.into(),
+                        width: None,
+                    })
+                    .collect(),
+                rows: ["d", "b", "a", "c"]
+                    .into_iter()
+                    .map(|id| InteropRowMetadata {
+                        entity_id: id.into(),
+                        styles: Vec::new(),
+                    })
+                    .collect(),
+            }],
+        };
+        let referenced = BTreeMap::from([
+            ("a".into(), BTreeSet::from(["value".into()])),
+            ("b".into(), BTreeSet::from(["value".into()])),
+        ]);
+        let maps = export_a1_maps(&document, &metadata, Some(&referenced));
+        assert_eq!(maps.0.len(), 2);
+        assert_eq!(maps.1.len(), 2);
+        assert_eq!(
+            maps.0[&FieldRef::new("a", "value")].absolute(),
+            "'Sheet''s'!$A$4"
+        );
+        let index = AddressIndex::build(&document).unwrap();
+        let target = FieldRef::new("a", "total");
+        let cell = crate::interop_adapter::SourceCell {
+            value: crate::interop_adapter::SourceValue::Number { value: 2.0 },
+            formula: None,
+            style: crate::interop_adapter::CellStyle::default(),
+        };
+        for source in [
+            "[a.value]+1",
+            "MIN([a.value],[b.value])",
+            "[sheet.value:total]",
+        ] {
+            bind_import_formula(
+                &mut document,
+                &index,
+                &target,
+                source,
+                &cell,
+                "Sheet!B4",
+                &maps,
+                &mut Vec::new(),
+            )
+            .unwrap();
+            let Value::Formula(bound) = &document.entities["a"].fields["total"] else {
+                panic!("expected bound formula");
+            };
+            let canonical =
+                project_expression_with_index(&document, &index, &target, bound).unwrap();
+            assert_eq!(
+                *bound,
+                bind_expression_with_index(
+                    &document,
+                    &index,
+                    &target,
+                    &parse_expression(&canonical).unwrap()
+                )
+                .unwrap()
+            );
+            let rebuilt = export_a1_maps(&document, &metadata, None);
+            for (reference, before) in &maps.0 {
+                let after = &rebuilt.0[reference];
+                assert_eq!(before.absolute(), after.absolute());
+                assert_eq!(before.criterion_type, after.criterion_type);
+                assert_eq!(before.optional, after.optional);
+            }
+            for (reference, before) in &maps.1 {
+                let after = &rebuilt.1[reference];
+                assert_eq!(before.range, after.range);
+                assert_eq!(before.field_type, after.field_type);
+            }
+        }
+        assert!(
+            bind_import_formula(
+                &mut document,
+                &index,
+                &target,
+                "[missing.value]",
+                &cell,
+                "Sheet!B4",
+                &maps,
+                &mut Vec::new()
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -4,6 +4,13 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Shift same-row formula references during sideways copy/fill when relative columns are enabled (#901).
+- Reduce repeated XLSX semantic-admission and representation-proof work without
+  changing import refusals, formula results or exported bytes (#678 5d).
+- Reduce XLSX source XML parsing and tree destruction costs by sharing element
+  names and namespace URIs and updating namespace scopes only at declarations
+  (Part of #678 5d).
+
 - Add `setCellStyle` for rectangular record/field selections: set or toggle bold
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;
