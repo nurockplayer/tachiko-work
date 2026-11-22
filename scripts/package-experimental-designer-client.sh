@@ -242,6 +242,8 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "copyFormula",
     "newTracker",
     "newBudget",
+    "newBlankWorkbook",
+    "writeCellAt",
     "newTable",
     "newTableWorkingSize",
     "newTrackerWorkingSize",
