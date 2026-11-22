@@ -142,7 +142,13 @@ pub(crate) fn capacity_date_style() -> CellStyle {
 }
 
 fn capacity_date_style_index(style: &CellStyle) -> Option<usize> {
-    if style.bold || style.fill.is_some() || style.wrap || style.border || style.alignment.is_some()
+    if style.bold
+        || style.italic
+        || style.fill.is_some()
+        || style.wrap
+        || style.border
+        || !style.border_sides.is_empty()
+        || style.alignment.is_some()
     {
         return None;
     }
@@ -1531,6 +1537,8 @@ pub struct CellStyle {
     pub fill: Option<String>,
     pub wrap: bool,
     pub border: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub border_sides: Vec<tachiko_workspace_engine::BorderSide>,
     pub alignment: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -3140,6 +3148,45 @@ fn capacity_plain_bindings(path: &str, xml: &Xml, parts: &BTreeMap<String, Vec<u
     }
 }
 
+fn parsed_border_sides(border: Option<&Xml>) -> Vec<tachiko_workspace_engine::BorderSide> {
+    use tachiko_workspace_engine::BorderSide;
+    [
+        ("top", BorderSide::Top),
+        ("right", BorderSide::Right),
+        ("bottom", BorderSide::Bottom),
+        ("left", BorderSide::Left),
+    ]
+    .into_iter()
+    .filter_map(|(name, side)| {
+        border
+            .and_then(|border| border.child(name))
+            .and_then(|edge| edge.attr("style"))
+            .filter(|style| *style != "none")
+            .map(|_| side)
+    })
+    .collect()
+}
+
+fn border_xml(style: &CellStyle) -> String {
+    use tachiko_workspace_engine::BorderSide;
+    let mut xml = String::from("<border>");
+    for (name, side) in [
+        ("left", BorderSide::Left),
+        ("right", BorderSide::Right),
+        ("top", BorderSide::Top),
+        ("bottom", BorderSide::Bottom),
+    ] {
+        xml.push('<');
+        xml.push_str(name);
+        if style.border_sides.contains(&side) || (style.border && style.border_sides.is_empty()) {
+            xml.push_str(" style=\"thin\"");
+        }
+        xml.push_str("/>");
+    }
+    xml.push_str("<diagonal/></border>");
+    xml
+}
+
 fn parse_styles(
     parts: &BTreeMap<String, Vec<u8>>,
     ledger: &mut Vec<FidelityFinding>,
@@ -3210,8 +3257,8 @@ fn parse_styles(
                 None
             }
         });
-        let has_border =
-            border.is_some_and(|b| b.children.iter().any(|x| x.attr("style").is_some()));
+        let border_sides = parsed_border_sides(border);
+        let has_border = !border_sides.is_empty();
         let alignment = xf.child("alignment");
         let horizontal = alignment
             .and_then(|a| a.attr("horizontal"))
@@ -3221,10 +3268,13 @@ fn parse_styles(
         styles.push(CellStyle {
             number_format,
             bold,
-            italic: false,
+            italic: font
+                .and_then(|n| n.child("i"))
+                .is_some_and(|i| !matches!(i.attr("val"), Some("0" | "false"))),
             fill,
             wrap,
             border: has_border,
+            border_sides,
             alignment: horizontal,
         });
     }
@@ -3237,7 +3287,7 @@ fn parse_styles(
             false,
         ));
     } else {
-        ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/RGB solid fill/wrap/border/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
+        ledger.push(finding(FidelityCategory::LossyOnExport,"style_profile","xl/styles.xml","Basic bold/italic/RGB solid fill/wrap/border sides/alignment/number format retained; font family, theme colors and other layout details are source-only",false));
     }
     if styles.is_empty() {
         styles.push(CellStyle::default());
@@ -6278,11 +6328,12 @@ pub(crate) fn export_xlsx_for_profile(
     let mut xfs = String::new();
     for (i, style) in styles.iter().enumerate() {
         fonts.push_str(&format!(
-            "<font>{}<sz val=\"11\"/><name val=\"Arial\"/></font>",
-            if style.bold { "<b/>" } else { "" }
+            "<font>{}{}<sz val=\"11\"/><name val=\"Arial\"/></font>",
+            if style.bold { "<b/>" } else { "" },
+            if style.italic { "<i/>" } else { "" }
         ));
         fills.push_str(&style.fill.as_ref().map_or_else(||"<fill><patternFill patternType=\"none\"/></fill>".into(),|rgb|format!("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"{}\"/><bgColor indexed=\"64\"/></patternFill></fill>",if rgb.len()==6{format!("FF{rgb}")}else{rgb.clone()})));
-        borders.push_str(if style.border{"<border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/><diagonal/></border>"}else{"<border><left/><right/><top/><bottom/><diagonal/></border>"});
+        borders.push_str(&border_xml(style));
         // General is built-in format 0. Redefining it as a custom format
         // makes Numbers show 1.5 as 2 (#615).
         let fmt_id = match style.number_format.as_deref() {

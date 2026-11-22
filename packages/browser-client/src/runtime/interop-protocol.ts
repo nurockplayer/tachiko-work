@@ -11,7 +11,7 @@ export type FidelityFinding = {
   code: string; location: string; message: string; blocking: boolean;
 };
 export type SourceValue = {kind: "empty"} | {kind: "text" | "date"; value: string} | {kind: "number"; value: number} | {kind: "boolean"; value: boolean};
-export type SourceStyle = { number_format: string | null; bold: boolean; italic?: boolean; fill: string | null; wrap: boolean; border: boolean; alignment: string | null };
+export type SourceStyle = { number_format: string | null; bold: boolean; italic?: boolean; fill: string | null; wrap: boolean; border: boolean; border_sides?: Array<"top" | "right" | "bottom" | "left">; alignment: string | null };
 export type SourceCell = { value: SourceValue; formula: string | null; style: SourceStyle };
 export type SourceWorkbook = { sheets: Array<{name: string; has_header: boolean; columns: Array<{name: string; width: number | null}>; rows: SourceCell[][]; layout?: SourceLayout}>; ledger: FidelityFinding[] };
 export type ImportSelection = { column_types: ImportFieldType[][]; extra_columns: Array<Array<{name: string; field_type: ImportFieldType}>> };

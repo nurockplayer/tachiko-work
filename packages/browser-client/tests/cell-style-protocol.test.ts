@@ -21,9 +21,14 @@ it("sends the rectangular cell style command through the kit without changing it
   const client: Pick<ExperimentalDesignerClient, "setCellStyle"> = new WorkerDesignerClient(() => worker);
   const changes: CellStyleChange[] = [
     {kind: "toggle_bold"}, {kind: "italic", value: true}, {kind: "fill", color: "#FFFF00"},
+    {kind: "border", target: "outline", value: true},
+    {kind: "border", target: "top", value: false},
+    {kind: "border", target: "right", value: true},
+    {kind: "border", target: "bottom", value: false},
+    {kind: "border", target: "left", value: true},
   ];
   const publication = await client.setCellStyle("resident/0", "rows", ["r2", "r3", "r4"], ["b", "c"], changes);
-  const clear: CellStyleChange[] = [{kind: "bold", value: false}, {kind: "toggle_italic"}, {kind: "fill", color: null}];
+  const clear: CellStyleChange[] = [{kind: "bold", value: false}, {kind: "toggle_italic"}, {kind: "fill", color: null}, {kind: "border", target: "all", value: false}];
   await client.setCellStyle("resident/1", "rows", ["r2"], ["c"], clear);
   expect(sent).toEqual([
     {type: "set_cell_style", expected_revision: "resident/0", collection: "rows", entities: ["r2", "r3", "r4"], fields: ["b", "c"], changes},
@@ -39,3 +44,10 @@ const invalidFill: CellStyleChange = {kind: "fill"};
 const invalidToggle: CellStyleChange = {kind: "toggle_bold", value: true};
 void invalidFill;
 void invalidToggle;
+
+// @ts-expect-error A border operation requires an explicit set/clear value.
+const invalidBorder: CellStyleChange = {kind: "border", target: "outline"};
+// @ts-expect-error Border targets are the four sides, outline or all.
+const invalidBorderTarget: CellStyleChange = {kind: "border", target: "diagonal", value: true};
+void invalidBorder;
+void invalidBorderTarget;
