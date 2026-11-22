@@ -13,6 +13,10 @@ All notable changes to Tachiko Work are documented in this file.
   profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
   prefixes completed by CR encoding; shared and inline imports decode once
   and retain located refusals for unsupported decoded Text (#547).
+- Auto row and column initializers retain implied currency, percent and date
+  formats through Undo/Redo, v3 and portable `.ro` saves. Windows, distinct
+  values and display filters resolve those per-cell formats; mixed value and
+  presentation edits publish every changed cell (#896, #897).
 - Auto scalar columns accept classifier-backed edits and paste with lossless
   Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
   Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
