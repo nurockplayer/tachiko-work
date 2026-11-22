@@ -4,6 +4,7 @@ use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
+use std::rc::Rc;
 use tachiko_formula_engine::{UnboundExpression, parse_expression};
 use tachiko_workspace_engine::{CriterionOperandKind, CriterionTest, MAX_CONDITIONAL_CRITERIA};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -2062,8 +2063,8 @@ pub(crate) fn import_csv_profile(
 // Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
 #[derive(Clone, Debug)]
 struct Xml {
-    name: String,
-    ns: String,
+    name: Rc<String>,
+    ns: Rc<String>,
     attrs: BTreeMap<String, String>,
     namespace_declarations: Vec<String>,
     children: Vec<Xml>,
@@ -2078,15 +2079,15 @@ impl Xml {
     fn child(&self, name: &str) -> Option<&Xml> {
         self.children
             .iter()
-            .find(|x| x.name == name && x.ns == self.ns)
+            .find(|x| x.name.as_str() == name && x.ns == self.ns)
     }
     fn kids<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Xml> {
         self.children
             .iter()
-            .filter(move |x| x.name == name && x.ns == self.ns)
+            .filter(move |x| x.name.as_str() == name && x.ns == self.ns)
     }
     fn all<'a>(&'a self, name: &str, out: &mut Vec<&'a Xml>) {
-        if self.name == name {
+        if self.name.as_str() == name {
             out.push(self);
         }
         for c in &self.children {
@@ -2094,7 +2095,7 @@ impl Xml {
         }
     }
     fn content(&self) -> Result<String> {
-        if self.name == "t" {
+        if self.name.as_str() == "t" {
             return decode_xstring(&self.text);
         }
         let mut s = String::new();
@@ -2115,9 +2116,9 @@ fn xml_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
 fn plain_qname(name: &[u8]) -> bool {
-    let parts = name.split(|byte| *byte == b':').collect::<Vec<_>>();
-    parts.len() <= 2
-        && parts.iter().all(|part| {
+    let mut parts = name.split(|byte| *byte == b':');
+    parts.clone().count() <= 2
+        && parts.all(|part| {
             part.first()
                 .is_some_and(|first| first.is_ascii_alphabetic() || *first == b'_')
                 && part
@@ -2238,7 +2239,14 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
     }
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
-    let mut stack: Vec<(Xml, BTreeMap<String, String>)> = Vec::new();
+    let mut stack: Vec<(Xml, usize)> = Vec::new();
+    // Only declarations change scope; descendants share immutable URI storage.
+    let mut bindings = BTreeMap::from([(
+        "xml".to_owned(),
+        Rc::new("http://www.w3.org/XML/1998/namespace".to_owned()),
+    )]);
+    let mut binding_changes = Vec::new();
+    let mut names: BTreeMap<String, Rc<String>> = BTreeMap::new();
     let mut root = None;
     // Reader positions exclude the optional UTF-8 BOM and preserve raw closing tags.
     let tokens = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
@@ -2274,12 +2282,7 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                 if stack.len() >= 64 {
                     return fail("XML structure exceeds bounded profile");
                 }
-                let mut bindings = stack
-                    .last()
-                    .map_or_else(BTreeMap::new, |(_, ns)| ns.clone());
-                bindings
-                    .entry("xml".into())
-                    .or_insert_with(|| "http://www.w3.org/XML/1998/namespace".into());
+                let scope_start = binding_changes.len();
                 let mut attrs = BTreeMap::new();
                 let mut namespace_declarations = Vec::new();
                 let mut attribute_count = 0;
@@ -2315,7 +2318,9 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                             return fail("XML namespace URI exceeds profile");
                         }
                         namespace_declarations.push(value.clone());
-                        bindings.insert(String::new(), value);
+                        let prefix = String::new();
+                        let previous = bindings.insert(prefix.clone(), Rc::new(value));
+                        binding_changes.push((prefix, previous));
                     } else if let Some(prefix) = key.strip_prefix("xmlns:") {
                         plain_lexical_values &= prefix != "xmlns"
                             && (prefix == "xml")
@@ -2325,7 +2330,9 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                             return fail("XML namespace URI exceeds profile");
                         }
                         namespace_declarations.push(value.clone());
-                        bindings.insert(prefix.into(), value);
+                        let prefix = prefix.to_owned();
+                        let previous = bindings.insert(prefix.clone(), Rc::new(value));
+                        binding_changes.push((prefix, previous));
                     } else {
                         attrs.insert(key, value);
                     }
@@ -2340,9 +2347,12 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                     let uri = if prefix.is_empty() {
                         ""
                     } else {
-                        bindings.get(prefix).map(String::as_str).ok_or_else(|| {
-                            InteropError::Invalid("Unbound XML attribute namespace".into())
-                        })?
+                        bindings
+                            .get(prefix)
+                            .map(|uri| uri.as_str())
+                            .ok_or_else(|| {
+                                InteropError::Invalid("Unbound XML attribute namespace".into())
+                            })?
                     };
                     if !expanded_attributes.insert((uri, local)) {
                         return fail("Duplicate expanded XML attribute");
@@ -2353,22 +2363,34 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                             && local == "id")
                         || (uri == "http://www.w3.org/XML/1998/namespace" && local == "space");
                 }
-                let qname = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|_| InteropError::Invalid("Invalid XML element".into()))?
-                    .to_owned();
-                let (prefix, name) = qname.split_once(':').unwrap_or(("", &qname));
+                let element_name = e.name();
+                let qname = std::str::from_utf8(element_name.as_ref())
+                    .map_err(|_| InteropError::Invalid("Invalid XML element".into()))?;
+                let (prefix, name) = qname.split_once(':').unwrap_or(("", qname));
                 let ns = bindings.get(prefix).cloned().unwrap_or_default();
                 if !prefix.is_empty() && ns.is_empty() {
                     return fail("Unbound XML namespace prefix");
                 }
                 // Normalize relationship id attributes by URI, not prefix spelling.
-                for (key, value) in attrs.clone() {
-                    if let Some((prefix, local)) = key.split_once(':') {
-                        if bindings.get(prefix).is_some_and(|ns|ns=="http://schemas.openxmlformats.org/officeDocument/2006/relationships") { attrs.insert(format!("rel:{local}"),value); }
-                    }
-                }
+                let aliases: Vec<_> = attrs
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        let (prefix, local) = key.split_once(':')?;
+                        bindings.get(prefix).is_some_and(|ns| {
+                            ns.as_str() == "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                        }).then(|| (format!("rel:{local}"), value.clone()))
+                    })
+                    .collect();
+                attrs.extend(aliases);
+                let name = if let Some(name) = names.get(name) {
+                    Rc::clone(name)
+                } else {
+                    let shared = Rc::new(name.to_owned());
+                    names.insert(name.to_owned(), Rc::clone(&shared));
+                    shared
+                };
                 let node = Xml {
-                    name: name.into(),
+                    name,
                     ns,
                     attrs,
                     namespace_declarations,
@@ -2379,15 +2401,17 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                 };
                 if empty {
                     attach_xml(node, &mut stack, &mut root)?;
+                    restore_xml_bindings(&mut bindings, &mut binding_changes, scope_start);
                 } else {
-                    stack.push((node, bindings));
+                    stack.push((node, scope_start));
                 }
             }
             Event::End(_) => {
-                let (node, _) = stack
+                let (node, scope_start) = stack
                     .pop()
                     .ok_or_else(|| InteropError::Invalid("Unexpected XML end".into()))?;
                 attach_xml(node, &mut stack, &mut root)?;
+                restore_xml_bindings(&mut bindings, &mut binding_changes, scope_start);
             }
             Event::Text(e) => {
                 let value = e
@@ -2441,11 +2465,20 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
     root.plain_lexical_values &= plain_document;
     Ok(root)
 }
-fn attach_xml(
-    node: Xml,
-    stack: &mut [(Xml, BTreeMap<String, String>)],
-    root: &mut Option<Xml>,
-) -> Result<()> {
+fn restore_xml_bindings(
+    bindings: &mut BTreeMap<String, Rc<String>>,
+    changes: &mut Vec<(String, Option<Rc<String>>)>,
+    scope_start: usize,
+) {
+    for (prefix, previous) in changes.drain(scope_start..).rev() {
+        if let Some(previous) = previous {
+            bindings.insert(prefix, previous);
+        } else {
+            bindings.remove(&prefix);
+        }
+    }
+}
+fn attach_xml(node: Xml, stack: &mut [(Xml, usize)], root: &mut Option<Xml>) -> Result<()> {
     if let Some((parent, _)) = stack.last_mut() {
         parent.children.push(node);
     } else if root.replace(node).is_some() {
@@ -2582,7 +2615,7 @@ fn xml_part(
     working: bool,
 ) -> Result<Xml> {
     let xml = parse_xml_profile(part(parts, name)?, working)?;
-    if xml.name != root || xml.ns != ns {
+    if xml.name.as_str() != root || xml.ns.as_str() != ns {
         return fail(format!("Invalid namespace/root for {name}"));
     }
     Ok(xml)
@@ -2620,8 +2653,8 @@ const FEATURE_BAG_NS: &str =
 /// accepted order and links are explicit rather than inferred from type names.
 fn checkbox_property_bags(root: &Xml) -> bool {
     fn shape(node: &Xml, name: &str, attrs: &[(&str, &str)], text: &str, count: usize) -> bool {
-        node.name == name
-            && node.ns == FEATURE_BAG_NS
+        node.name.as_str() == name
+            && node.ns.as_str() == FEATURE_BAG_NS
             && node
                 .namespace_declarations
                 .iter()
@@ -2754,7 +2787,7 @@ fn root_inventory(
             let mut relationships = Vec::new();
             xml.all("Relationship", &mut relationships);
             for node in relationships {
-                if node.ns == REL && node.attr("TargetMode") == Some("External") {
+                if node.ns.as_str() == REL && node.attr("TargetMode") == Some("External") {
                     ledger.push(finding(
                         FidelityCategory::UnsupportedSafeDisabled,
                         "external_relationship",
@@ -2780,12 +2813,13 @@ fn worksheet_relationship_finding(
     working: bool,
 ) -> Result<FidelityFinding> {
     let xml = parse_xml_profile(bytes, working)?;
-    if xml.name != "Relationships"
-        || xml.ns != REL
-        || xml
-            .children
-            .iter()
-            .any(|node| node.name != "Relationship" || node.ns != REL || !node.children.is_empty())
+    if xml.name.as_str() != "Relationships"
+        || xml.ns.as_str() != REL
+        || xml.children.iter().any(|node| {
+            node.name.as_str() != "Relationship"
+                || node.ns.as_str() != REL
+                || !node.children.is_empty()
+        })
     {
         return fail("Invalid worksheet relationships part");
     }
@@ -2924,7 +2958,7 @@ fn capacity_plain_node(node: &Xml) -> bool {
         "v" => (MAIN, &[], &[]),
         _ => return false,
     };
-    if node.ns != namespace
+    if node.ns.as_str() != namespace
         || !node.plain_attribute_namespaces
         || !node.plain_lexical_values
         || !node.namespace_declarations.iter().all(|uri| {
@@ -2969,14 +3003,16 @@ fn capacity_plain_values(node: &Xml) -> bool {
         }
         "c" => {
             let default_style = matches!(node.attr("s"), None | Some("0"));
-            let one_value = node.children.len() == 1 && node.children[0].name == "v";
+            let one_value = node.children.len() == 1 && node.children[0].name.as_str() == "v";
             let date_style = node
                 .attr("s")
                 .and_then(|style| style.parse::<usize>().ok())
                 .is_some_and(|style| (1..=CAPACITY_DATE_FORMATS.len()).contains(&style));
             match node.attr("t") {
                 Some("inlineStr") => {
-                    default_style && node.children.len() == 1 && node.children[0].name == "is"
+                    default_style
+                        && node.children.len() == 1
+                        && node.children[0].name.as_str() == "is"
                 }
                 // Only Date values and blank Date cells use a date style.
                 Some("str" | "s" | "b") => default_style && one_value,
@@ -3083,7 +3119,7 @@ fn capacity_plain_parts(parts: &BTreeMap<String, Vec<u8>>) -> Result<bool> {
         let Ok(xml) = parse_xml(bytes) else {
             return Ok(false);
         };
-        if xml.name != root || xml.ns != namespace {
+        if xml.name.as_str() != root || xml.ns.as_str() != namespace {
             return Ok(false);
         }
         if path == "xl/styles.xml" {
@@ -3424,7 +3460,7 @@ fn cell_value(
     }
 }
 fn c_unknown(node: &Xml) -> bool {
-    if node.ns != MAIN {
+    if node.ns.as_str() != MAIN {
         return true;
     }
     if matches!(node.name.as_str(), "rPr" | "rPh" | "phoneticPr") {
@@ -3478,7 +3514,7 @@ fn ignorable_formula_cache(cell: &Xml, style: &CellStyle) -> bool {
 }
 fn inventory_worksheet_children(xml: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
     for child in &xml.children {
-        let (code, blocking) = if child.ns == MAIN {
+        let (code, blocking) = if child.ns.as_str() == MAIN {
             match child.name.as_str() {
                 // Cell coordinates derive dimension; columns and data are mapped below.
                 "dimension" | "cols" | "sheetData" => continue,
@@ -3518,13 +3554,13 @@ fn inventory_workbook_children(xml: &Xml, ledger: &mut Vec<FidelityFinding>) -> 
         }
     }
     for child in &xml.children {
-        let (code, blocking) = if child.ns == MAIN {
+        let (code, blocking) = if child.ns.as_str() == MAIN {
             match child.name.as_str() {
                 "sheets" => {
                     if child
                         .children
                         .iter()
-                        .any(|node| node.ns != MAIN || node.name != "sheet")
+                        .any(|node| node.ns.as_str() != MAIN || node.name.as_str() != "sheet")
                     {
                         return fail("Unknown workbook sheet construct");
                     }
@@ -3562,7 +3598,7 @@ fn inventory_workbook_children(xml: &Xml, ledger: &mut Vec<FidelityFinding>) -> 
 }
 
 fn inventory_grid_attributes(node: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
-    let (mapped, layout): (&[&str], &[&str]) = if node.name == "row" {
+    let (mapped, layout): (&[&str], &[&str]) = if node.name.as_str() == "row" {
         (
             &["r", "hidden", "s", "customFormat"],
             &[
@@ -3678,7 +3714,7 @@ pub(crate) fn import_xlsx_profile(
         if strings
             .children
             .iter()
-            .any(|node| node.name != "si" || c_unknown(node))
+            .any(|node| node.name.as_str() != "si" || c_unknown(node))
         {
             return fail("Unknown shared string XML construct");
         }
@@ -3801,7 +3837,7 @@ pub(crate) fn import_xlsx_profile(
         if data
             .children
             .iter()
-            .any(|n| n.name != "row" || n.ns != MAIN)
+            .any(|n| n.name.as_str() != "row" || n.ns.as_str() != MAIN)
         {
             return fail("Unknown sheetData construct");
         }
@@ -3816,7 +3852,11 @@ pub(crate) fn import_xlsx_profile(
                 &format!("{name}:row {}", row.attr("r").unwrap_or("?")),
                 &mut ledger,
             )?;
-            if row.children.iter().any(|n| n.name != "c" || n.ns != MAIN) {
+            if row
+                .children
+                .iter()
+                .any(|n| n.name.as_str() != "c" || n.ns.as_str() != MAIN)
+            {
                 return fail("Unknown worksheet row construct");
             }
             let row_index = row
@@ -4100,7 +4140,7 @@ pub(crate) fn import_xlsx_profile(
             if cols
                 .children
                 .iter()
-                .any(|node| node.name != "col" || node.ns != MAIN)
+                .any(|node| node.name.as_str() != "col" || node.ns.as_str() != MAIN)
             {
                 return fail("Unknown worksheet column construct");
             }
@@ -6619,6 +6659,47 @@ mod date_guard_inventory_tests {
 }
 
 #[cfg(test)]
+mod xml_scope_tests {
+    use super::{MAIN, parse_xml};
+
+    #[test]
+    fn declarations_restore_after_empty_and_nested_elements() {
+        let xml = parse_xml(format!(
+            "<root xmlns=\"{MAIN}\" xmlns:p=\"outer\"><p:a xmlns:p=\"empty\"/><p:b xmlns:p=\"inner\"><p:c/></p:b><p:d/></root>"
+        ).as_bytes()).unwrap();
+        assert_eq!(xml.children[0].ns.as_str(), "empty");
+        assert_eq!(xml.children[1].children[0].ns.as_str(), "inner");
+        assert_eq!(xml.children[2].ns.as_str(), "outer");
+        for body in ["<a xmlns:p=\"local\"/>", "<a xmlns:p=\"local\"><p:b/></a>"] {
+            let error = parse_xml(format!("<root>{body}<p:c/></root>").as_bytes()).unwrap_err();
+            assert_eq!(error.to_string(), "Unbound XML namespace prefix");
+        }
+        let declarations = (0..63)
+            .map(|i| format!(" xmlns:p{i}=\"uri\""))
+            .collect::<String>();
+        parse_xml(format!("<root{declarations}><a xmlns:p0=\"shadow\"/><p0:b/></root>").as_bytes())
+            .unwrap();
+        let error =
+            parse_xml(format!("<root{declarations}><a xmlns:extra=\"uri\"/></root>").as_bytes())
+                .unwrap_err();
+        assert_eq!(error.to_string(), "XML namespace scope exceeds profile");
+    }
+
+    #[test]
+    fn relationship_aliases_keep_sorted_overwrite_and_scope() {
+        let office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        let xml = parse_xml(format!(
+            "<root xmlns:a=\"{office}\" xmlns:z=\"{office}\" xmlns:rel=\"other\"><c a:id=\"first\" rel:id=\"original\" z:other=\"last\"/><c xmlns:a=\"other\" a:id=\"local\"/><c a:id=\"restored\"/></root>"
+        ).as_bytes()).unwrap();
+        assert_eq!(xml.children[0].attr("rel:id"), Some("first"));
+        assert_eq!(xml.children[0].attr("a:id"), Some("first"));
+        assert_eq!(xml.children[0].attr("rel:other"), Some("last"));
+        assert_eq!(xml.children[1].attr("rel:id"), None);
+        assert_eq!(xml.children[2].attr("rel:id"), Some("restored"));
+    }
+}
+
+#[cfg(test)]
 mod scalar_carrier_tests {
     use super::{CellStyle, MAIN, Xml, c_unknown, cell_value, ignorable_formula_cache, parse_xml};
 
@@ -6988,6 +7069,7 @@ mod native_tables_output_tests {
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
+    use std::rc::Rc;
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     fn sheet(columns: usize, rows: usize) -> SourceSheet {
@@ -8010,6 +8092,7 @@ mod xstring_tests {
     };
     use quick_xml::{Reader, events::Event};
     use std::io::{Cursor, Read, Write};
+    use std::rc::Rc;
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     const LITERALS: &[(&str, &str)] = &[
