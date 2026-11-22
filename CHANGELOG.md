@@ -21,6 +21,10 @@ All notable changes to Tachiko Work are documented in this file.
   schema state, labels and cells survive v3/portable `.ro` save/reopen and v2
   delta/merge; distant writes and Auto formulas remain explicitly refused
   (#899, #668 PR2).
+- Imported project, v3 and portable `.ro` exports accept optional host import
+  metadata, preserving host worksheet names and column presentation in their
+  companion and on reopen. Worksheet lifecycle changes retain runtime authority;
+  exports without host metadata keep their existing behavior (#895).
 - Auto row and column initializers retain implied currency, percent and date
   formats through Undo/Redo, v3 and portable `.ro` saves. Windows, distinct
   values and display filters resolve those per-cell formats; mixed value and

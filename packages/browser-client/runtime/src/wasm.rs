@@ -1013,72 +1013,37 @@ fn process_portable_ro_candidate(working_size: bool) {
 
 /// Encode the exact expected resident revision into the project arena.
 ///
-/// The caller writes the UTF-8 expected revision into the normal request
-/// arena first. Successful export replaces the project arena with an opaque
+/// The caller writes a UTF-8 revision or JSON `{expected_revision, metadata?}`
+/// into the request arena first. Successful export replaces the project arena with an opaque
 /// canonical project bundle.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_export() {
-    RUNTIME.with(|runtime| {
-        let runtime = runtime.borrow();
-        let reply = if let Some(runtime) = runtime.as_ref() {
-            REQUEST.with(|request| {
-                let request = request.borrow();
-                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
-                    return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
-                        .expect("bounded refusal is JSON");
-                }
-                match std::str::from_utf8(&request) {
-                    Ok(expected_revision) => match runtime.export_project(expected_revision) {
-                        Ok(export) => {
-                            let byte_length = export.bytes.len();
-                            PROJECT.with(|project| *project.borrow_mut() = export.bytes);
-                            DesignerWireReply::Ok {
-                                response: DesignerResponse::ProjectExported(
-                                    ProjectExportProjection {
-                                        revision: export.revision,
-                                        byte_length,
-                                        import_metadata: export.import_metadata,
-                                    },
-                                ),
-                            }
-                        }
-                        Err(error) => DesignerWireReply::Error {
-                            error: error.failure_projection(runtime.current_revision()),
-                        },
-                    },
-                    Err(_) => DesignerWireReply::Error {
-                        error: DesignerError::InvalidProjectTransfer {
-                            message: "expected revision is not UTF-8".to_owned(),
-                        }
-                        .failure_projection(runtime.current_revision()),
-                    },
-                }
-            })
-        } else {
-            DesignerWireReply::Error {
-                error: crate::FailureProjection {
-                    span: None,
-                    code: "no_project_open".to_owned(),
-                    message: "No Designer project is open.".to_owned(),
-                    current_revision: "unavailable".to_owned(),
-                    diagnostics: Vec::new(),
-                    name_failures: Vec::new(),
-                    constraint_failure: None,
-                    row_count: None,
-                    capacity: None,
-                },
-            }
-        };
-        set_response(&reply);
-    });
+    export_project_bytes(
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_project_with_metadata,
+            )
+        },
+        DesignerResponse::ProjectExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
+    );
 }
 
 /// Export the explicitly selected opaque canonical v3 project.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_export_v3() {
     export_project_bytes(
-        DesignerRuntime::export_project_v3,
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_project_v3_with_metadata,
+            )
+        },
         DesignerResponse::ProjectExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
     );
 }
 
@@ -1089,6 +1054,7 @@ pub extern "C" fn tachiko_designer_canonical_tree_export() {
     export_project_bytes(
         DesignerRuntime::export_canonical_tree,
         DesignerResponse::CanonicalTreeExported,
+        MAX_WIRE_REQUEST_BYTES,
     );
 }
 
@@ -1097,8 +1063,15 @@ pub extern "C" fn tachiko_designer_canonical_tree_export() {
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_portable_ro_export() {
     export_project_bytes(
-        DesignerRuntime::export_portable_ro,
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_portable_ro_with_metadata,
+            )
+        },
         DesignerResponse::PortableRoExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
     );
 }
 
@@ -1132,6 +1105,7 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
 fn export_project_bytes<E>(
     export: fn(&DesignerRuntime, &str) -> Result<E, DesignerError>,
     response: fn(ProjectExportProjection) -> DesignerResponse,
+    request_limit: usize,
 ) where
     E: IntoProjectExport,
 {
@@ -1140,7 +1114,17 @@ fn export_project_bytes<E>(
         let reply = if let Some(runtime) = runtime.as_ref() {
             REQUEST.with(|request| {
                 let request = request.borrow();
-                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                let request_limit = if request
+                    .iter()
+                    .copied()
+                    .find(|byte| !byte.is_ascii_whitespace())
+                    == Some(b'{')
+                {
+                    request_limit
+                } else {
+                    MAX_WIRE_REQUEST_BYTES
+                };
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > request_limit {
                     return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
                         .expect("bounded refusal is JSON");
                 }

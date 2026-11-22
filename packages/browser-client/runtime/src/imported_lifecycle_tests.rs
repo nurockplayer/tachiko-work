@@ -577,6 +577,132 @@ fn untouched_import_and_old_portable_bytes_stay_exact() {
     );
 }
 
+fn assert_import_metadata_host_changes(
+    export: fn(
+        &DesignerRuntime,
+        &str,
+        Option<&InteropMetadata>,
+    ) -> Result<crate::ProjectExport, crate::DesignerError>,
+    legacy_export: bool,
+) {
+    let (mut runtime, mut metadata) = imported(false);
+    metadata.sheets[0].name = "Host Renamed Input".into();
+    metadata.sheets[0].columns[0].width = Some(24.0);
+
+    // Host-only edits are accepted without a worksheet lifecycle publication.
+    assert_eq!(runtime.metadata_for_export(&metadata).unwrap(), &metadata);
+    let expected = runtime.export_workbook("resident/0", &metadata).unwrap();
+    assert_eq!(expected.sheets[0].name, "Host Renamed Input");
+    assert_eq!(expected.sheets[0].columns[0].width, Some(24.0));
+    let expected_xlsx = xlsx(&runtime, &metadata);
+
+    let saved = export(&runtime, "resident/0", Some(&metadata)).unwrap();
+    let companion = saved.import_metadata.unwrap();
+    assert_eq!(companion, metadata);
+    let mut reopened = None;
+    open_imported_project(&mut reopened, &saved.bytes, &companion, OCCURRENCE).unwrap();
+    let reopened = reopened.unwrap();
+    assert_eq!(
+        reopened.export_workbook("resident/0", &companion).unwrap(),
+        expected
+    );
+    assert_eq!(xlsx(&reopened, &companion), expected_xlsx);
+
+    // Legacy exports cannot represent display names, so exercise deletion there.
+    // V3 exports exercise rename, add and delete lifecycle authority as well.
+    let deleted = if legacy_export {
+        runtime.delete_table("resident/0", "sheet_2").unwrap()
+    } else {
+        let renamed = runtime
+            .rename_table("resident/0", "sheet_1", "Runtime Name")
+            .unwrap();
+        assert_eq!(
+            renamed.import_metadata.unwrap().sheets[0].name,
+            "Runtime Name"
+        );
+        let added = runtime
+            .add_table("resident/1", "Added", &columns())
+            .unwrap();
+        runtime
+            .delete_table("resident/2", &added.collection.key)
+            .unwrap()
+    };
+    let authoritative = deleted.import_metadata.unwrap();
+    let revision = runtime.current_revision();
+    let mut host_presentation = authoritative.clone();
+    host_presentation.sheets[0].columns[0].width = Some(40.0);
+    assert_eq!(
+        export(&runtime, revision, Some(&host_presentation))
+            .unwrap()
+            .import_metadata,
+        Some(authoritative.clone()),
+    );
+    assert_eq!(
+        export(&runtime, revision, None).unwrap().import_metadata,
+        Some(authoritative)
+    );
+    assert!(export(&runtime, revision, Some(&metadata)).is_err());
+}
+
+#[test]
+fn import_metadata_host_changes_export_project() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_with_metadata, true);
+}
+
+#[test]
+fn import_metadata_host_changes_export_project_v3() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_v3_with_metadata, false);
+}
+
+#[test]
+fn import_metadata_host_changes_export_portable_ro() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_portable_ro_with_metadata, false);
+}
+
+fn assert_invalid_export_companion(
+    runtime: &DesignerRuntime,
+    metadata: &InteropMetadata,
+    location: &str,
+    message: &str,
+) {
+    for export in [
+        DesignerRuntime::export_project_with_metadata,
+        DesignerRuntime::export_project_v3_with_metadata,
+        DesignerRuntime::export_portable_ro_with_metadata,
+    ] {
+        let crate::DesignerError::ImportedSpreadsheetExport { finding } =
+            export(runtime, "resident/0", Some(metadata)).unwrap_err()
+        else {
+            panic!("expected typed import metadata export error");
+        };
+        assert_eq!(finding.code, "imported_spreadsheet_unrepresentable");
+        assert_eq!(finding.location, location);
+        assert_eq!(finding.message, message);
+        assert!(finding.blocking);
+    }
+}
+
+#[test]
+fn project_exports_reject_zero_host_column_width() {
+    let (runtime, mut metadata) = imported(false);
+    metadata.sheets[0].columns[0].width = Some(0.0);
+    let location = format!("collection {}", metadata.sheets[0].schema_id);
+    assert_invalid_export_companion(&runtime, &metadata, &location, "Invalid source width.");
+}
+
+#[test]
+fn project_exports_reject_duplicate_host_worksheet_names() {
+    let (runtime, mut metadata) = imported(false);
+    metadata.sheets[1].name = metadata.sheets[0].name.clone();
+    let location = format!("collection {}", metadata.sheets[1].schema_id);
+    assert_invalid_export_companion(
+        &runtime,
+        &metadata,
+        &location,
+        "Duplicate worksheet or invalid source column mapping.",
+    );
+}
+
 #[test]
 fn working_size_companion_reopens_portable_with_source_order() {
     let source = import_xlsx(&export_xlsx(&fixture(false)).unwrap()).unwrap();

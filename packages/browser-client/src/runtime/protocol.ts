@@ -828,10 +828,10 @@ export type WorkerRequest =
       profile?: "working_size";
     }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer; profile?: "working_size" }
-  | { id: number; kind: "export_project"; expected_revision: string }
-  | { id: number; kind: "export_project_v3"; expected_revision: string }
+  | { id: number; kind: "export_project"; expected_revision: string; metadata?: InteropMetadata }
+  | { id: number; kind: "export_project_v3"; expected_revision: string; metadata?: InteropMetadata }
   | { id: number; kind: "export_canonical_tree"; expected_revision: string }
-  | { id: number; kind: "export_portable_ro"; expected_revision: string }
+  | { id: number; kind: "export_portable_ro"; expected_revision: string; metadata?: InteropMetadata }
   | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
   | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "observe_occurrence" }
