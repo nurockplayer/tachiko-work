@@ -1816,9 +1816,8 @@ pub(crate) fn validate_import_geometry_profile(
             None,
             false,
         )?;
-        let bytes = serde_json::to_vec(workbook)
-            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?
-            .len();
+        let bytes = super::serialized_projection_bytes(workbook)
+            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?;
         check_import_limit(
             crate::CapacityLimit::SerializedSourceBytes,
             MAX_WORKING_SERIALIZED_SOURCE_BYTES,

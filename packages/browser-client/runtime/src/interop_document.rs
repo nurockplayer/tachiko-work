@@ -1816,22 +1816,15 @@ fn validate_selection(
         false,
     )
     .map_err(interop_admission_error)?;
-    let source_bytes = serde_json::to_vec(workbook)
-        .map_err(|_| tracker_error("source workbook is not encodable"))?
-        .len();
-    if working {
-        super::interop_adapter::check_import_limit(
-            super::CapacityLimit::SerializedSourceBytes,
-            super::interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES,
-            source_bytes,
-            None,
-            false,
-        )
-        .map_err(interop_admission_error)?;
-    } else if source_bytes > super::interop_adapter::MAX_EXPANDED_BYTES {
-        return Err(tracker_error(
-            "source workbook exceeds the bounded expanded profile",
-        ));
+    // Working-size geometry admission above already checks serialized source bytes.
+    if !working {
+        let source_bytes = super::serialized_projection_bytes(workbook)
+            .map_err(|_| tracker_error("source workbook is not encodable"))?;
+        if source_bytes > super::interop_adapter::MAX_EXPANDED_BYTES {
+            return Err(tracker_error(
+                "source workbook exceeds the bounded expanded profile",
+            ));
+        }
     }
     Ok(())
 }

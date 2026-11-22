@@ -23,7 +23,7 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
-    MAX_WORKING_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply, ensure_wire_reply_size,
+    MAX_WORKING_WIRE_REQUEST_BYTES, ProjectExportProjection, encode_reply, encode_sized_reply,
     inspect_project, inspect_project_working_size, open_local_document,
     open_local_document_working_size, open_portable_ro, open_portable_ro_working_size,
     open_project, open_project_working_size, process_wire_request, request_too_large_reply,
@@ -171,21 +171,22 @@ impl DesignerHost {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_wire_reply_size(&reply, result.profile) {
-                    HostReply::reply_only(&DesignerWireReply::Error {
+                match encode_sized_reply(&reply, result.profile, Vec::new()) {
+                    Err(error) => HostReply::reply_only(&DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
-                    })
-                } else {
-                    if let Some(candidate) = result.candidate {
-                        *runtime = Some(candidate);
-                    }
-                    let encoded = encode_reply(&reply);
-                    if let Some(identity) = result.inspected_source {
-                        self.retained_source = Some(InspectedSource::from_preview(identity, reply));
-                    }
-                    HostReply {
-                        reply: encoded,
-                        bytes: result.export,
+                    }),
+                    Ok(encoded) => {
+                        if let Some(candidate) = result.candidate {
+                            *runtime = Some(candidate);
+                        }
+                        if let Some(identity) = result.inspected_source {
+                            self.retained_source =
+                                Some(InspectedSource::from_preview(identity, reply));
+                        }
+                        HostReply {
+                            reply: encoded,
+                            bytes: result.export,
+                        }
                     }
                 }
             }
