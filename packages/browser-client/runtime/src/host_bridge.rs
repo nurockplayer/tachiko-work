@@ -318,23 +318,38 @@ impl DesignerHost {
         encode_reply(&reply)
     }
 
-    /// Export the exact expected resident revision as an opaque project bundle.
+    /// Export an opaque project bundle from a raw revision or JSON
+    /// `{expected_revision, metadata?}` request.
     #[must_use]
     pub fn export_project(&self, expected_revision: &[u8]) -> HostReply {
         self.export_bytes(
             expected_revision,
-            DesignerRuntime::export_project,
+            |runtime, request| {
+                crate::export_with_host_metadata(
+                    runtime,
+                    request,
+                    DesignerRuntime::export_project_with_metadata,
+                )
+            },
             DesignerResponse::ProjectExported,
+            MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
         )
     }
 
-    /// Export the explicitly selected opaque canonical v3 project.
+    /// Export canonical v3 from a raw revision or JSON `{expected_revision, metadata?}` request.
     #[must_use]
     pub fn export_project_v3(&self, expected_revision: &[u8]) -> HostReply {
         self.export_bytes(
             expected_revision,
-            DesignerRuntime::export_project_v3,
+            |runtime, request| {
+                crate::export_with_host_metadata(
+                    runtime,
+                    request,
+                    DesignerRuntime::export_project_v3_with_metadata,
+                )
+            },
             DesignerResponse::ProjectExported,
+            MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
         )
     }
 
@@ -345,16 +360,24 @@ impl DesignerHost {
             expected_revision,
             DesignerRuntime::export_canonical_tree,
             DesignerResponse::CanonicalTreeExported,
+            MAX_WIRE_REQUEST_BYTES,
         )
     }
 
-    /// Export a genuine portable-package/v1 `.ro` artifact.
+    /// Export portable `.ro` from a raw revision or JSON `{expected_revision, metadata?}` request.
     #[must_use]
     pub fn export_portable_ro(&self, expected_revision: &[u8]) -> HostReply {
         self.export_bytes(
             expected_revision,
-            DesignerRuntime::export_portable_ro,
+            |runtime, request| {
+                crate::export_with_host_metadata(
+                    runtime,
+                    request,
+                    DesignerRuntime::export_portable_ro_with_metadata,
+                )
+            },
             DesignerResponse::PortableRoExported,
+            MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
         )
     }
 
@@ -414,6 +437,7 @@ impl DesignerHost {
         expected_revision: &[u8],
         export: fn(&DesignerRuntime, &str) -> Result<E, DesignerError>,
         response: fn(ProjectExportProjection) -> DesignerResponse,
+        request_limit: usize,
     ) -> HostReply
     where
         E: IntoProjectExport,
@@ -421,7 +445,17 @@ impl DesignerHost {
         let Some(runtime) = self.runtime.as_ref() else {
             return HostReply::reply_only(&no_project_open());
         };
-        if expected_revision.len() > MAX_WIRE_REQUEST_BYTES {
+        let request_limit = if expected_revision
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace())
+            == Some(b'{')
+        {
+            request_limit
+        } else {
+            MAX_WIRE_REQUEST_BYTES
+        };
+        if expected_revision.len() > request_limit {
             return HostReply {
                 reply: request_too_large_reply(Some(runtime)),
                 bytes: None,
