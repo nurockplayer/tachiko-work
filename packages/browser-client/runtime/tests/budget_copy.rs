@@ -186,6 +186,50 @@ fn copy_column_offset_uses_canonical_columns_and_absolute_mode_preserves_ids() {
 }
 
 #[test]
+fn copy_shifts_same_row_columns_and_preserves_absolute_mode() {
+    let mut runtime = fixture();
+    update(&mut runtime, 0, "r1.b", "[.a] * 2");
+    runtime
+        .handle(copy(1, "r1.b", &["r1.c", "r1.d", "r2.c"], &[], true, true))
+        .unwrap();
+    for (target, expected) in [
+        ("r1.c", "([.b] * 2)"),
+        ("r1.d", "([.c] * 2)"),
+        ("r2.c", "([.b] * 2)"),
+    ] {
+        assert_eq!(
+            field(&mut runtime, 2, target).formula.unwrap().source,
+            expected
+        );
+    }
+    runtime
+        .handle(copy(2, "r1.b", &["r3.c"], &[], false, false))
+        .unwrap();
+    assert_eq!(
+        field(&mut runtime, 3, "r3.c").formula.unwrap().source,
+        "([.a] * 2)"
+    );
+}
+
+#[test]
+fn copy_refuses_same_row_column_offsets_outside_the_collection() {
+    let mut runtime = fixture();
+    update(&mut runtime, 0, "r1.c", "[.d] * 2");
+    let before = runtime.export_project("resident/1").unwrap();
+    let error = runtime
+        .handle(copy(1, "r1.c", &["r1.d"], &[], false, true))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("r1.d")
+            && error.contains("r1.c")
+            && error.contains("outside the collection"),
+        "{error}"
+    );
+    assert_eq!(runtime.export_project("resident/1").unwrap(), before);
+}
+
+#[test]
 fn copy_shifts_references_inside_conditions_and_rounding_arguments() {
     let mut runtime = fixture();
     update(

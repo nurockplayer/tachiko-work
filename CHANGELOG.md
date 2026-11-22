@@ -4,6 +4,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Shift same-row formula references during sideways copy/fill when relative columns are enabled (#901).
+
 - Add `setCellStyle` for rectangular record/field selections: set or toggle bold
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;

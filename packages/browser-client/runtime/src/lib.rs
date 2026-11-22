@@ -7662,10 +7662,14 @@ impl DesignerRuntime {
             .collect::<BTreeSet<_>>();
         let mut references = BTreeSet::new();
         let mut reference_probe = expression.clone();
-        map_copy_references(&mut reference_probe, &mut |reference, _| {
-            references.insert(reference.clone());
-            Ok(())
-        })?;
+        map_copy_references(
+            &mut reference_probe,
+            &mut |reference, _| {
+                references.insert(reference.clone());
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )?;
         if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
             return Err(tracker_error(
                 "fixed references must be unique source dependencies",
@@ -7685,27 +7689,40 @@ impl DesignerRuntime {
             require_copy_target_number(document, &target)?;
             let old = document.entities[&target.entity].fields.get(&target.field);
             let mut copied = expression.clone();
-            map_copy_references(&mut copied, &mut |reference, numeric| {
-                if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
-                    return require_copy_reference(document, reference, numeric);
-                }
-                let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
-                let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
-                let shifted_column =
-                    copy_index(reference_column, source_column, column, relative_columns)?;
-                *reference = FieldRef::new(
-                    spec.entities.get(shifted_row).cloned().ok_or_else(|| {
-                        tracker_error("relative reference row is outside the collection")
-                    })?,
-                    spec.columns
-                        .get(shifted_column)
-                        .map(|column| column.id.clone())
-                        .ok_or_else(|| {
-                            tracker_error("relative reference column is outside the collection")
+            map_copy_references(
+                &mut copied,
+                &mut |reference, numeric| {
+                    if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
+                        return require_copy_reference(document, reference, numeric);
+                    }
+                    let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
+                    let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
+                    let shifted_column =
+                        copy_index(reference_column, source_column, column, relative_columns)?;
+                    *reference = FieldRef::new(
+                        spec.entities.get(shifted_row).cloned().ok_or_else(|| {
+                            tracker_error("relative reference row is outside the collection")
                         })?,
-                );
-                require_copy_reference(document, reference, numeric)
-            })?;
+                        spec.columns
+                            .get(shifted_column)
+                            .map(|column| column.id.clone())
+                            .ok_or_else(|| {
+                                tracker_error("relative reference column is outside the collection")
+                            })?,
+                    );
+                    require_copy_reference(document, reference, numeric)
+                },
+                &mut |field| {
+                    if relative_columns {
+                        let reference = FieldRef::new(source.entity.clone(), field.clone());
+                        let (_, reference_column) = copy_position(spec, &rows, &reference)?;
+                        let shifted = copy_index(reference_column, source_column, column, true)
+                        .map_err(|_| tracker_error(&format!("relative reference {}.{} from {}.{} to {}.{} is outside the collection", source.entity, field, source.entity, source.field, target.entity, target.field)))?;
+                        *field = spec.columns.get(shifted).ok_or_else(|| tracker_error(&format!("relative reference {}.{} from {}.{} to {}.{} is outside the collection", source.entity, field, source.entity, source.field, target.entity, target.field)))?.id.clone();
+                    }
+                    Ok(())
+                },
+            )?;
             // `[.field]` resolves against the destination's own row, so the
             // copied formula must prove that row can supply the field now
             // rather than on the first evaluation.
@@ -11097,7 +11114,7 @@ fn require_copy_target_number(document: &Document, field: &FieldRef) -> Result<(
 
 /// Prove the numeric targets that `map_copy_references` does not visit:
 /// `[.field]` resolves against the destination row, and a column total names a
-/// schema column the copy keeps unchanged. Either must be valid now rather
+/// schema column. Either must be valid now rather
 /// than on the first evaluation.
 fn require_copy_expression_numbers(
     document: &Document,
@@ -11133,15 +11150,13 @@ fn require_copy_column_number(
 fn map_copy_references(
     expression: &mut Expression,
     visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
+    visit_same_row: &mut impl FnMut(&mut FieldId) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        // A relative copy keeps `[.field]` unchanged: the destination row is
-        // the formula's owner, so no per-row rewrite exists. A column total
-        // names a schema column, which no row-level copy changes.
-        Expression::Number(_)
-        | Expression::SameRowReference(_)
-        | Expression::ColumnTotal(_)
-        | Expression::ColumnAggregate { .. } => Ok(()),
+        Expression::SameRowReference(field) => visit_same_row(field),
+        Expression::Number(_) | Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
+            Ok(())
+        }
         // A column argument names a schema column, but a criterion expression
         // can read a cell of the copied row and must be rebased like any
         // other formula text.
@@ -11150,8 +11165,8 @@ fn map_copy_references(
                 if let Some(expression) = &mut criterion.value {
                     match expression.as_mut() {
                         Expression::Reference(reference) => visit(reference, false)?,
-                        Expression::SameRowReference(_) => {}
-                        other => map_copy_references(other, visit)?,
+                        Expression::SameRowReference(field) => visit_same_row(field)?,
+                        other => map_copy_references(other, visit, visit_same_row)?,
                     }
                 }
             }
@@ -11165,14 +11180,14 @@ fn map_copy_references(
             operand: reference, ..
         } => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(_) => Ok(()),
+            Expression::SameRowReference(field) => visit_same_row(field),
             _ => unreachable!("date function has a bound reference child"),
         },
         Expression::Days { end, start } => {
             for operand in [end, start] {
                 match operand.as_mut() {
                     Expression::Reference(reference) => visit(reference, false)?,
-                    Expression::SameRowReference(_) => {}
+                    Expression::SameRowReference(field) => visit_same_row(field)?,
                     _ => unreachable!("date function has a bound reference child"),
                 }
             }
@@ -11180,7 +11195,7 @@ fn map_copy_references(
         }
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(_) => Ok(()),
+            Expression::SameRowReference(field) => visit_same_row(field),
             _ => unreachable!("ISBLANK has a bound reference child"),
         },
         // A bare key reference is compared by its own type, like a criterion;
@@ -11190,17 +11205,17 @@ fn map_copy_references(
         } => {
             match key.as_mut() {
                 Expression::Reference(reference) => visit(reference, false)?,
-                Expression::SameRowReference(_) => {}
-                other => map_copy_references(other, visit)?,
+                Expression::SameRowReference(field) => visit_same_row(field)?,
+                other => map_copy_references(other, visit, visit_same_row)?,
             }
             if let Some(fallback) = if_missing {
-                map_copy_references(fallback, visit)?;
+                map_copy_references(fallback, visit, visit_same_row)?;
             }
             Ok(())
         }
         _ => {
             for child in expression.children_mut() {
-                map_copy_references(child, visit)?;
+                map_copy_references(child, visit, visit_same_row)?;
             }
             Ok(())
         }
@@ -16218,10 +16233,14 @@ mod tests {
             ))),
         };
         let mut visited = Vec::new();
-        super::map_copy_references(&mut expression, &mut |reference, numeric| {
-            visited.push((reference.field.as_str().to_owned(), numeric));
-            Ok(())
-        })
+        super::map_copy_references(
+            &mut expression,
+            &mut |reference, numeric| {
+                visited.push((reference.field.as_str().to_owned(), numeric));
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
         .expect("the lookup copy walk succeeds");
         assert_eq!(
             visited,
