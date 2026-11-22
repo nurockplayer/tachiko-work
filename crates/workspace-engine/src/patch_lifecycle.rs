@@ -6568,6 +6568,7 @@ fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) ->
 }
 
 fn project_formula_schema(schema: &mut Schema) {
+    schema.headerless = false;
     schema.display_name = None;
     schema.field_order = None;
     for field in schema.fields.values_mut() {
