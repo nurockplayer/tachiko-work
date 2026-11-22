@@ -72,8 +72,8 @@ fn blank_workbook_clear_unallocated_cells_is_no_change_and_write_still_undoes() 
     assert!(runtime.redo.is_empty());
     let table = window(&mut runtime);
     assert_eq!(table.total_rows, 0);
-    assert!(table.rows.is_empty());
-    assert!(table.columns.is_empty());
+    assert_eq!(table.rows.len(), 0);
+    assert_eq!(table.columns.len(), 0);
 
     write(&mut runtime, 1, 1, "Tea");
     let written = runtime.session.document().clone();
@@ -89,8 +89,8 @@ fn blank_workbook_clear_unallocated_cells_is_no_change_and_write_still_undoes() 
     }
     runtime.history_edit(&revision, false).unwrap();
     assert_eq!(runtime.session.document(), &blank_document);
-    assert!(window(&mut runtime).columns.is_empty());
-    assert!(window(&mut runtime).rows.is_empty());
+    assert_eq!(window(&mut runtime).columns.len(), 0);
+    assert_eq!(window(&mut runtime).rows.len(), 0);
 }
 
 #[test]
