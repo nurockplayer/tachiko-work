@@ -5822,6 +5822,7 @@ mod import_dependency_tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // One fixture compares sparse maps and both canonical binding paths.
     fn import_binding_matches_canonical_rebinding_and_reuses_number_slot_maps() {
         use super::{AddressIndex, Number, Value, bind_import_formula, export_a1_maps};
         use tachiko_formula_engine::{
