@@ -424,7 +424,11 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // default false blank flags and empty blank-field lists stay omitted.
         // The column-total footer adds `,"column_totals":{}` (19 bytes): this
         // fixture declares only Text columns, so it has no Number total.
-        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16 + 19);
+        // The collection summaries add `,"headerless":false` (2 x 19 bytes).
+        assert_eq!(
+            expected_bytes.len(),
+            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19
+        );
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
