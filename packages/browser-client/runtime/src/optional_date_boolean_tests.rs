@@ -510,7 +510,7 @@ fn date_format_lifecycle_refusals_and_v3_roundtrip() {
         .unwrap();
     let column = &reopened.collection_specs[&collection].columns[1];
     assert_eq!(
-        super::field_display_text(field, column).as_deref(),
+        super::field_display_text(field, column, &reopened.presentation).as_deref(),
         Some("2026年11月7日")
     );
 }
