@@ -227,6 +227,12 @@ impl DesignerRuntime {
             let (mut candidate, mut opened) =
                 crate::admit_v3_document(document.clone(), crate::PREFLIGHT_OCCURRENCE)?;
             candidate.set_presentation(prune_presentation(store, document))?;
+            if let Some(imported) = &self.imported {
+                crate::interop_document::validate_saved_open_closure(
+                    &candidate,
+                    &imported.metadata,
+                )?;
+            }
             for collection in &candidate.collections {
                 candidate.query_table(&collection.key)?;
             }

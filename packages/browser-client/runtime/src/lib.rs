@@ -7410,26 +7410,7 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        let mut working_admission = None;
-        match self.profile {
-            // Working size never rebuilds the occurrence; it re-proves only its
-            // own document bounds against the exact candidate.
-            SessionProfile::WorkingSize => {
-                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
-                self.ensure_working_saved_bytes_for(&candidate)?;
-                working_admission = Some(Self::measure_working_admission(&candidate)?);
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
-                Self::from_document_profile_with_opened(
-                    candidate,
-                    PREFLIGHT_OCCURRENCE,
-                    self.profile,
-                )?;
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
-                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
-            }
-        }
+        let working_admission = self.preflight_formula_candidate(candidate)?;
         let execute_now = self.clock.tick();
         let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -7457,6 +7438,35 @@ impl DesignerRuntime {
             self.formula_sources = sources;
         }
         Ok((self.published_projection(&invalidation), forward))
+    }
+
+    fn preflight_formula_candidate(
+        &self,
+        candidate: Document,
+    ) -> Result<Option<WorkingAdmission>, DesignerError> {
+        if !self.presentation.is_empty() {
+            self.preflight_presentation(&candidate, &self.presentation)?;
+        }
+        match self.profile {
+            // Working size never rebuilds the occurrence; it re-proves only its
+            // own document bounds against the exact candidate.
+            SessionProfile::WorkingSize => {
+                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+                self.ensure_working_saved_bytes_for(&candidate)?;
+                return Self::measure_working_admission(&candidate).map(Some);
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.profile,
+                )?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+            }
+        }
+        Ok(None)
     }
 
     fn restore_formula_inverse(
@@ -7860,8 +7870,9 @@ impl DesignerRuntime {
                         )?;
                     }
                 }
-                if !self.presentation.is_empty() {
-                    self.preflight_presentation(prepared.document(), &self.presentation)?;
+                let presentation = input_presentation.as_ref().unwrap_or(&self.presentation);
+                if !presentation.is_empty() {
+                    self.preflight_presentation(prepared.document(), presentation)?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed

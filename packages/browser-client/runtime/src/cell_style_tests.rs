@@ -736,3 +736,215 @@ fn cell_style_semantic_edits_retain_styles_during_budget_preflight() {
         saved.bytes
     );
 }
+
+#[test]
+fn cell_style_formula_preflight_keeps_resident_styles() {
+    let mut runtime = near_limit_styled_runtime();
+    let target = crate::FieldTarget {
+        entity: "r000".into(),
+        field: "a".into(),
+    };
+    let revision = runtime.current_revision().to_owned();
+    runtime.update_formula(&revision, &target, "1").unwrap();
+    let padding = |revision: &str, value: String| DesignerRequest::EditCells {
+        expected_revision: revision.to_owned(),
+        edits: vec![crate::CellEdit {
+            target: crate::FieldTarget {
+                entity: "r000".into(),
+                field: "c".into(),
+            },
+            input: crate::ScalarEditInput::Text { value },
+        }],
+    };
+    runtime
+        .handle(padding(runtime.current_revision(), String::new()))
+        .unwrap();
+    let opened = crate::OpenedProjection {
+        bootstrap: runtime.bootstrap_projection(),
+        table: runtime.query_table("rows").unwrap(),
+    };
+    let bytes = crate::serialized_projection_bytes(&opened).unwrap();
+    runtime
+        .handle(padding(
+            runtime.current_revision(),
+            "x".repeat(crate::MAX_PROJECTION_BYTES - bytes - 128),
+        ))
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    runtime.update_formula(&revision, &target, "2").unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let table = runtime.query_table("rows").unwrap();
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let presentation = runtime.presentation.clone();
+    let undo = runtime.undo.len();
+    let redo = runtime.redo.len();
+    let longer = vec!["1234567890"; 100].join("+");
+    // The same formula fits without styles, so this exercises styled projection admission.
+    let mut unstyled =
+        DesignerRuntime::from_document(runtime.session.document().clone(), OCCURRENCE).unwrap();
+    let unstyled_revision = unstyled.current_revision().to_owned();
+    unstyled
+        .update_formula(&unstyled_revision, &target, &longer)
+        .unwrap();
+    let error = runtime
+        .update_formula(&revision, &target, &longer)
+        .unwrap_err();
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { .. }),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.query_table("rows").unwrap(), table);
+    assert_eq!(runtime.presentation, presentation);
+    assert_eq!(runtime.undo.len(), undo);
+    assert_eq!(runtime.redo.len(), redo);
+    assert_eq!(
+        runtime.export_project_v3(&revision).unwrap().bytes,
+        saved.bytes
+    );
+    crate::admit_project(&saved.bytes, OCCURRENCE).unwrap();
+}
+
+#[test]
+fn auto_percentage_preflight_measures_new_styles_on_an_unstyled_table() {
+    let mut document = blank_style_document(48);
+    document
+        .schemas
+        .get_mut(&SchemaId::from("rows"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("a"))
+        .unwrap()
+        .field_type = FieldType::Auto;
+    let mut runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+    assert!(runtime.presentation.is_empty());
+    let edits = document
+        .entities
+        .keys()
+        .map(|entity| crate::CellEdit {
+            target: crate::FieldTarget {
+                entity: entity.to_string(),
+                field: "a".into(),
+            },
+            input: crate::ScalarEditInput::Auto {
+                input: "25%".into(),
+                date_order: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    // The numeric values alone fit; the percentage styles expand every wide row.
+    let mut values_only = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    values_only
+        .handle(DesignerRequest::EditCells {
+            expected_revision: values_only.current_revision().to_owned(),
+            edits: edits
+                .iter()
+                .map(|edit| crate::CellEdit {
+                    target: edit.target.clone(),
+                    input: crate::ScalarEditInput::Number {
+                        input: "0.25".into(),
+                    },
+                })
+                .collect(),
+        })
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let table = runtime.query_table("rows").unwrap();
+    let saved = runtime.export_project_v3(&revision).unwrap();
+    let error = runtime
+        .handle(DesignerRequest::EditCells {
+            expected_revision: revision.clone(),
+            edits,
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, DesignerError::ProjectionTooLarge { .. }),
+        "{error:?}"
+    );
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.query_table("rows").unwrap(), table);
+    assert!(runtime.presentation.is_empty());
+    assert!(runtime.undo.is_empty());
+    assert!(runtime.redo.is_empty());
+    assert_eq!(
+        runtime.export_project_v3(&revision).unwrap().bytes,
+        saved.bytes
+    );
+}
+
+#[test]
+fn imported_text_capacity_style_edits_refuse_before_publication() {
+    for rows in [2, crate::interop_adapter::MAX_DATA_ROWS + 1] {
+        let csv = format!("Value\n{}", "x\n".repeat(rows));
+        let source = crate::interop_adapter::import_csv(
+            csv.as_bytes(),
+            &crate::interop_adapter::ImportOptions::default(),
+        )
+        .unwrap();
+        let (mut runtime, imported) = crate::import_workbook(
+            &source,
+            &crate::ImportSelection {
+                column_types: vec![vec![crate::ImportFieldType::Text]],
+                extra_columns: vec![Vec::new()],
+            },
+            OCCURRENCE,
+        )
+        .unwrap();
+        let capacity = rows > crate::interop_adapter::MAX_DATA_ROWS;
+        assert_eq!(
+            runtime.profile,
+            if capacity {
+                SessionProfile::TextCapacity
+            } else {
+                SessionProfile::Ordinary
+            }
+        );
+        let sheet = &imported.metadata.sheets[0];
+        for change in [
+            json!({"kind": "bold", "value": true}),
+            json!({"kind": "fill", "color": "FFFF00"}),
+        ] {
+            let revision = runtime.current_revision().to_owned();
+            let table = runtime.query_table(&sheet.schema_id).unwrap();
+            let saved = runtime.export_project_v3(&revision).unwrap();
+            let presentation = runtime.presentation.clone();
+            let undo = runtime.undo.len();
+            let redo = runtime.redo.len();
+            let result = runtime.handle(
+                serde_json::from_value(json!({
+                    "type": "set_cell_style", "expected_revision": revision,
+                    "collection": sheet.schema_id, "entities": [sheet.rows[0].entity_id],
+                    "fields": [sheet.columns[0].field_id], "changes": [change],
+                }))
+                .unwrap(),
+            );
+            if capacity {
+                let error = result.unwrap_err();
+                assert!(error.to_string().contains("capacity"), "{error:?}");
+                assert_eq!(runtime.current_revision(), revision);
+                assert_eq!(runtime.query_table(&sheet.schema_id).unwrap(), table);
+                assert_eq!(runtime.presentation, presentation);
+                assert_eq!(runtime.undo.len(), undo);
+                assert_eq!(runtime.redo.len(), redo);
+                assert_eq!(
+                    runtime.export_project_v3(&revision).unwrap().bytes,
+                    saved.bytes
+                );
+            } else {
+                result.unwrap();
+                let revision = runtime.current_revision().to_owned();
+                let saved = runtime.export_project_v3(&revision).unwrap();
+                let (_, opened) = crate::admit_imported_project(
+                    &saved.bytes,
+                    OCCURRENCE,
+                    saved.import_metadata.as_ref().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    opened.table.rows,
+                    runtime.query_table(&sheet.schema_id).unwrap().rows
+                );
+            }
+        }
+    }
+}
