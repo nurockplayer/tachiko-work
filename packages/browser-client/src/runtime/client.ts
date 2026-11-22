@@ -100,10 +100,10 @@ export interface DesignerClient {
   openCanonicalTreeWorkingSize?(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection>;
   openLocalDocument?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openLocalDocumentWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
-  exportProject(expectedRevision: string): Promise<ProjectExport>;
-  exportProjectV3?(expectedRevision: string): Promise<ProjectExport>;
+  exportProject(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
+  exportProjectV3?(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
   exportCanonicalTree?(expectedRevision: string): Promise<CanonicalTreeExport>;
-  exportPortableRo?(expectedRevision: string): Promise<ProjectExport>;
+  exportPortableRo?(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
   verifyPortableRo?(bytes: ArrayBuffer): Promise<void>;
   openPortableRo?(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openPortableRoWorkingSize?(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;

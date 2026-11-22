@@ -419,11 +419,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened_window", reply.response);
   }
 
-  async exportProject(expectedRevision: string): Promise<ProjectExport> {
+  async exportProject(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_project",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "project_exported") {
       throw new Error(`Expected project export, received '${reply.status}'.`);
@@ -431,11 +432,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
-  async exportProjectV3(expectedRevision: string): Promise<ProjectExport> {
+  async exportProjectV3(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_project_v3",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "project_exported") {
       throw new Error(`Expected project export, received '${reply.status}'.`);
@@ -455,11 +457,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
-  async exportPortableRo(expectedRevision: string): Promise<ProjectExport> {
+  async exportPortableRo(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_portable_ro",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "portable_ro_exported") {
       throw new Error(`Expected portable .ro export, received '${reply.status}'.`);
