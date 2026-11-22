@@ -4,6 +4,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reduce repeated XLSX semantic-admission and representation-proof work without
+  changing import refusals, formula results or exported bytes (#678 5d).
+
 - Add `setCellStyle` for rectangular record/field selections: set or toggle bold
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;
