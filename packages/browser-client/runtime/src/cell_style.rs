@@ -241,12 +241,16 @@ impl DesignerRuntime {
         &self,
         document: &tachiko_workspace_engine::Document,
         store: &PresentationStore,
+        metadata: Option<&crate::InteropMetadata>,
     ) -> Result<(), DesignerError> {
         if self.profile != crate::SessionProfile::WorkingSize {
             // Reopen selects its profile before installing saved presentation.
             let (mut candidate, mut opened) =
                 crate::admit_v3_document(document.clone(), crate::PREFLIGHT_OCCURRENCE)?;
             candidate.set_presentation(prune_presentation(store, document))?;
+            if let Some(metadata) = metadata {
+                crate::interop_document::validate_saved_open_closure(&candidate, metadata)?;
+            }
             for collection in &candidate.collections {
                 candidate.query_table(&collection.key)?;
             }
