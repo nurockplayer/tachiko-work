@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Qualify lossless SpreadsheetML Text escaping across every XLSX export
+  profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
+  prefixes completed by CR encoding; shared and inline imports decode once
+  and retain located refusals for unsupported decoded Text (#547).
+
 - Auto scalar columns accept classifier-backed edits and paste with lossless
   Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
   Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
