@@ -1412,6 +1412,7 @@ fn promote_import_presentation(
             let is_number = field.field_type == FieldType::Number;
             let field_number_format = field.number_format.clone();
             let mut bolds = Vec::new();
+            let mut italics = Vec::new();
             let mut fills = Vec::new();
             let mut borders = Vec::new();
             let mut numbers = Vec::new();
@@ -1432,12 +1433,23 @@ fn promote_import_presentation(
                 style.wrap = false;
                 bolds.push(style.bold);
                 style.bold = false;
+                italics.push(style.italic);
+                style.italic = false;
                 let fill = style.fill.as_deref().and_then(normalize_import_fill);
                 if fill.is_some() {
                     style.fill = None;
                 }
                 fills.push(fill);
-                borders.push(style.border);
+                borders.push(if style.border && style.border_sides.is_empty() {
+                    vec![
+                        BorderSide::Top,
+                        BorderSide::Right,
+                        BorderSide::Bottom,
+                        BorderSide::Left,
+                    ]
+                } else {
+                    std::mem::take(&mut style.border_sides)
+                });
                 style.border = false;
                 let number = if is_number {
                     style
@@ -1542,24 +1554,21 @@ fn promote_import_presentation(
                 formats_changed = true;
             }
             let common_bold = !bolds.is_empty() && bolds.iter().all(|value| *value);
-            let common_border = !borders.is_empty() && borders.iter().all(|value| *value);
+            let common_italic = !italics.is_empty() && italics.iter().all(|value| *value);
+            let common_border = borders
+                .first()
+                .filter(|first| !first.is_empty() && borders.iter().all(|value| value == *first))
+                .cloned();
             let common_fill = fills
                 .first()
                 .cloned()
                 .flatten()
                 .filter(|first| fills.iter().all(|value| value.as_ref() == Some(first)));
-            let box_sides = || {
-                vec![
-                    BorderSide::Top,
-                    BorderSide::Right,
-                    BorderSide::Bottom,
-                    BorderSide::Left,
-                ]
-            };
             let column_style = StoredStyle {
                 bold: common_bold.then_some(true),
+                italic: common_italic.then_some(true),
                 fill: common_fill.clone(),
-                borders: common_border.then(box_sides),
+                borders: common_border.clone(),
                 alignment: common_alignment,
                 wrap: common_wrap.then_some(true),
                 ..Default::default()
@@ -1572,12 +1581,14 @@ fn promote_import_presentation(
             for (row_index, row) in sheet.rows.iter().enumerate() {
                 let style = StoredStyle {
                     bold: (bolds[row_index] && !common_bold).then_some(true),
+                    italic: (italics[row_index] && !common_italic).then_some(true),
                     fill: if common_fill.is_some() {
                         None
                     } else {
                         fills[row_index].clone()
                     },
-                    borders: (borders[row_index] && !common_border).then(box_sides),
+                    borders: (!borders[row_index].is_empty() && common_border.is_none())
+                        .then(|| borders[row_index].clone()),
                     number_format: numbers[row_index].clone(),
                     alignment: if common_alignment.is_some() {
                         None

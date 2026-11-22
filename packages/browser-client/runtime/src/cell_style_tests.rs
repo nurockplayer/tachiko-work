@@ -14,7 +14,7 @@ use crate::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000815";
 
-fn fixture() -> Document {
+pub(crate) fn fixture() -> Document {
     let mut document = Document::empty("styles", "Cell styles");
     let fields = ["a", "b", "c"]
         .into_iter()
@@ -43,6 +43,7 @@ fn fixture() -> Document {
             display_name: None,
             field_order: None,
             fields,
+            headerless: false,
         },
     );
     for (name, value) in [("r1", 3.0), ("r2", 1.0), ("r3", 2.0)] {
@@ -64,7 +65,7 @@ fn fixture() -> Document {
     document
 }
 
-fn edit(
+pub(crate) fn edit(
     runtime: &mut DesignerRuntime,
     entities: &[&str],
     fields: &[&str],
@@ -81,7 +82,7 @@ fn edit(
     }
 }
 
-fn history(runtime: &mut DesignerRuntime, redo: bool) {
+pub(crate) fn history(runtime: &mut DesignerRuntime, redo: bool) {
     let expected_revision = runtime.current_revision().to_owned();
     let request = if redo {
         DesignerRequest::Redo { expected_revision }
@@ -91,7 +92,10 @@ fn history(runtime: &mut DesignerRuntime, redo: bool) {
     runtime.handle(request).unwrap();
 }
 
-fn window(runtime: &mut DesignerRuntime, view: &TableView) -> crate::TableWindowProjection {
+pub(crate) fn window(
+    runtime: &mut DesignerRuntime,
+    view: &TableView,
+) -> crate::TableWindowProjection {
     let revision = runtime.current_revision().to_owned();
     runtime
         .query_table_window(&revision, "rows", view, 0, 10, true)
@@ -584,6 +588,19 @@ fn cell_style_rejects_projection_over_budget_before_publication() {
         "unexpected style edit result: {result:?}"
     );
     assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), 0);
+    let result = edit(
+        &mut runtime,
+        &entities,
+        &["b"],
+        &json!([{"kind":"border","target":"all","value":true}]),
+    );
+    assert!(matches!(
+        result,
+        Err(DesignerError::ProjectionTooLarge { .. })
+    ));
+    assert_eq!(runtime.current_revision(), revision);
+    assert!(runtime.presentation.is_empty());
     assert_eq!(runtime.undo.len(), 0);
     let result = runtime.set_column_wrap(&revision, "rows", "b", Some(true));
     assert!(

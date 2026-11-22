@@ -1184,6 +1184,7 @@ fn assert_supported_imported_presentation(j: &mut Journey) {
     let book = import_xlsx(&bytes).unwrap();
     let mut expected_style = style;
     expected_style["fill"] = json!("FF123456");
+    expected_style["border_sides"] = json!(["top", "right", "bottom", "left"]);
     assert_eq!(
         serde_json::to_value(&book.sheets[0].rows[0][1].style).unwrap(),
         expected_style
