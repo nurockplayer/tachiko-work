@@ -630,12 +630,7 @@ fn project_exports_reject_zero_host_column_width() {
     let (runtime, mut metadata) = imported(false);
     metadata.sheets[0].columns[0].width = Some(0.0);
     let location = format!("collection {}", metadata.sheets[0].schema_id);
-    assert_invalid_export_companion(
-        &runtime,
-        &metadata,
-        &location,
-        "Invalid source width.",
-    );
+    assert_invalid_export_companion(&runtime, &metadata, &location, "Invalid source width.");
 }
 
 #[test]
