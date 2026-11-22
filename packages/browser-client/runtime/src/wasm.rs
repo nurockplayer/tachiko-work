@@ -129,6 +129,7 @@ thread_local! {
     static RETAINED_SOURCE: RefCell<Option<InspectedSource>> = const { RefCell::new(None) };
     static REQUEST_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
     static PROJECT_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
+    static PROJECT_HEAP_RESERVATION: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Resize the private request arena and return its linear-memory offset.
@@ -197,6 +198,15 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
         return 0;
     }
     PROJECT_TOO_LARGE.set(false);
+    // Reserve parsing/reply headroom during input setup. Dropping the buffer
+    // returns it to dlmalloc, while WASM linear memory remains grown for reuse.
+    let headroom = (length as usize).saturating_mul(320).min(384 * 1024 * 1024);
+    PROJECT_HEAP_RESERVATION.with(|reserved| {
+        if headroom > reserved.get() {
+            drop(std::hint::black_box(Vec::<u8>::with_capacity(headroom)));
+            reserved.set(headroom);
+        }
+    });
     PROJECT.with(|project| {
         let mut project = project.borrow_mut();
         project.resize(length as usize, 0);
