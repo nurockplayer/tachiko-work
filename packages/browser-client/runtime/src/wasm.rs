@@ -350,20 +350,7 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
                 maximum: MAX_PROJECT_TRANSFER_BYTES,
             })
         } else {
-            serde_json::from_slice::<SpreadsheetOperation>(&request)
-                .map_err(|error| DesignerError::InvalidProjectTransfer {
-                    message: format!("Invalid spreadsheet operation: {error}"),
-                })
-                .and_then(|operation| {
-                    RETAINED_SOURCE.with(|retained| {
-                        spreadsheet_operation(
-                            runtime.as_ref(),
-                            operation,
-                            &project,
-                            &mut retained.borrow_mut(),
-                        )
-                    })
-                })
+            decode_spreadsheet_operation(runtime.as_ref(), &request, &project)
         };
         let mut inspected_source = None;
         let reply = match result {
@@ -397,6 +384,27 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
             });
         }
     });
+}
+
+fn decode_spreadsheet_operation(
+    runtime: Option<&DesignerRuntime>,
+    request: &[u8],
+    project: &[u8],
+) -> Result<SpreadsheetResult, DesignerError> {
+    serde_json::from_slice::<SpreadsheetOperation>(&request)
+        .map_err(|error| DesignerError::InvalidProjectTransfer {
+            message: format!("Invalid spreadsheet operation: {error}"),
+        })
+        .and_then(|operation| {
+            RETAINED_SOURCE.with(|retained| {
+                spreadsheet_operation(
+                    runtime.as_ref(),
+                    operation,
+                    &project,
+                    &mut retained.borrow_mut(),
+                )
+            })
+        })
 }
 
 fn import_source(
