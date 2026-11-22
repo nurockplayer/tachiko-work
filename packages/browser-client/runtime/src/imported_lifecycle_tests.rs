@@ -66,6 +66,18 @@ fn inspect_current(runtime: &mut DesignerRuntime) -> ProjectInspectionProjection
 }
 
 #[test]
+fn ordinary_import_preserves_legacy_admission_and_export_with_or_without_headers() {
+    for has_header in [false, true] {
+        let mut source = fixture(false);
+        source.sheets[0].has_header = has_header;
+        let (runtime, imported) = import_workbook(&source, &selection(), OCCURRENCE).unwrap();
+        assert_eq!(imported.metadata.sheets[0].has_header, has_header);
+        assert!(!runtime.session.document().has_headerless_schemas());
+        runtime.export_project(runtime.current_revision()).unwrap();
+    }
+}
+
+#[test]
 fn headerless_import_survives_v3_reopen_and_positional_writes_use_first_row() {
     let mut source = fixture(false);
     source.sheets[0].has_header = false;

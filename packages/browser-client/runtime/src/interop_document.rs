@@ -1170,6 +1170,7 @@ fn import_workbook_document(
             sheet_index,
             sheet,
             selection,
+            working && !sheet.has_header,
             !working
                 && super::interop_adapter::output_profile(workbook) == OutputProfile::TextCapacity,
             &mut ids,
@@ -1812,6 +1813,7 @@ fn build_import_sheet(
     index: usize,
     source: &SourceSheet,
     selection: &ImportSelection,
+    headerless: bool,
     text_capacity: bool,
     ids: &mut ImportIds<'_>,
     document: &mut Document,
@@ -1821,7 +1823,7 @@ fn build_import_sheet(
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
     let mut schema = Schema {
-        headerless: !source.has_header,
+        headerless,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from(format!("sheet_{}", index + 1)),
