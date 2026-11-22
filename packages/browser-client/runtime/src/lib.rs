@@ -100,6 +100,7 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+mod cell_style;
 mod imported_lifecycle;
 #[cfg(test)]
 mod imported_lifecycle_tests;
@@ -110,6 +111,9 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+pub use cell_style::CellStyleChange;
+#[cfg(test)]
+mod cell_style_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod presentation_commands_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -331,6 +335,13 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         wrap: Option<bool>,
+    },
+    SetCellStyle {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+        fields: Vec<String>,
+        changes: Vec<CellStyleChange>,
     },
     SetColumnWidth {
         expected_revision: String,
@@ -1362,6 +1373,9 @@ pub struct RowProjection {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blank_fields: Vec<String>,
     pub fields: Vec<FieldProjection>,
+    /// Resolved stored styles in column order, shared with imported rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<interop_adapter::CellStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1994,6 +2008,12 @@ pub enum DesignerError {
     },
     #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("fill must be '#' followed by six uppercase hexadecimal digits")]
+    InvalidStyleColor,
+    #[error("collection '{collection}' is read-only for cell styles")]
+    ReadOnlyStyleTable { collection: String },
+    #[error("cell style capacity exceeded: {message}")]
+    StyleCapacityExceeded { message: String },
     #[error("column width must be between 1 and 65280")]
     InvalidColumnWidth,
     #[error("date format requires a Date column")]
@@ -2157,6 +2177,9 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
+            Self::InvalidStyleColor => ("invalid_style_color", Vec::new()),
+            Self::ReadOnlyStyleTable { .. } => ("read_only_table", Vec::new()),
+            Self::StyleCapacityExceeded { .. } => ("style_capacity_exceeded", Vec::new()),
             Self::InvalidColumnWidth => ("invalid_column_width", Vec::new()),
             Self::InvalidNumberFormat { .. } | Self::InvalidDateFormat => {
                 ("invalid_number_format", Vec::new())
@@ -2487,6 +2510,10 @@ enum HistoryAction {
         commands: Vec<SemanticCommand>,
         default_collection: String,
     },
+    CellPresentation {
+        store: PresentationStore,
+        bytes: usize,
+    },
     ColumnPresentation {
         schema: SchemaId,
         field: FieldId,
@@ -2527,6 +2554,7 @@ impl HistoryAction {
                     .sum::<usize>()
                     + default_collection.len()
             }
+            Self::CellPresentation { bytes, .. } => *bytes,
             Self::ColumnPresentation { schema, field, .. } => {
                 schema.as_str().len() + field.as_str().len() + 128
             }
@@ -3463,6 +3491,11 @@ impl DesignerRuntime {
         presentation: PresentationStore,
     ) -> Result<String, DesignerError> {
         self.check_revision(expected_revision)?;
+        self.preflight_presentation(
+            self.session.document(),
+            &presentation,
+            self.imported.as_ref().map(|state| &state.metadata),
+        )?;
         let bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let bytes = save_size::presentation_saved_bytes(&presentation)?;
@@ -3952,6 +3985,19 @@ impl DesignerRuntime {
                 &collection,
                 &field,
                 wrap,
+            )?)),
+            DesignerRequest::SetCellStyle {
+                expected_revision,
+                collection,
+                entities,
+                fields,
+                changes,
+            } => Ok(DesignerResponse::Published(self.set_cell_style(
+                &expected_revision,
+                &collection,
+                &entities,
+                &fields,
+                &changes,
             )?)),
             DesignerRequest::SetColumnWidth {
                 expected_revision,
@@ -4774,6 +4820,7 @@ impl DesignerRuntime {
                         id: entity.id.to_string(),
                         key: entity.key.to_string(),
                         position: None,
+                        styles: self.row_styles(spec, &entity.id),
                         blank_fields: blank_field_ids(entity, spec),
                         fields: spec
                             .columns
@@ -4857,6 +4904,7 @@ impl DesignerRuntime {
             key: entity.key.to_string(),
             position: None,
             blank_fields: blank_field_ids(entity, spec),
+            styles: self.row_styles(spec, &entity.id),
             fields,
         })
     }
@@ -7366,26 +7414,7 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        let mut working_admission = None;
-        match self.profile {
-            // Working size never rebuilds the occurrence; it re-proves only its
-            // own document bounds against the exact candidate.
-            SessionProfile::WorkingSize => {
-                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
-                self.ensure_working_saved_bytes_for(&candidate)?;
-                working_admission = Some(Self::measure_working_admission(&candidate)?);
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
-                Self::from_document_profile_with_opened(
-                    candidate,
-                    PREFLIGHT_OCCURRENCE,
-                    self.profile,
-                )?;
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
-                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
-            }
-        }
+        let working_admission = self.preflight_formula_candidate(candidate)?;
         let execute_now = self.clock.tick();
         let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -7413,6 +7442,39 @@ impl DesignerRuntime {
             self.formula_sources = sources;
         }
         Ok((self.published_projection(&invalidation), forward))
+    }
+
+    fn preflight_formula_candidate(
+        &self,
+        candidate: Document,
+    ) -> Result<Option<WorkingAdmission>, DesignerError> {
+        if !self.presentation.is_empty() {
+            self.preflight_presentation(
+                &candidate,
+                &self.presentation,
+                self.imported.as_ref().map(|state| &state.metadata),
+            )?;
+        }
+        match self.profile {
+            // Working size never rebuilds the occurrence; it re-proves only its
+            // own document bounds against the exact candidate.
+            SessionProfile::WorkingSize => {
+                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+                self.ensure_working_saved_bytes_for(&candidate)?;
+                return Self::measure_working_admission(&candidate).map(Some);
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.profile,
+                )?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+            }
+        }
+        Ok(None)
     }
 
     fn restore_formula_inverse(
@@ -7815,6 +7877,17 @@ impl DesignerRuntime {
                             SessionProfile::Ordinary,
                         )?;
                     }
+                }
+                let presentation = input_presentation.as_ref().unwrap_or(&self.presentation);
+                if !presentation.is_empty() {
+                    self.preflight_presentation(
+                        prepared.document(),
+                        presentation,
+                        imported
+                            .as_ref()
+                            .or(self.imported.as_ref())
+                            .map(|state| &state.metadata),
+                    )?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed
@@ -8590,6 +8663,9 @@ impl DesignerRuntime {
                     self.publish_commands_with_imported(expected, commands, imported, None, None)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
+            }
+            HistoryAction::CellPresentation { store, .. } => {
+                self.apply_cell_presentation(expected, store.clone())
             }
             HistoryAction::ColumnPresentation {
                 schema,
@@ -9748,9 +9824,11 @@ fn admit_portable_ro(
     let verified = decode_portable_package_v1(input)?;
     let tree = verified.tree();
     let document = decode_roproj_v3(tree)?;
-    let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    let (mut candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation_from_tree(tree)?)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9789,9 +9867,9 @@ fn admit_portable_ro_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -9838,13 +9916,15 @@ fn admit_project(
         opened_from_v3,
         presentation,
     } = decode_project_bundle(input)?;
-    let (mut candidate, opened) = if opened_from_v3 {
+    let (mut candidate, mut opened) = if opened_from_v3 {
         admit_v3_document(document, occurrence_id)?
     } else {
         admit_document(document, occurrence_id)?
     };
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9880,9 +9960,9 @@ fn admit_project_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -9939,9 +10019,10 @@ pub(crate) fn admit_imported_project(
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
+        opened.table = candidate.query_table(&candidate.default_collection)?;
+        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
     }
 
@@ -9961,6 +10042,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error)
@@ -9982,6 +10065,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -15908,6 +15993,7 @@ mod tests {
             key: id.to_owned(),
             position: None,
             blank_fields: Vec::new(),
+            styles: Vec::new(),
             fields: vec![super::FieldProjection {
                 blank: false,
                 target: super::FieldTarget {
@@ -15933,6 +16019,7 @@ mod tests {
             key: "blank".to_owned(),
             position: None,
             blank_fields: vec!["amount".to_owned()],
+            styles: Vec::new(),
             fields: Vec::new(),
         };
         let rows = vec![
