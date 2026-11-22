@@ -3738,20 +3738,6 @@ pub(crate) fn import_xlsx_profile(
         Some("1" | "true") => true,
         Some(_) => return fail("Invalid workbook date1904 boolean"),
     };
-    let styles = parse_styles(&parts, &mut ledger, working)?;
-    let shared = if parts.contains_key("xl/sharedStrings.xml") {
-        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
-        if strings
-            .children
-            .iter()
-            .any(|node| node.name.as_str() != "si" || c_unknown(node))
-        {
-            return fail("Unknown shared string XML construct");
-        }
-        strings.kids("si").map(Xml::content).collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
     let sheet_nodes = workbook
         .child("sheets")
         .ok_or_else(|| InteropError::Invalid("Missing worksheets".into()))?
@@ -3774,9 +3760,8 @@ pub(crate) fn import_xlsx_profile(
     if options.header_rows.len() > sheet_nodes.len() {
         return fail("header_rows has more entries than the workbook has sheets");
     }
-    let mut sheets = Vec::new();
-    let mut worksheet_paths = BTreeMap::new();
-    let mut formula_count = 0;
+    let mut sheet_inventory = Vec::new();
+    let mut paths = BTreeSet::new();
     let mut names = BTreeSet::new();
     for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
         let name = sheet
@@ -3812,15 +3797,45 @@ pub(crate) fn import_xlsx_profile(
                 .attr("Target")
                 .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
+        part(&parts, &path)?;
+        if !paths.insert(path.clone()) {
+            return fail("Duplicate worksheet part mapping");
+        }
+        sheet_inventory.push((sheet_index, name, path));
+    }
+    #[cfg(target_arch = "wasm32")]
+    crate::wasm::reserve_xlsx_heap(
+        sheet_inventory
+            .iter()
+            .map(|(_, _, path)| (parts[path].as_slice(), b"worksheet".as_slice()))
+            .chain(
+                parts
+                    .get("xl/sharedStrings.xml")
+                    .map(|bytes| (bytes.as_slice(), b"sst".as_slice())),
+            ),
+    );
+    let styles = parse_styles(&parts, &mut ledger, working)?;
+    let shared = if parts.contains_key("xl/sharedStrings.xml") {
+        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
+        if strings
+            .children
+            .iter()
+            .any(|node| node.name.as_str() != "si" || c_unknown(node))
+        {
+            return fail("Unknown shared string XML construct");
+        }
+        strings.kids("si").map(Xml::content).collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let mut sheets = Vec::new();
+    let mut worksheet_paths = BTreeMap::new();
+    let mut formula_count = 0;
+    for (sheet_index, name, path) in sheet_inventory {
         let xml = xml_part(&parts, &path, "worksheet", MAIN, working)?;
         // Inventory reuses this count after decoding instead of rebuilding the
         // worksheet XML tree. Findings remain in package-path order below.
-        if worksheet_paths
-            .insert(path.clone(), external_relationship_count(&xml))
-            .is_some()
-        {
-            return fail("Duplicate worksheet part mapping");
-        }
+        worksheet_paths.insert(path.clone(), external_relationship_count(&xml));
         for singleton in ["sheetData", "dimension", "sheetFormatPr"] {
             if xml.kids(singleton).count() > 1 {
                 return fail("Duplicate singleton worksheet construct");
