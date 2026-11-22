@@ -439,6 +439,7 @@ fn serialize_calculated_value<S: Serializer>(
     }
 }
 
+#[allow(clippy::ref_option)] // serde `serialize_with` passes the field as `&Option<T>`.
 fn serialize_optional_calculated_value<S: Serializer>(
     value: &Option<CalculatedValue>,
     serializer: S,
