@@ -7,6 +7,8 @@ All notable changes to Tachiko Work are documented in this file.
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;
   release the single retained source on import, the next inspect or close (#678 5d).
+- Reduce repeated XLSX semantic-admission and representation-proof work without
+  changing import refusals, formula results or exported bytes (#678 5d).
 - Reduce XLSX source XML parsing and tree destruction costs by sharing element
   names and namespace URIs and updating namespace scopes only at declarations
   (Part of #678 5d).
