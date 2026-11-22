@@ -1478,6 +1478,12 @@ mod row_rank_parity_tests {
         extra.id = "z".into();
         extra.key = "z".into();
         schema.fields.insert("z".into(), extra);
+        schema.field_order = Some(vec![
+            "amount".into(),
+            "calc".into(),
+            "z".into(),
+            "label".into(),
+        ]);
         for entity in document.entities.values_mut() {
             entity.fields.insert(
                 "z".into(),

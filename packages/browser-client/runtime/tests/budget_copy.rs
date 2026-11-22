@@ -215,7 +215,7 @@ fn copy_shifts_same_row_columns_and_preserves_absolute_mode() {
 fn copy_refuses_same_row_column_offsets_outside_the_collection() {
     let mut runtime = fixture();
     update(&mut runtime, 0, "r1.c", "[.d] * 2");
-    let before = runtime.export_project("resident/1").unwrap();
+    let before = runtime.export_project_v3("resident/1").unwrap();
     let error = runtime
         .handle(copy(1, "r1.c", &["r1.d"], &[], false, true))
         .unwrap_err()
@@ -226,7 +226,7 @@ fn copy_refuses_same_row_column_offsets_outside_the_collection() {
             && error.contains("outside the collection"),
         "{error}"
     );
-    assert_eq!(runtime.export_project("resident/1").unwrap(), before);
+    assert_eq!(runtime.export_project_v3("resident/1").unwrap(), before);
 }
 
 #[test]
