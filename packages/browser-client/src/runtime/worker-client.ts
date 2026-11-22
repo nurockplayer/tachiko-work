@@ -22,6 +22,7 @@ import type {
   FieldConstraintInput,
   NumberFormat,
   DateFormat,
+  CellStyleChange,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -280,6 +281,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnWrap(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_wrap", expected_revision: expectedRevision, collection, field, wrap});
+  }
+
+  async setCellStyle(expectedRevision: string, collection: string, entities: string[], fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_cell_style", expected_revision: expectedRevision, collection, entities, fields, changes});
   }
 
   async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {

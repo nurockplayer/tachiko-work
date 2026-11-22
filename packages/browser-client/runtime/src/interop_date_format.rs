@@ -72,6 +72,9 @@ pub(crate) fn cell_style(
         if let Some(bold) = style.bold {
             result.bold = bold;
         }
+        if let Some(italic) = style.italic {
+            result.italic = italic;
+        }
         if let Some(fill) = &style.fill {
             result.fill = Some(fill[1..].to_owned());
         }
