@@ -602,6 +602,53 @@ fn import_metadata_host_changes_export_portable_ro() {
     assert_import_metadata_host_changes(DesignerRuntime::export_portable_ro_with_metadata, false);
 }
 
+fn assert_invalid_export_companion(
+    runtime: &DesignerRuntime,
+    metadata: &InteropMetadata,
+    location: &str,
+    message: &str,
+) {
+    for export in [
+        DesignerRuntime::export_project_with_metadata,
+        DesignerRuntime::export_project_v3_with_metadata,
+        DesignerRuntime::export_portable_ro_with_metadata,
+    ] {
+        let crate::DesignerError::ImportedSpreadsheetExport { finding } =
+            export(runtime, "resident/0", Some(metadata)).unwrap_err()
+        else {
+            panic!("expected typed import metadata export error");
+        };
+        assert_eq!(finding.code, "imported_spreadsheet_unrepresentable");
+        assert_eq!(finding.location, location);
+        assert_eq!(finding.message, message);
+        assert!(finding.blocking);
+    }
+}
+
+#[test]
+fn project_exports_reject_zero_host_column_width() {
+    let (runtime, mut metadata) = imported(false);
+    metadata.sheets[0].columns[0].width = Some(0.0);
+    assert_invalid_export_companion(
+        &runtime,
+        &metadata,
+        "collection sheet_1",
+        "Invalid source width.",
+    );
+}
+
+#[test]
+fn project_exports_reject_duplicate_host_worksheet_names() {
+    let (runtime, mut metadata) = imported(false);
+    metadata.sheets[1].name = metadata.sheets[0].name.clone();
+    assert_invalid_export_companion(
+        &runtime,
+        &metadata,
+        "collection sheet_2",
+        "Duplicate worksheet or invalid source column mapping.",
+    );
+}
+
 #[test]
 fn working_size_companion_reopens_portable_with_source_order() {
     let source = import_xlsx(&export_xlsx(&fixture(false)).unwrap()).unwrap();

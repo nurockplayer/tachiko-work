@@ -134,8 +134,13 @@ impl DesignerRuntime {
         self.imported
             .as_ref()
             .map(|state| {
-                self.metadata_for_export(source.unwrap_or(&state.metadata))
-                    .cloned()
+                let metadata = self.metadata_for_export(source.unwrap_or(&state.metadata))?;
+                validate_import_metadata_for_profile(
+                    self.session.document(),
+                    metadata,
+                    self.profile,
+                )?;
+                Ok(metadata.clone())
             })
             .transpose()
     }
