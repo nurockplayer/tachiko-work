@@ -141,7 +141,7 @@ impl DesignerRuntime {
                 &schema_id,
                 std::slice::from_mut(&mut entity),
                 spec.entities.len(),
-                false,
+                true,
             );
             forward.extend(ranks);
             inverse.extend(restore);

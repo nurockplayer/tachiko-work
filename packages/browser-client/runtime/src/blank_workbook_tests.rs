@@ -218,6 +218,48 @@ fn blank_workbook_first_adjacent_writes_are_tagged_headerless_and_undo_exactly()
 }
 
 #[test]
+fn blank_workbook_positional_append_stays_below_surviving_row_after_reopen() {
+    let mut runtime = blank();
+    write(&mut runtime, 1, 1, "Deleted");
+    write(&mut runtime, 2, 1, "Survivor");
+    let first_row = window(&mut runtime).rows[0].id.clone();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .remove_table_rows(&revision, "sheet", &[first_row])
+        .unwrap();
+    let bytes = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap()
+        .bytes;
+    let mut reopened = None;
+    open_project_working_size(
+        &mut reopened,
+        &bytes,
+        "00000000-0000-4000-8000-000000000900",
+    )
+    .unwrap();
+    let mut runtime = reopened.unwrap();
+    write(&mut runtime, 2, 1, "Appended");
+    let table = window(&mut runtime);
+    assert_eq!(table.total_rows, 2);
+    assert_eq!(
+        table
+            .rows
+            .iter()
+            .map(|row| row.fields[0].stored.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Some(StoredValueProjection::Text {
+                value: "Survivor".into()
+            }),
+            Some(StoredValueProjection::Text {
+                value: "Appended".into()
+            }),
+        ]
+    );
+}
+
+#[test]
 fn blank_workbook_v3_and_portable_reopen_preserve_schema_labels_and_cells() {
     for mut runtime in [blank(), filled()] {
         let table = window(&mut runtime);
