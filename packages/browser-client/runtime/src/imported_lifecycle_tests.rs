@@ -629,10 +629,11 @@ fn assert_invalid_export_companion(
 fn project_exports_reject_zero_host_column_width() {
     let (runtime, mut metadata) = imported(false);
     metadata.sheets[0].columns[0].width = Some(0.0);
+    let location = format!("collection {}", metadata.sheets[0].schema_id);
     assert_invalid_export_companion(
         &runtime,
         &metadata,
-        "collection sheet_1",
+        &location,
         "Invalid source width.",
     );
 }
@@ -641,10 +642,11 @@ fn project_exports_reject_zero_host_column_width() {
 fn project_exports_reject_duplicate_host_worksheet_names() {
     let (runtime, mut metadata) = imported(false);
     metadata.sheets[1].name = metadata.sheets[0].name.clone();
+    let location = format!("collection {}", metadata.sheets[1].schema_id);
     assert_invalid_export_companion(
         &runtime,
         &metadata,
-        "collection sheet_2",
+        &location,
         "Duplicate worksheet or invalid source column mapping.",
     );
 }
