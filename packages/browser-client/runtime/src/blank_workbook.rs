@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     ColumnSpec, DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey,
     FieldRef, FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput,
-    SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input, native_table_row,
-    parse_column_initializer, table_error, value_command,
+    SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input, cell_edit_commands,
+    native_table_row, parse_column_initializer, table_error,
 };
 
 pub(super) fn candidate(
@@ -150,8 +150,9 @@ impl DesignerRuntime {
             let before = document.entities[&id].fields.get(&field_id).cloned();
             // A new column carries its initial value in AppendSchemaField.
             if added.is_none() && before != value {
-                forward.push(value_command(&target, value.as_ref()));
-                inverse.push(value_command(&target, before.as_ref()));
+                let (command, undo) = cell_edit_commands(&target, before.as_ref(), value.as_ref());
+                forward.push(command);
+                inverse.extend(undo);
             }
             id
         };
