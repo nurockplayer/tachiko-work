@@ -1473,8 +1473,8 @@ mod row_rank_parity_tests {
     fn wasm_copy_shifts_same_row_columns() {
         tachiko_designer_project_close();
         let mut document = ranked_document();
-        let schema = document.schemas.get_mut(&"rows".into()).unwrap();
-        let mut extra = schema.fields[&"calc".into()].clone();
+        let schema = document.schemas.get_mut("rows").unwrap();
+        let mut extra = schema.fields["calc"].clone();
         extra.id = "z".into();
         extra.key = "z".into();
         schema.fields.insert("z".into(), extra);
@@ -1488,7 +1488,7 @@ mod row_rank_parity_tests {
         }
         document
             .entities
-            .get_mut(&"e03".into())
+            .get_mut("e03")
             .unwrap()
             .fields
             .insert(
