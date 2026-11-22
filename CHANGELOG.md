@@ -4,11 +4,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Add `setCellStyle` for rectangular record/field selections: set or toggle bold
+  and italic, set or clear fill, and Undo/Redo each call as one presentation-only
+  revision. Native and imported table/window rows share resolved style projections;
+  styles follow record identity and survive v3/portable `.ro` save and reopen.
+  First slice of #815; border editing and complete edited-style XLSX export follow.
 - Qualify lossless SpreadsheetML Text escaping across every XLSX export
   profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
   prefixes completed by CR encoding; shared and inline imports decode once
   and retain located refusals for unsupported decoded Text (#547).
-
 - Auto scalar columns accept classifier-backed edits and paste with lossless
   Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
   Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
