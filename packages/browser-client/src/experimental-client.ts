@@ -62,7 +62,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
-  exportProjectV3(expectedRevision: string): Promise<ProjectExport>;
+  exportProjectV3(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
   newTrackerWorkingSize(): Promise<OpenedWindowProjection>;
@@ -76,7 +76,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   openCanonicalTreeWorkingSize(files: readonly CanonicalProjectFile[]): Promise<OpenedWindowProjection>;
   openLocalDocumentWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   exportCanonicalTree(expectedRevision: string): Promise<CanonicalTreeExport>;
-  exportPortableRo(expectedRevision: string): Promise<ProjectExport>;
+  exportPortableRo(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
   verifyPortableRo(bytes: ArrayBuffer): Promise<void>;
   openPortableRo(bytes: ArrayBuffer): Promise<OpenedProjection>;
   openPortableRoWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;

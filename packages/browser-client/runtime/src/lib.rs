@@ -1863,6 +1863,39 @@ pub struct ProjectExportProjection {
     pub import_metadata: Option<InteropMetadata>,
 }
 
+/// JSON form of a project-export request; raw revision requests remain supported.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectExportRequest {
+    expected_revision: String,
+    metadata: Option<InteropMetadata>,
+}
+
+fn export_with_host_metadata(
+    runtime: &DesignerRuntime,
+    request: &str,
+    export: fn(
+        &DesignerRuntime,
+        &str,
+        Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError>,
+) -> Result<ProjectExport, DesignerError> {
+    if request.trim_start().starts_with('{') {
+        let request: ProjectExportRequest = serde_json::from_str(request).map_err(|error| {
+            DesignerError::InvalidProjectTransfer {
+                message: format!("Invalid project export request: {error}"),
+            }
+        })?;
+        export(
+            runtime,
+            &request.expected_revision,
+            request.metadata.as_ref(),
+        )
+    } else {
+        export(runtime, request, None)
+    }
+}
+
 /// An app-private transfer record containing every exact canonical v1 file.
 /// Its bytes are not a portable `.ro` artifact.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4496,6 +4529,18 @@ impl DesignerRuntime {
     /// Returns a stale-revision, storage, or bounded-transfer failure without
     /// mutating the resident occurrence.
     pub fn export_project(&self, expected_revision: &str) -> Result<ProjectExport, DesignerError> {
+        self.export_project_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_project_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError> {
         let current = self.current_revision();
         if current != expected_revision {
             return Err(DesignerError::StaleQuery {
@@ -4559,7 +4604,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 
@@ -4571,6 +4616,18 @@ impl DesignerRuntime {
     pub fn export_project_v3(
         &self,
         expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        self.export_project_v3_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_project_v3_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         // The same profile decision as v3 open, so the preflight below admits
@@ -4590,7 +4647,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 
@@ -4643,6 +4700,18 @@ impl DesignerRuntime {
         &self,
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
+        self.export_portable_ro_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_portable_ro_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         ensure_export_document_profile(snapshot.document(), self.profile)?;
         let tree = self.encode_v3_export_tree(snapshot.document())?;
@@ -4658,7 +4727,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 

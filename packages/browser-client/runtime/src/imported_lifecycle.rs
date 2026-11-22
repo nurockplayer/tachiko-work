@@ -127,6 +127,19 @@ impl DesignerRuntime {
         }
     }
 
+    pub(super) fn project_import_metadata(
+        &self,
+        source: Option<&InteropMetadata>,
+    ) -> Result<Option<InteropMetadata>, DesignerError> {
+        self.imported
+            .as_ref()
+            .map(|state| {
+                self.metadata_for_export(source.unwrap_or(&state.metadata))
+                    .cloned()
+            })
+            .transpose()
+    }
+
     pub(super) fn plan_imported_state(
         &self,
         document: &Document,

@@ -520,6 +520,83 @@ fn untouched_import_and_old_portable_bytes_stay_exact() {
     );
 }
 
+fn assert_import_metadata_host_changes(
+    export: fn(
+        &DesignerRuntime,
+        &str,
+        Option<&InteropMetadata>,
+    ) -> Result<crate::ProjectExport, crate::DesignerError>,
+) {
+    let (mut runtime, mut metadata) = imported(false);
+    metadata.sheets[0].name = "Host Renamed Input".into();
+    metadata.sheets[0].columns[0].width = Some(24.0);
+
+    // Host-only edits are accepted without a worksheet lifecycle publication.
+    assert_eq!(runtime.metadata_for_export(&metadata).unwrap(), &metadata);
+    let expected = runtime.export_workbook("resident/0", &metadata).unwrap();
+    assert_eq!(expected.sheets[0].name, "Host Renamed Input");
+    assert_eq!(expected.sheets[0].columns[0].width, Some(24.0));
+    let expected_xlsx = xlsx(&runtime, &metadata);
+
+    let saved = export(&runtime, "resident/0", Some(&metadata)).unwrap();
+    let companion = saved.import_metadata.unwrap();
+    assert_eq!(companion, metadata);
+    let mut reopened = None;
+    open_imported_project(&mut reopened, &saved.bytes, &companion, OCCURRENCE).unwrap();
+    let reopened = reopened.unwrap();
+    assert_eq!(
+        reopened.export_workbook("resident/0", &companion).unwrap(),
+        expected
+    );
+    assert_eq!(xlsx(&reopened, &companion), expected_xlsx);
+
+    // All lifecycle changes keep runtime metadata authoritative, including widths.
+    let renamed = runtime
+        .rename_table("resident/0", "sheet_1", "Runtime Name")
+        .unwrap();
+    let added = runtime
+        .add_table("resident/1", "Added", &columns())
+        .unwrap();
+    let deleted = runtime
+        .delete_table("resident/2", &added.collection.key)
+        .unwrap();
+    let authoritative = deleted.import_metadata.unwrap();
+    assert_eq!(
+        renamed.import_metadata.unwrap().sheets[0].name,
+        "Runtime Name"
+    );
+    let mut host_presentation = authoritative.clone();
+    host_presentation.sheets[0].columns[0].width = Some(40.0);
+    assert_eq!(
+        export(&runtime, "resident/3", Some(&host_presentation))
+            .unwrap()
+            .import_metadata,
+        Some(authoritative.clone()),
+    );
+    assert_eq!(
+        export(&runtime, "resident/3", None)
+            .unwrap()
+            .import_metadata,
+        Some(authoritative)
+    );
+    assert!(export(&runtime, "resident/3", Some(&metadata)).is_err());
+}
+
+#[test]
+fn import_metadata_host_changes_export_project() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_with_metadata);
+}
+
+#[test]
+fn import_metadata_host_changes_export_project_v3() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_v3_with_metadata);
+}
+
+#[test]
+fn import_metadata_host_changes_export_portable_ro() {
+    assert_import_metadata_host_changes(DesignerRuntime::export_portable_ro_with_metadata);
+}
+
 #[test]
 fn working_size_companion_reopens_portable_with_source_order() {
     let source = import_xlsx(&export_xlsx(&fixture(false)).unwrap()).unwrap();

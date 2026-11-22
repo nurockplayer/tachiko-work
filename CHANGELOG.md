@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Imported project, v3 and portable `.ro` exports accept optional host import
+  metadata, preserving host worksheet names and column presentation in their
+  companion and on reopen. Worksheet lifecycle changes retain runtime authority;
+  exports without host metadata keep their existing behavior (#895).
+
 - Auto scalar columns accept classifier-backed edits and paste with lossless
   Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
   Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
