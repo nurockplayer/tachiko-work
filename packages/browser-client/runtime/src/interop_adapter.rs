@@ -5923,11 +5923,20 @@ fn escape(value: &str) -> String {
         .replace('\r', "&#13;")
 }
 
+/// Whether an underscore begins `_xHHHH_` in the encoded output. A CR closes
+/// the pattern too, because its own encoding `_x000D_` starts with `_`.
+fn begins_encoded_xstring(rest: &[u8]) -> bool {
+    matches!(
+        rest.get(..7),
+        Some([b'_', b'x', hex @ .., b'_' | b'\r']) if hex.iter().all(u8::is_ascii_hexdigit)
+    )
+}
+
 // Encode cell Text only; worksheet names retain their escape-pattern refusal.
 fn escape_xstring(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for (index, character) in value.char_indices() {
-        if character == '_' && xstring_unit(&value.as_bytes()[index..]).is_some() {
+        if character == '_' && begins_encoded_xstring(&value.as_bytes()[index..]) {
             encoded.push_str("_x005F_");
         } else if character == '\r' {
             encoded.push_str("_x000D_");
@@ -7944,7 +7953,209 @@ mod column_number_format_inference_tests {
 
 #[cfg(test)]
 mod xstring_tests {
-    use super::decode_xstring;
+    use super::{
+        ImportOptions, OutputProfile, SourceCell, SourceColumn, SourceValue, decode_xstring,
+        export_xlsx_for_profile, import_csv, import_xlsx,
+    };
+    use quick_xml::{Reader, events::Event};
+    use std::io::{Cursor, Read, Write};
+    use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+    const LITERALS: &[(&str, &str)] = &[
+        ("literal_x000D_value", "literal_x005F_x000D_value"),
+        ("_x005F_", "_x005F_x005F_"),
+        ("_x00", "_x00"),
+        ("_x00ad_", "_x005F_x00ad_"),
+        ("_x0041_x0042_", "_x005F_x0041_x005F_x0042_"),
+        ("_x0041\r", "_x005F_x0041_x000D_"),
+        ("_x005F\r", "_x005F_x005F_x000D_"),
+        ("_x00\r", "_x00_x000D_"),
+    ];
+
+    // Independent UTF-16 oracle: consume each source token once, without using
+    // the adapter's token recognizer, decoder or XML tree.
+    fn independently_decode(value: &str) -> String {
+        let units: Vec<_> = value.encode_utf16().collect();
+        let mut decoded = Vec::new();
+        let mut index = 0;
+        while index < units.len() {
+            if let Some(token) = units.get(index..index + 7) {
+                let hex = String::from_utf16(&token[2..6]).unwrap();
+                if token[0] == 0x005f
+                    && token[1] == 0x0078
+                    && token[6] == 0x005f
+                    && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    decoded.push(u16::from_str_radix(&hex, 16).unwrap());
+                    index += 7;
+                    continue;
+                }
+            }
+            decoded.push(units[index]);
+            index += 1;
+        }
+        String::from_utf16(&decoded).unwrap()
+    }
+
+    fn raw_texts(bytes: &[u8], path: &str) -> Vec<String> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name(path)
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        let mut reader = Reader::from_str(&xml);
+        let mut texts = Vec::new();
+        loop {
+            match reader.read_event().unwrap() {
+                Event::Start(start) if start.name().as_ref() == b"t" => {
+                    let text = reader.read_text(start.name()).unwrap();
+                    texts.push(quick_xml::escape::unescape(&text).unwrap().into_owned());
+                }
+                Event::Eof => return texts,
+                _ => {}
+            }
+        }
+    }
+
+    fn assert_xstring_export(profile: OutputProfile) {
+        let mut workbook = import_csv(b"Title\nvalue\n", &ImportOptions::default()).unwrap();
+        let sheet = &mut workbook.sheets[0];
+        sheet.columns = LITERALS
+            .iter()
+            .map(|(value, _)| SourceColumn {
+                name: (*value).into(),
+                width: None,
+                number_format: None,
+            })
+            .collect();
+        let row: Vec<_> = LITERALS
+            .iter()
+            .map(|(value, _)| SourceCell {
+                value: SourceValue::Text {
+                    value: (*value).into(),
+                },
+                ..SourceCell::default()
+            })
+            .collect();
+        let rows = if profile == OutputProfile::TextCapacity {
+            129
+        } else {
+            1
+        };
+        sheet.rows = vec![row; rows];
+        let bytes = export_xlsx_for_profile(&workbook, profile).unwrap();
+        let expected: Vec<_> = LITERALS.iter().map(|(_, encoded)| *encoded).collect();
+        let worksheet = raw_texts(&bytes, "xl/worksheets/sheet1.xml");
+        let headers = if profile == OutputProfile::TextCapacity {
+            raw_texts(&bytes, "xl/sharedStrings.xml")
+        } else {
+            worksheet[..LITERALS.len()].to_vec()
+        };
+        assert_eq!(headers, expected, "{profile:?} headers");
+        let expected_cells = if profile == OutputProfile::TextCapacity {
+            rows
+        } else {
+            rows + 1
+        };
+        assert_eq!(worksheet.len(), expected_cells * LITERALS.len());
+        for cells in worksheet.chunks_exact(LITERALS.len()) {
+            assert_eq!(cells, expected, "{profile:?} raw XML");
+        }
+        for text in headers.iter().chain(&worksheet) {
+            let expected = LITERALS
+                .iter()
+                .find(|(_, encoded)| encoded == text)
+                .unwrap()
+                .0;
+            assert_eq!(independently_decode(text), expected, "{profile:?}");
+        }
+        let imported = import_xlsx(&bytes).unwrap();
+        assert_eq!(imported.sheets[0].columns, workbook.sheets[0].columns);
+        assert_eq!(imported.sheets[0].rows, workbook.sheets[0].rows);
+        assert!(!imported.ledger.iter().any(|finding| finding.blocking));
+    }
+
+    #[test]
+    fn xlsx_xstring_imported_and_native_budget_export() {
+        // Imported workbooks and native Budget both select Shared.
+        assert_xstring_export(OutputProfile::Shared);
+    }
+
+    #[test]
+    fn xlsx_xstring_native_tracker_export() {
+        assert_xstring_export(OutputProfile::NativeTracker);
+    }
+
+    #[test]
+    fn xlsx_xstring_native_tables_accept_and_export_literals() {
+        assert_xstring_export(OutputProfile::NativeTables);
+    }
+
+    #[test]
+    fn xlsx_xstring_working_size_export() {
+        assert_xstring_export(OutputProfile::WorkingSize);
+    }
+
+    #[test]
+    fn xlsx_xstring_text_capacity_export() {
+        assert_xstring_export(OutputProfile::TextCapacity);
+    }
+
+    fn replace_part(bytes: &[u8], path: &str, original: &str, encoded: &str) -> Vec<u8> {
+        let mut input = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            if entry.name() == path {
+                let original = format!(">{original}</t>");
+                assert!(xml.contains(&original));
+                xml = xml.replacen(&original, &format!(">{encoded}</t>"), 1);
+            }
+            output
+                .start_file(entry.name(), SimpleFileOptions::default())
+                .unwrap();
+            output.write_all(xml.as_bytes()).unwrap();
+        }
+        output.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn xlsx_xstring_shared_and_inline_import_decode_and_validate() {
+        let shared = include_bytes!("../../tests/fixtures/interop/reference-two-sheet.xlsx");
+        let workbook = import_csv(b"Name\nAda\n", &ImportOptions::default()).unwrap();
+        let inline = export_xlsx_for_profile(&workbook, OutputProfile::Shared).unwrap();
+        for (source, path, original) in [
+            (shared.as_slice(), "xl/sharedStrings.xml", "00123"),
+            (inline.as_slice(), "xl/worksheets/sheet1.xml", "Ada"),
+        ] {
+            for (decoded, encoded) in LITERALS.iter().copied().chain([
+                ("A", "_x0041_"),
+                ("_x0041_", "_x005F_x0041_"),
+                ("\r", "_x000d_"),
+                ("😀", "_xD83D__xde00_"),
+            ]) {
+                let changed = replace_part(source, path, original, encoded);
+                let imported = import_xlsx(&changed).unwrap();
+                assert_eq!(
+                    imported.sheets[0].rows[0][0].value,
+                    SourceValue::Text {
+                        value: decoded.into()
+                    },
+                    "{path}: {encoded}"
+                );
+            }
+            for encoded in ["_x0001_", "_xFFFE_", "_xD800_"] {
+                let changed = replace_part(source, path, original, encoded);
+                let error = import_xlsx(&changed).unwrap_err().to_string();
+                assert!(error.contains("!A2"), "{error}");
+                assert!(error.contains("Invalid ST_Xstring Text"), "{error}");
+            }
+        }
+    }
 
     #[test]
     fn decodes_utf16_once_and_preserves_malformed_patterns() {
