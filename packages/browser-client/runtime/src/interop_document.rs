@@ -544,6 +544,15 @@ fn input_value(input: &ScalarEditInput) -> Result<Value, DesignerError> {
 }
 
 pub(crate) fn convert_value(value: &Value, kind: &FieldType) -> Result<Value, DesignerError> {
+    if matches!(
+        (value, kind),
+        (Value::Text(_), FieldType::Text)
+            | (Value::Number(_), FieldType::Number)
+            | (Value::Boolean(_), FieldType::Boolean)
+            | (Value::Date(_), FieldType::Date)
+    ) {
+        return Ok(value.clone());
+    }
     let text = match value {
         Value::Text(text) => text.clone(),
         Value::Number(number) => number.get().to_string(),
@@ -1929,7 +1938,7 @@ fn build_import_sheet(
             schema: schema_id.clone(),
             fields: BTreeMap::new(),
         };
-        let mut styles = Vec::new();
+        let mut styles = Vec::with_capacity(sheet.columns.len());
         for (column, cell) in cells.iter().enumerate() {
             let kind = selection.column_types[index][column].field_type();
             let value = if let Some(formula) = &cell.formula {

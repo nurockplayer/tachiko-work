@@ -200,7 +200,7 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
     PROJECT_TOO_LARGE.set(false);
     // Reserve parsing/reply headroom during input setup. Dropping the buffer
     // returns it to dlmalloc, while WASM linear memory remains grown for reuse.
-    let headroom = (length as usize).saturating_mul(240).min(256 * 1024 * 1024);
+    let headroom = (length as usize).saturating_mul(234).min(256 * 1024 * 1024);
     PROJECT_HEAP_RESERVATION.with(|reserved| {
         if headroom > reserved.get() {
             drop(std::hint::black_box(Vec::<u8>::with_capacity(headroom)));

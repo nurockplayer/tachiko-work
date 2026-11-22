@@ -3910,7 +3910,7 @@ pub(crate) fn import_xlsx_profile(
                     false,
                 )?;
             }
-            rows.resize_with(rows.len().max(retained_index), Vec::new);
+            rows.resize_with(rows.len().max(retained_index), || Vec::with_capacity(width));
             for c in row.kids("c") {
                 let address = c
                     .attr("r")
