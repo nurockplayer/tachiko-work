@@ -391,7 +391,7 @@ fn decode_spreadsheet_operation(
     request: &[u8],
     project: &[u8],
 ) -> Result<SpreadsheetResult, DesignerError> {
-    serde_json::from_slice::<SpreadsheetOperation>(&request)
+    serde_json::from_slice::<SpreadsheetOperation>(request)
         .map_err(|error| DesignerError::InvalidProjectTransfer {
             message: format!("Invalid spreadsheet operation: {error}"),
         })
