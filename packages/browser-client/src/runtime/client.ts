@@ -3,6 +3,7 @@ import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWind
 import type {
   FormulaCopy,
   TrackerCommand,
+  ScalarEditInput,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -65,6 +66,8 @@ export interface DesignerClient {
   newTrackerWorkingSize?(): Promise<OpenedWindowProjection>;
   newBudget?(): Promise<OpenedProjection>;
   newBudgetWorkingSize?(): Promise<OpenedWindowProjection>;
+  newBlankWorkbook?(): Promise<OpenedWindowProjection>;
+  writeCellAt?(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;

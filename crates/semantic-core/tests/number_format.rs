@@ -62,6 +62,7 @@ fn absent_format_preserves_serialization_and_invalid_declarations_are_diagnosed(
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "s".into(),
@@ -114,6 +115,7 @@ fn date_format_requires_a_date_field() {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             id: "s".into(),
             key: "s".into(),
             display_name: None,

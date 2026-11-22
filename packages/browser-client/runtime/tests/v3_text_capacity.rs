@@ -28,6 +28,7 @@ fn text_table(rows: usize) -> Document {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("grid"),

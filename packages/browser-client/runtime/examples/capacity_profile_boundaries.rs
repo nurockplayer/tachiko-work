@@ -21,6 +21,7 @@ const MIB: usize = 1024 * 1024;
 fn document(rows: usize) -> Document {
     let mut document = Document::empty("d", "capacity");
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
@@ -472,6 +473,7 @@ fn ineligible() {
     multiple.schemas.insert(
         SchemaId::from("other"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("other"),
             key: SchemaKey::from("other"),

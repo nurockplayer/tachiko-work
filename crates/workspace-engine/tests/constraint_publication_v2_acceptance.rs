@@ -33,6 +33,7 @@ fn document(value: f64) -> Document {
     doc.schemas.insert(
         "schema".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "schema".into(),
             key: "items".into(),

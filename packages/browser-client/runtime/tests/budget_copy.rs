@@ -19,6 +19,7 @@ fn fixture() -> DesignerRuntime {
         document.schemas.insert(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from(id),
@@ -361,6 +362,7 @@ fn formula_capacity_fixture() -> DesignerRuntime {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("items"),

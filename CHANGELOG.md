@@ -25,6 +25,12 @@ All notable changes to Tachiko Work are documented in this file.
   profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
   prefixes completed by CR encoding; shared and inline imports decode once
   and retain located refusals for unsupported decoded Text (#547).
+- Blank headerless workbooks expose `new_blank_workbook` and `write_cell_at`.
+  First and adjacent writes create optional Auto columns and rows atomically,
+  with generated Column A/B labels, tagged values and one Undo step. Headerless
+  schema state, labels and cells survive v3/portable `.ro` save/reopen and v2
+  delta/merge; distant writes and Auto formulas remain explicitly refused
+  (#899, #668 PR2).
 - Imported project, v3 and portable `.ro` exports accept optional host import
   metadata, preserving host worksheet names and column presentation in their
   companion and on reopen. Worksheet lifecycle changes retain runtime authority;

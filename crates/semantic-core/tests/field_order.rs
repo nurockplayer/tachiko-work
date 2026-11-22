@@ -19,6 +19,7 @@ fn field(id: &str) -> FieldDefinition {
 
 fn schema(order: Option<Vec<&str>>) -> Schema {
     Schema {
+        headerless: false,
         id: "s".into(),
         key: "s".into(),
         display_name: None,

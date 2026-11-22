@@ -51,6 +51,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             areas.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: areas.clone(),
                 key: SchemaKey::from("areas"),
@@ -73,6 +74,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             product_gaps.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: product_gaps.clone(),
                 key: SchemaKey::from("product_gaps"),
@@ -110,6 +112,7 @@ fn product_gap_schemas_without_formulas() -> BTreeMap<SchemaId, Schema> {
         (
             roadmap_notes.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: roadmap_notes.clone(),
                 key: SchemaKey::from("roadmap_notes"),
@@ -216,6 +219,7 @@ fn date_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("events"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("events"),
                 key: SchemaKey::from("events"),
@@ -417,6 +421,7 @@ fn admission_rejects_an_unbounded_collection_catalog() {
         document.schemas.insert(
             SchemaId::from(id.as_str()),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from(id.as_str()),
                 key: SchemaKey::from(key.as_str()),

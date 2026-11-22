@@ -66,6 +66,75 @@ fn inspect_current(runtime: &mut DesignerRuntime) -> ProjectInspectionProjection
 }
 
 #[test]
+fn ordinary_import_preserves_legacy_admission_and_export_with_or_without_headers() {
+    for has_header in [false, true] {
+        let mut source = fixture(false);
+        source.sheets[0].has_header = has_header;
+        let (runtime, imported) = import_workbook(&source, &selection(), OCCURRENCE).unwrap();
+        assert_eq!(imported.metadata.sheets[0].has_header, has_header);
+        assert!(!runtime.session.document().has_headerless_schemas());
+        runtime.export_project(runtime.current_revision()).unwrap();
+    }
+}
+
+#[test]
+fn headerless_import_survives_v3_reopen_and_positional_writes_use_first_row() {
+    let mut source = fixture(false);
+    source.sheets[0].has_header = false;
+    let (runtime, imported) =
+        import_workbook_working_size(&source, &selection(), OCCURRENCE).unwrap();
+    assert!(imported.opened.window.collection.headerless);
+    assert_eq!(imported.opened.window.collection.data_start_row, 1);
+    let collection = imported.opened.bootstrap.default_collection;
+    let before = runtime.session.document().clone();
+    let bytes = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap()
+        .bytes;
+    let mut reopened = None;
+    crate::open_project_working_size(
+        &mut reopened,
+        &bytes,
+        "00000000-0000-4000-8000-000000000900",
+    )
+    .unwrap();
+    assert_eq!(reopened.as_ref().unwrap().session.document(), &before);
+    for mut runtime in [runtime, reopened.unwrap()] {
+        let opened = runtime.opened_window().unwrap();
+        assert!(opened.window.collection.headerless);
+        assert_eq!(opened.window.collection.data_start_row, 1);
+        assert!(
+            runtime
+                .session
+                .document()
+                .schemas
+                .values()
+                .any(|schema| schema.headerless)
+        );
+        let revision = runtime.current_revision().to_owned();
+        runtime
+            .write_cell_at(
+                &revision,
+                &collection,
+                1,
+                1,
+                &crate::ScalarEditInput::Number { input: "31".into() },
+            )
+            .unwrap();
+        let table = runtime.query_table(&collection).unwrap();
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(
+            table.rows[0].fields[0].stored,
+            Some(crate::StoredValueProjection::Number { value: 31.0 })
+        );
+        assert_eq!(
+            runtime.query_table("sheet_2").unwrap().rows[0].fields[0].stored,
+            Some(crate::StoredValueProjection::Number { value: 46.0 })
+        );
+    }
+}
+
+#[test]
 fn inspect_recovers_lost_rename_mapping_for_xlsx_export() {
     let (mut runtime, _) = imported(false);
     let published = runtime

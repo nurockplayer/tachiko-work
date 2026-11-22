@@ -8,6 +8,7 @@ use tachiko_semantic_core::{
 
 fn balance_document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("weapon"),
         key: SchemaKey::from("weapon"),
@@ -393,6 +394,7 @@ fn long_acyclic_dependency_chains_are_stack_safe() {
         schemas: BTreeMap::from([(
             SchemaId::from("chain"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("chain"),
                 key: SchemaKey::from("chain"),
@@ -538,6 +540,7 @@ fn generated_dags_match_an_independent_oracle_and_survive_key_renames() {
             schemas: BTreeMap::from([(
                 SchemaId::from("schema"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("schema"),
                     key: SchemaKey::from("numbers"),
@@ -773,6 +776,7 @@ fn fan_out_document() -> Document {
         ]),
     };
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("node"),
         key: SchemaKey::from("node"),
@@ -797,6 +801,7 @@ fn fan_out_document() -> Document {
 /// A summary formula reads a whole plan column, so each plan row reaches it.
 fn column_total_document() -> Document {
     let plan_schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("plan"),
         key: SchemaKey::from("plan"),
@@ -804,6 +809,7 @@ fn column_total_document() -> Document {
         fields: BTreeMap::from([(FieldId::from("reserve"), number_field("reserve"))]),
     };
     let summary_schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("summary"),
         key: SchemaKey::from("summary"),
@@ -848,6 +854,7 @@ fn column_total_document() -> Document {
 /// Each plan row's reserve reads its own row's expense and one shared rate.
 fn same_row_document() -> Document {
     let plan_schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("plan"),
         key: SchemaKey::from("plan"),
@@ -858,6 +865,7 @@ fn same_row_document() -> Document {
         ]),
     };
     let global_schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("global"),
         key: SchemaKey::from("global"),

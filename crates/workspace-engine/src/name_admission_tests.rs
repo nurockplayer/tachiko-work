@@ -7,6 +7,7 @@ fn document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),
@@ -283,6 +284,7 @@ fn overwritten_execution() {
 fn append_and_inverse_payloads_are_checked_before_any_command() {
     let field = definition("g", Some("\0"));
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "new".into(),
         key: "new".into(),
@@ -351,6 +353,7 @@ fn append_and_inverse_payloads_are_checked_before_any_command() {
 #[test]
 fn independent_failures_accumulate_in_request_subject_and_reason_order() {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "new".into(),
         key: "new".into(),

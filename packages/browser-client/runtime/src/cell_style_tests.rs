@@ -43,6 +43,7 @@ pub(crate) fn fixture() -> Document {
             display_name: None,
             field_order: None,
             fields,
+            headerless: false,
         },
     );
     for (name, value) in [("r1", 3.0), ("r2", 1.0), ("r3", 2.0)] {

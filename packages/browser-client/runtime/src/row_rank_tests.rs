@@ -49,6 +49,7 @@ pub(super) fn ranked_document() -> Document {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             id: schema.clone(),
             key: SchemaKey::from("rows"),
             display_name: None,

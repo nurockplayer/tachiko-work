@@ -40,6 +40,7 @@ fn document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),
@@ -578,6 +579,7 @@ fn formula_document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),
@@ -1683,6 +1685,7 @@ fn v2_lifecycle() -> PatchLifecycle {
 
 fn multi_field_schema(id: &str, key: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: key.into(),
@@ -1775,6 +1778,7 @@ fn unprojectable_document() -> Document {
     document.schemas.insert(
         "t".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "t".into(),
             key: "targets".into(),
@@ -3074,6 +3078,7 @@ fn a_cell_edit_or_collection_append_resets_the_append_proof() {
     );
 
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "s2".into(),
         key: "second_table".into(),
@@ -3310,6 +3315,7 @@ fn mid_sized_document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "rows".into(),

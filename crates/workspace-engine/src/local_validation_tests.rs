@@ -77,6 +77,7 @@ fn in_range(min: f64, max: f64) -> FieldConstraint {
 
 fn schema(id: &str, fields: BTreeMap<FieldId, FieldDefinition>) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: id.into(),

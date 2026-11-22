@@ -182,6 +182,17 @@ fields or tables. There is no separate capacity bound.
 - **Interop metadata:** once import and export use this store, metadata stops carrying
   cell styles and widths. Sheet names and header state remain until a later ADR.
 
+### Header-state boundary amendment (#899)
+
+The [#668 sizing decision](https://github.com/nurockplayer/tachiko-work/issues/668#issuecomment-7067055398)
+places `headerless` on the canonical Schema, under ADR-0046, rather than in
+presentation or host import metadata. It participates in semantic delta and
+merge and survives v3 and portable `.ro` saves even when presentation is absent.
+`data_start_row` is derived in collection projections (1 for headerless, 2
+otherwise), never stored as a second fact. Generated labels follow ADR-0043's
+bounded blank-grid exception. This amends §7's presentation boundary only;
+styles, title, footer and widths retain their existing non-semantic meaning.
+
 ### 8. Fixtures this requires
 
 Canonical-byte fixtures for the member, including its absence, and for `date_format`.

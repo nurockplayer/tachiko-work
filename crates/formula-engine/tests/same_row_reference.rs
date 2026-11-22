@@ -74,6 +74,7 @@ fn document() -> Document {
             (
                 SchemaId::from("plan"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("plan"),
                     key: SchemaKey::from("plan"),
@@ -84,6 +85,7 @@ fn document() -> Document {
             (
                 SchemaId::from("settings"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("settings"),
                     key: SchemaKey::from("settings"),

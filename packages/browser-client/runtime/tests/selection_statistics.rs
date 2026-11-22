@@ -43,6 +43,7 @@ fn document(values: &[f64], columns: usize) -> Document {
     document.schemas.insert(
         "rows".into(),
         Schema {
+            headerless: false,
             id: "rows".into(),
             key: "rows".into(),
             display_name: None,

@@ -17,6 +17,7 @@ fn base() -> Document {
         constraint: FieldConstraint::None,
     };
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "s".into(),
         key: "table".into(),

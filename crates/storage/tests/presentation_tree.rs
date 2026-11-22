@@ -66,6 +66,7 @@ fn field(id: &str) -> (FieldId, FieldDefinition) {
 
 fn document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "orders".into(),
         key: "orders".into(),

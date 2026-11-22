@@ -66,6 +66,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         plan_id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: plan_id.clone(),
             key: SchemaKey::from("plan"),
@@ -81,6 +82,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         settings_id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: settings_id.clone(),
             key: SchemaKey::from("settings"),
@@ -114,6 +116,7 @@ fn plan_document() -> Document {
     document.schemas.insert(
         summary_id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: summary_id.clone(),
             key: SchemaKey::from("summary"),
@@ -1358,6 +1361,7 @@ fn shared_field_id_document() -> Document {
         (
             id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: id.clone(),
                 key: SchemaKey::from(id.as_str()),

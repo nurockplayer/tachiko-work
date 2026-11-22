@@ -40,6 +40,7 @@ pub fn constrained_v3_document(field_index: usize) -> Document {
         FieldType::Date,
     ];
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
@@ -151,6 +152,7 @@ pub fn nondefault_constrained_v3_document(field_index: usize) -> Document {
     document.schemas.insert(
         id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id,
             key: SchemaKey::from("zz_unused"),

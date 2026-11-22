@@ -9,6 +9,7 @@ import {
 import type {
   FormulaCopy,
   TrackerCommand,
+  ScalarEditInput,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -214,6 +215,14 @@ export class WorkerDesignerClient implements DesignerClient {
   /** Create a Budget whose session profile is the working-size one. */
   async newBudgetWorkingSize(): Promise<OpenedWindowProjection> {
     return expectResponse("opened_window", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
+  }
+
+  async newBlankWorkbook(): Promise<OpenedWindowProjection> {
+    return expectResponse("opened_window", await this.#command({type: "new_blank_workbook", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
+  }
+
+  async writeCellAt(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "write_cell_at", expected_revision: expectedRevision, collection, row, column, input});
   }
 
   async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {
