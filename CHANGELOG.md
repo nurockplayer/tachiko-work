@@ -9,6 +9,10 @@ All notable changes to Tachiko Work are documented in this file.
   revision. Native and imported table/window rows share resolved style projections;
   styles follow record identity and survive v3/portable `.ro` save and reopen.
   First slice of #815; border editing and complete edited-style XLSX export follow.
+- Qualify lossless SpreadsheetML Text escaping across every XLSX export
+  profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
+  prefixes completed by CR encoding; shared and inline imports decode once
+  and retain located refusals for unsupported decoded Text (#547).
 - Auto row and column initializers retain implied currency, percent and date
   formats through Undo/Redo, v3 and portable `.ro` saves. Windows, distinct
   values and display filters resolve those per-cell formats; mixed value and
