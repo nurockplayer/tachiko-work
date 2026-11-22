@@ -95,6 +95,26 @@ fn runtime_export_carries_calculated_date() {
     let source = explain_field(&document, &FieldAddress::new("launch", "published")).unwrap();
     assert_eq!(source.affected_formulas.len(), 1);
     assert_eq!(source.affected_formulas[0].display_value, "2026-01-09");
+    let expected = tachiko_workspace_engine::CalculatedValue::Date("2026-01-09".parse().unwrap());
+    let analysis = tachiko_workspace_engine::analyze_field(&document, "dates", &owner).unwrap();
+    assert_eq!(analysis.calculated_value, Some(expected));
+    let source = tachiko_workspace_engine::analyze_field(
+        &document,
+        "dates",
+        &FieldRef::new("launch", "published"),
+    )
+    .unwrap();
+    assert_eq!(source.downstream_impacts.len(), 1);
+    assert_eq!(source.downstream_impacts[0].value, expected);
+    let tagged = serde_json::json!({"kind": "date", "value": "2026-01-09"});
+    assert_eq!(
+        serde_json::to_value(analysis).unwrap()["calculated_value"],
+        tagged
+    );
+    assert_eq!(
+        serde_json::to_value(source).unwrap()["downstream_impacts"][0]["value"],
+        tagged
+    );
 }
 
 #[test]

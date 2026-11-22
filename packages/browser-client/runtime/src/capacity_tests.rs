@@ -947,3 +947,46 @@ fn working_size_tracker_admits_a_129th_row_while_ordinary_tracker_refuses_it() {
     );
     assert_eq!(rows(&ordinary), DEFAULT_LIMITS.table_rows);
 }
+
+#[test]
+fn large_date_formula_document_refuses_instead_of_entering_scalar_capacity_conversion() {
+    let mut document = capacity_document(FixtureSpec {
+        rows: DEFAULT_LIMITS.table_rows + 1,
+        columns: 3,
+        formula_cells: 0,
+        seed: 11,
+    });
+    let source = document
+        .entities
+        .iter()
+        .find(|(_, entity)| matches!(entity.fields.get("c2"), Some(Value::Date(_))))
+        .unwrap()
+        .0
+        .clone();
+    let target = document
+        .entities
+        .keys()
+        .find(|id| **id != source)
+        .unwrap()
+        .clone();
+    document.entities.get_mut(&target).unwrap().fields.insert(
+        "c2".into(),
+        Value::Formula(Expression::Reference(super::FieldRef::new(source, "c2"))),
+    );
+    assert!(!super::is_text_capacity_document(&document));
+    let mut slot = None;
+    match open_project(
+        &mut slot,
+        &v3_bundle(&document),
+        "00000000-0000-4000-8000-000000000534",
+    ) {
+        Err(DesignerError::CapacityExceeded(error)) => {
+            assert_eq!(error.limit, CapacityLimit::TableRows)
+        }
+        other => panic!(
+            "large Date formula document must refuse, got {:?}",
+            other.map(|_| ())
+        ),
+    }
+    assert!(slot.is_none());
+}

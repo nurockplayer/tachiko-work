@@ -238,6 +238,17 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 let condition = self.condition(condition)?;
                 self.calculated(if condition { then_value } else { else_value })
             }
+            Expression::IfError { value, fallback } => match self.calculated(value) {
+                Err(
+                    CalculationFailure::DivisionByZero
+                    | CalculationFailure::TypeMismatch
+                    | CalculationFailure::NonFiniteResult
+                    | CalculationFailure::EmptyAggregate
+                    | CalculationFailure::LookupMissingKey
+                    | CalculationFailure::FailedDependencies { .. },
+                ) => self.calculated(fallback),
+                result => result,
+            },
             Expression::Add { left, right } | Expression::Subtract { left, right } => {
                 let left = self.calculated(left)?;
                 let right = self.calculated(right)?;
@@ -367,7 +378,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
                     if matches!(
-                        self.number(value),
+                        self.calculated(value),
                         Err(CalculationFailure::DivisionByZero
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult
@@ -480,7 +491,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
                     if matches!(
-                        self.number(value),
+                        self.calculated(value),
                         Err(CalculationFailure::DivisionByZero
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult

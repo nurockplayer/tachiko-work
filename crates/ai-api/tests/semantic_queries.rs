@@ -450,7 +450,12 @@ fn provider_free_semantic_analyst_uses_shared_structured_results() {
 
     assert_eq!(inspection.source.source_label, "main@base");
     assert_eq!(field.source, inspection.source);
-    assert_eq!(field.calculated_value, Some(Number::new(80.0).unwrap()));
+    assert_eq!(
+        field.calculated_value,
+        Some(tachiko_workspace_engine::CalculatedValue::Number(
+            Number::new(80.0).unwrap()
+        ))
+    );
     assert_eq!(
         field.direct_dependencies,
         [

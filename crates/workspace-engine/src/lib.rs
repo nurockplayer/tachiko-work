@@ -410,7 +410,8 @@ pub struct EntityInspection {
 pub struct DownstreamImpact {
     pub field: FieldRef,
     pub address: FieldAddress,
-    pub value: Number,
+    #[serde(serialize_with = "serialize_calculated_value")]
+    pub value: CalculatedValue,
 }
 
 /// Provider-independent facts for one stable field in one identified snapshot.
@@ -420,11 +421,33 @@ pub struct FieldAnalysis {
     pub field: FieldRef,
     pub address: FieldAddress,
     pub stored_value: Value,
-    pub calculated_value: Option<Number>,
+    #[serde(serialize_with = "serialize_optional_calculated_value")]
+    pub calculated_value: Option<CalculatedValue>,
     pub formula_source: Option<String>,
     pub direct_dependencies: Vec<FieldRef>,
     pub upstream_dependencies: Vec<FieldRef>,
     pub downstream_impacts: Vec<DownstreamImpact>,
+}
+
+fn serialize_calculated_value<S: Serializer>(
+    value: &CalculatedValue,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        CalculatedValue::Number(number) => number.serialize(serializer),
+        CalculatedValue::Date(date) => Value::Date(*date).serialize(serializer),
+    }
+}
+
+fn serialize_optional_calculated_value<S: Serializer>(
+    value: &Option<CalculatedValue>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(CalculatedValue::Number(number)) => serializer.serialize_some(number),
+        Some(CalculatedValue::Date(date)) => serializer.serialize_some(&Value::Date(*date)),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Semantic comparison plus deterministic stable-ID affected-area projection.
@@ -1105,7 +1128,11 @@ pub fn analyze_field(
     let downstream_impacts = calculation
         .affected_by(field)
         .into_iter()
-        .filter_map(|affected| calculation.value(&affected).map(|value| (affected, value)))
+        .filter_map(|affected| {
+            calculation
+                .calculated_value(&affected)
+                .map(|value| (affected, value))
+        })
         .map(|(affected, value)| {
             Ok(DownstreamImpact {
                 address: index.field_address(document, &affected)?,
@@ -1120,7 +1147,7 @@ pub fn analyze_field(
         field: field.clone(),
         address,
         stored_value,
-        calculated_value: calculation.value(field),
+        calculated_value: calculation.calculated_value(field),
         formula_source,
         direct_dependencies,
         upstream_dependencies,

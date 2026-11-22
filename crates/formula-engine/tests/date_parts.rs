@@ -389,3 +389,41 @@ fn date_arithmetic_uses_whole_days_and_checks_range() {
         assert_eq!(failures.failures().get(&owner), Some(&expected));
     }
 }
+
+#[test]
+fn iferror_selects_tagged_dates_before_declared_type_checks() {
+    for (source, expected) in [
+        ("IFERROR([r.d] + 7, [r.d])", "2026-11-19"),
+        ("IFERROR([r.d] + 0.5, [r.d])", "2026-11-12"),
+        ("IFERROR([r.d], [r.d] + 0.5)", "2026-11-12"),
+    ] {
+        let mut document = document();
+        let owner = FieldRef::new("r", "end");
+        let expression =
+            bind_expression(&document, &owner, &parse_expression(source).unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("end".into(), Value::Formula(expression));
+        let CalculationOutcome::Complete(result) = calculate_complete(&document) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(
+            result.calculated_value(&owner),
+            Some(tachiko_formula_engine::CalculatedValue::Date(
+                expected.parse().unwrap()
+            ))
+        );
+        let (retained, _) = tachiko_formula_engine::RetainedCalculationState::rebuild(&document);
+        assert_eq!(retained.outcome(), CalculationOutcome::Complete(result));
+    }
+    let CalculationOutcome::Failed(result) = calculate("IFERROR([r.d], 0)") else {
+        panic!("a successful Date must not be replaced with numeric fallback");
+    };
+    assert_eq!(
+        result.failures()[&FieldRef::new("r", "output")],
+        tachiko_formula_engine::CalculationFailure::TypeMismatch
+    );
+}

@@ -11263,7 +11263,7 @@ fn is_text_capacity_document(document: &Document) -> bool {
                             (&field.field_type, value),
                             (FieldType::Text, Value::Text(_))
                                 | (FieldType::Number, Value::Number(_))
-                                | (FieldType::Date, Value::Date(_) | Value::Formula(_))
+                                | (FieldType::Date, Value::Date(_))
                                 | (FieldType::Boolean, Value::Boolean(_))
                         )
                     })

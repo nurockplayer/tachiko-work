@@ -129,7 +129,12 @@ fn formula_analysis_returns_source_ast_value_and_transitive_upstream_trace() {
 
     assert_eq!(analysis.source.document_id, document.id);
     assert_eq!(analysis.source.source_label, "balance-v1");
-    assert_eq!(analysis.calculated_value, Some(Number::new(45.0).unwrap()));
+    assert_eq!(
+        analysis.calculated_value,
+        Some(tachiko_workspace_engine::CalculatedValue::Number(
+            Number::new(45.0).unwrap()
+        ))
+    );
     assert_eq!(
         analysis.formula_source.as_deref(),
         Some("([iron_sword.dps] + 5)")
@@ -173,11 +178,11 @@ fn field_analysis_returns_transitive_downstream_impact_trace() {
         vec![
             (
                 FieldRef::new("iron_sword", "dps"),
-                Number::new(40.0).unwrap(),
+                tachiko_workspace_engine::CalculatedValue::Number(Number::new(40.0).unwrap()),
             ),
             (
                 FieldRef::new("iron_sword", "power"),
-                Number::new(45.0).unwrap(),
+                tachiko_workspace_engine::CalculatedValue::Number(Number::new(45.0).unwrap()),
             ),
         ]
     );
