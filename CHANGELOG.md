@@ -6,7 +6,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 - Reduce XLSX open serialization passes and temporary source buffers, and reuse
   the WASM spreadsheet reply arena without changing payloads or byte limits
-  (Part of #678 5e; MVP item 7).
+  (Part of #678 5e; MVP item 7). Compact private XML attributes and small child
+  lists to reduce parser allocation and repeat-inspection memory growth.
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;
   release the single retained source on import, the next inspect or close (#678 5d).
