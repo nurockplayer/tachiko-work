@@ -15,6 +15,10 @@ All notable changes to Tachiko Work are documented in this file.
   profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
   prefixes completed by CR encoding; shared and inline imports decode once
   and retain located refusals for unsupported decoded Text (#547).
+- Imported project, v3 and portable `.ro` exports accept optional host import
+  metadata, preserving host worksheet names and column presentation in their
+  companion and on reopen. Worksheet lifecycle changes retain runtime authority;
+  exports without host metadata keep their existing behavior (#895).
 - Auto row and column initializers retain implied currency, percent and date
   formats through Undo/Redo, v3 and portable `.ro` saves. Windows, distinct
   values and display filters resolve those per-cell formats; mixed value and
