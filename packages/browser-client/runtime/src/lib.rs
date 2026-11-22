@@ -2691,6 +2691,8 @@ enum ViewPredicate {
         format: Option<NumberFormat>,
         date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
+        /// An Auto cell's implied display overrides the column's formats.
+        auto: bool,
         /// Trimmed and lowercased once at plan time.
         value: String,
     },
@@ -2699,6 +2701,7 @@ enum ViewPredicate {
         format: Option<NumberFormat>,
         date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
+        auto: bool,
         values: Vec<String>,
     },
 }
@@ -2916,6 +2919,7 @@ fn plan_filter(
             format: column.number_format.clone(),
             date_format: column.date_format,
             required: column.required,
+            auto: column.field_type == FieldType::Auto,
             value: value.trim().to_lowercase(),
         },
         ViewFilter::DisplayIn { values, .. } => ViewPredicate::DisplayIn {
@@ -2923,6 +2927,7 @@ fn plan_filter(
             format: column.number_format.clone(),
             date_format: column.date_format,
             required: column.required,
+            auto: column.field_type == FieldType::Auto,
             values: values.clone(),
         },
     })
@@ -2959,7 +2964,12 @@ fn view_literal(
     }
 }
 
-fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> bool {
+/// `style` gives the display record of the row's cell at an ordinal.
+fn predicate_matches<'a>(
+    predicate: &ViewPredicate,
+    cells: &[Option<ViewValue>],
+    style: impl Fn(usize) -> Option<&'a CellStyle>,
+) -> bool {
     match predicate {
         ViewPredicate::TextEquals { ordinal, value } => matches!(
             cells.get(*ordinal),
@@ -2991,12 +3001,18 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
             format,
             date_format,
             required,
+            auto,
             value,
         } => {
-            let text = display_text::cell_text(
-                cells.get(*ordinal).and_then(Option::as_ref),
+            let (format, date_format) = auto_input::layered_formats(
+                auto.then(|| style(*ordinal)).flatten(),
                 format.as_ref(),
                 date_format.as_ref(),
+            );
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format,
+                date_format,
                 *required,
             );
             text.trim().to_lowercase().contains(value.as_str())
@@ -3006,12 +3022,18 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
             format,
             date_format,
             required,
+            auto,
             values,
         } => {
-            let text = display_text::cell_text(
-                cells.get(*ordinal).and_then(Option::as_ref),
+            let (format, date_format) = auto_input::layered_formats(
+                auto.then(|| style(*ordinal)).flatten(),
                 format.as_ref(),
                 date_format.as_ref(),
+            );
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format,
+                date_format,
                 *required,
             );
             values.contains(&text)
@@ -3489,7 +3511,13 @@ impl DesignerRuntime {
                 })
             })?;
         let new_revision = new_revision.as_str().to_owned();
-        self.view_index.rekey(expected_revision, &new_revision);
+        // A cell record can change an Auto cell's display text, which display
+        // filters read; only an unchanged set of cell records keeps the orders.
+        if presentation.cells == self.presentation.cells {
+            self.view_index.rekey(expected_revision, &new_revision);
+        } else {
+            self.view_index.retain_revision(&new_revision);
+        }
         if let Some((revision, _, _)) = &mut self.totals_cache {
             if revision == expected_revision {
                 revision.clone_from(&new_revision);
@@ -3822,9 +3850,9 @@ impl DesignerRuntime {
             }
             let projection = match fields.remove(&field) {
                 Some(mut projection) => {
-                    projection.display = columns
-                        .get(&field)
-                        .and_then(|column| field_display_text(&projection, column));
+                    projection.display = columns.get(&field).and_then(|column| {
+                        field_display_text(&projection, column, &self.presentation)
+                    });
                     projection
                 }
                 None => blanks.remove(&field)?,
@@ -5006,10 +5034,12 @@ impl DesignerRuntime {
             let Some(row) = row_of.get(value.field.entity.as_str()).copied() else {
                 continue;
             };
+            let (number_format, date_format) =
+                auto_input::cell_formats(&self.presentation, column, value.field.entity.as_str());
             texts[row] = Some(display_text::cell_text(
                 view_value(value).as_ref(),
-                column.number_format.as_ref(),
-                column.date_format.as_ref(),
+                number_format,
+                date_format,
                 column.required,
             ));
         }
@@ -5134,10 +5164,15 @@ impl DesignerRuntime {
             ) else {
                 continue;
             };
+            let (number_format, date_format) = auto_input::cell_formats(
+                &self.presentation,
+                columns[ordinal],
+                value.field.entity.as_str(),
+            );
             texts[ordinal][row] = display_text::cell_text(
                 view_value(value).as_ref(),
-                columns[ordinal].number_format.as_ref(),
-                columns[ordinal].date_format.as_ref(),
+                number_format,
+                date_format,
                 columns[ordinal].required,
             );
         }
@@ -5218,10 +5253,14 @@ impl DesignerRuntime {
         }
         let mut order = Vec::with_capacity(row_count);
         for (row, row_cells) in cells.iter().enumerate() {
+            let entity = spec.entities[row].as_str();
+            let style = |ordinal: usize| {
+                auto_input::stored_style(&self.presentation, entity, &plan.fields[ordinal])
+            };
             let admitted = plan
                 .filters
                 .iter()
-                .all(|predicate| predicate_matches(predicate, row_cells));
+                .all(|predicate| predicate_matches(predicate, row_cells, style));
             if admitted || keep.contains(&spec.entities[row]) {
                 order.push(row);
             }
@@ -5688,7 +5727,7 @@ impl DesignerRuntime {
             if display {
                 // Set the text before the row's bytes are counted, so an
                 // oversized reply still refuses.
-                attach_display_text(spec, &mut row);
+                attach_display_text(spec, &self.presentation, &mut row);
             }
             let row_bytes = serde_json::to_vec(&row)
                 .map_err(|error| view_encoding_failure("row", &error))?
@@ -6431,6 +6470,12 @@ impl DesignerRuntime {
         // serial is never handed out again (snapshot diffs key columns by id).
         self.proposal_serial = serial - 1;
         let id = appended_field_id(schema, serial, &self.row_namespace);
+        // An Auto initializer implies the same display as typing it.
+        let mut displays = Vec::new();
+        for initializer in initializers {
+            let field = FieldRef::new(EntityId::from(initializer.entity.clone()), id.clone());
+            auto_input::collect_display(&kind, &field, &initializer.input, &mut displays);
+        }
         let field = FieldDefinition {
             id: id.clone(),
             key: FieldKey::from(key),
@@ -6459,7 +6504,7 @@ impl DesignerRuntime {
                 order: previous_order,
             },
         ];
-        self.record_edit(expected, forward, inverse)
+        self.record_input_edit(expected, forward, inverse, displays)
     }
 
     fn rename_table(
@@ -8528,7 +8573,7 @@ impl DesignerRuntime {
             if present && old.is_none() {
                 return Err(DesignerError::UnsupportedScalarEdit { field });
             }
-            auto_input::collect_display(column, &field, &edit.input, &mut displays);
+            auto_input::collect_display(&column.field_type, &field, &edit.input, &mut displays);
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
                 let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
@@ -8748,6 +8793,22 @@ impl DesignerRuntime {
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let mut entity =
             native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
+        // An Auto initializer implies the same display as typing it.
+        let mut displays = Vec::new();
+        for initializer in initializers {
+            let field = FieldRef::new(entity.id.clone(), FieldId::from(initializer.field.clone()));
+            let column = spec
+                .columns
+                .iter()
+                .find(|column| column.id == field.field)
+                .expect("row initializer field was validated");
+            auto_input::collect_display(
+                &column.field_type,
+                &field,
+                &initializer.input,
+                &mut displays,
+            );
+        }
         let typed = values.keys().cloned().collect();
         for (field, value) in values {
             entity.fields.insert(field, value);
@@ -8770,7 +8831,7 @@ impl DesignerRuntime {
             entity: entity.id.clone(),
         });
         forward.push(SemanticCommand::AppendEntity { entity });
-        let publication = self.record_edit(expected, forward, inverse)?;
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -8962,7 +9023,7 @@ impl DesignerRuntime {
                     PasteCellInput::Text(text) => pasted_column_input(&column.field_type, text)?,
                     PasteCellInput::Typed(input) => input.clone(),
                 };
-                auto_input::collect_display(column, &field, &input, &mut displays);
+                auto_input::collect_display(&column.field_type, &field, &input, &mut displays);
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
                     fills.remove(&field.field);
@@ -9442,7 +9503,11 @@ fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> Gro
 /// Attach display text to Number and Date cells of one window row. Text,
 /// Yes/No and Reference cells carry none, because their own value is
 /// already the text and repeating it would double the reply bytes.
-fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
+fn attach_display_text(
+    spec: &CollectionSpec,
+    presentation: &PresentationStore,
+    row: &mut RowProjection,
+) {
     for field in &mut row.fields {
         let Some(column) = spec
             .columns
@@ -9451,21 +9516,25 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
         else {
             continue;
         };
-        field.display = field_display_text(field, column);
+        field.display = field_display_text(field, column, presentation);
     }
 }
 
-/// The Number or Date a field shows as display text, in its column's format.
-fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+/// The Number or Date a field shows as display text, in its column's format
+/// or an Auto cell's implied one.
+fn field_display_text(
+    field: &FieldProjection,
+    column: &ColumnSpec,
+    presentation: &PresentationStore,
+) -> Option<String> {
+    let (number_format, date_format) =
+        auto_input::cell_formats(presentation, column, &field.target.entity);
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
-        return Some(display_text::format_date(
-            *value,
-            column.date_format.as_ref(),
-        ));
+        return Some(display_text::format_date(*value, date_format));
     }
     display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
-        .map(|value| display_text::format_number(value, column.number_format.as_ref()))
+        .map(|value| display_text::format_number(value, number_format))
 }
 
 fn blank_field_ids(
