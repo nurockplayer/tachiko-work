@@ -1,13 +1,15 @@
 //! Classifier-backed Auto authoring; values and implied display publish together.
+use std::collections::BTreeSet;
+
 use tachiko_workspace_engine::{
     ClassifiedDateDisplay, ClassifiedInput, DateFormat, DateOrder, StyleId, classify_input,
 };
 
 use crate::{
-    AutoDateOrder, CellStyle, ColumnSpec, DesignerError, DesignerRuntime, Document, FieldRef,
-    FieldType, HistoryAction, HistoryEntry, PresentationStore, PublicationProjection,
-    ScalarEditInput, SemanticCommand, SessionProfile, prune_presentation, save_size, table_error,
-    validate_presentation,
+    AutoDateOrder, CellStyle, ColumnSpec, DesignerError, DesignerRuntime, Document, EntityId,
+    FieldId, FieldRef, FieldType, HistoryAction, HistoryEntry, NumberFormat, PresentationStore,
+    PublicationProjection, ScalarEditInput, SemanticCommand, SessionProfile, prune_presentation,
+    save_size, table_error, validate_presentation,
 };
 
 fn classified(input: &str, order: Option<AutoDateOrder>) -> ClassifiedInput {
@@ -53,12 +55,12 @@ pub(super) struct CellDisplay {
 }
 
 pub(super) fn collect_display(
-    column: &ColumnSpec,
+    field_type: &FieldType,
     field: &FieldRef,
     input: &ScalarEditInput,
     displays: &mut Vec<CellDisplay>,
 ) {
-    if column.field_type != FieldType::Auto {
+    if *field_type != FieldType::Auto {
         return;
     }
     let ScalarEditInput::Auto { input, date_order } = input else {
@@ -96,6 +98,54 @@ impl CellDisplay {
     pub(super) fn approx_bytes(&self) -> usize {
         self.field.entity.as_str().len() + self.field.field.as_str().len() + 256
     }
+}
+
+/// One cell's stored display record, if it has one.
+pub(super) fn stored_style<'a>(
+    store: &'a PresentationStore,
+    entity: &str,
+    field: &FieldId,
+) -> Option<&'a CellStyle> {
+    store
+        .cells
+        .get(&(EntityId::from(entity), field.clone()))
+        .and_then(|id| store.styles.get(id))
+}
+
+/// The Number and Date formats a cell shows: its display record's, layered
+/// attribute by attribute over the column's (ADR-0049 §2-§3).
+pub(super) fn layered_formats<'a>(
+    style: Option<&'a CellStyle>,
+    number_format: Option<&'a NumberFormat>,
+    date_format: Option<&'a DateFormat>,
+) -> (Option<&'a NumberFormat>, Option<&'a DateFormat>) {
+    (
+        style
+            .and_then(|style| style.number_format.as_ref())
+            .or(number_format),
+        style
+            .and_then(|style| style.date_format.as_ref())
+            .or(date_format),
+    )
+}
+
+/// The formats one cell of `column` shows. An Auto cell's implied display
+/// overrides its column's; a declared column shows only its own formats.
+pub(super) fn cell_formats<'a>(
+    store: &'a PresentationStore,
+    column: &'a ColumnSpec,
+    entity: &str,
+) -> (Option<&'a NumberFormat>, Option<&'a DateFormat>) {
+    let style = if column.field_type == FieldType::Auto {
+        stored_style(store, entity, &column.id)
+    } else {
+        None
+    };
+    layered_formats(
+        style,
+        column.number_format.as_ref(),
+        column.date_format.as_ref(),
+    )
 }
 
 fn cell_style(store: &PresentationStore, field: &FieldRef) -> Option<CellStyle> {
@@ -186,7 +236,28 @@ impl DesignerRuntime {
                 import_metadata: None,
             }));
         }
-        self.publish_commands_with_imported(expected, commands, None, None, Some(presentation))
+        let mut publication = self.publish_commands_with_imported(
+            expected,
+            commands,
+            None,
+            None,
+            Some(presentation),
+        )?;
+        if publication.many {
+            return Ok(publication);
+        }
+        // A cell whose value stays while its implied display changes is in no
+        // semantic invalidation; list it so its new display republishes.
+        publication.fields = std::mem::take(&mut publication.fields)
+            .into_iter()
+            .chain(styles.iter().map(|style| crate::field_target(&style.field)))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(match self.profile {
+            SessionProfile::WorkingSize => crate::bound_publication_targets(publication),
+            SessionProfile::Ordinary | SessionProfile::TextCapacity => publication,
+        })
     }
 
     pub(super) fn record_input_edit(
