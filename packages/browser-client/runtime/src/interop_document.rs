@@ -1250,7 +1250,19 @@ fn import_workbook_document(
         };
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
-    let export_maps = export_a1_maps(&document, &metadata);
+    let mut referenced = BTreeMap::<EntityId, BTreeSet<FieldId>>::new();
+    for (_, references, _) in pending.values() {
+        for reference in &references.cells {
+            referenced
+                .entry(reference.entity.clone())
+                .or_default()
+                .insert(reference.field.clone());
+        }
+    }
+    // Guards wrap existing references; neither binding nor guarding introduces
+    // another cell. Column ranges still cover every row in the metadata.
+    let export_maps = export_a1_maps(&document, &metadata, Some(&referenced));
+    drop(referenced);
     // Binding only replaces field values, so one index serves every formula.
     let index = AddressIndex::build(&document)
         .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
@@ -2114,10 +2126,14 @@ type ExportA1Maps = (
     BTreeMap<ColumnRef, ExportColumn>,
 );
 
-/// The A1 address of every exported cell and one whole-column range per
-/// exported column, as the imported-workbook export writes them.
-fn export_a1_maps(document: &Document, metadata: &InteropMetadata) -> ExportA1Maps {
-    let mut addresses = Vec::new();
+/// A1 addresses and whole-column ranges as the workbook export writes them.
+/// Import supplies the exact referenced cells already collected by translation.
+fn export_a1_maps(
+    document: &Document,
+    metadata: &InteropMetadata,
+    referenced: Option<&BTreeMap<EntityId, BTreeSet<FieldId>>>,
+) -> ExportA1Maps {
+    let mut addresses = BTreeMap::new();
     let mut columns = BTreeMap::new();
     for sheet in &metadata.sheets {
         let present: Vec<_> = sheet
@@ -2153,8 +2169,18 @@ fn export_a1_maps(document: &Document, metadata: &InteropMetadata) -> ExportA1Ma
             );
         }
         for (row_index, entity) in present.iter().enumerate() {
+            let selected = match referenced {
+                Some(referenced) => match referenced.get(&entity.id) {
+                    Some(fields) => Some(fields),
+                    None => continue,
+                },
+                None => None,
+            };
             for (definition, letters, field) in &definitions {
-                addresses.push((
+                if selected.is_some_and(|fields| !fields.contains(definition.field_id.as_str())) {
+                    continue;
+                }
+                addresses.insert(
                     FieldRef::new(entity.id.clone(), definition.field_id.clone()),
                     ExportCell::new(
                         quoted.clone(),
@@ -2166,11 +2192,10 @@ fn export_a1_maps(document: &Document, metadata: &InteropMetadata) -> ExportA1Ma
                         ),
                         field.is_some_and(|field| !field.required),
                     ),
-                ));
+                );
             }
         }
     }
-    let addresses = addresses.into_iter().collect();
     (addresses, columns)
 }
 
@@ -2338,20 +2363,21 @@ fn bind_import_formula(
     let projected = match excel_extremum(expression, target, document) {
         Ok(expression) => match project_expression_with_index(document, index, target, &expression)
         {
-            Ok(source)
-                if parse_expression(&source).is_err()
-                    || export_expression(&expression, target, &export_maps.0, &export_maps.1)
+            Ok(source) => match parse_expression(&source) {
+                Ok(projected_unbound)
+                    if !export_expression(&expression, target, &export_maps.0, &export_maps.1)
                         .is_ok_and(|text| text.len() > MAX_PROFILE_STRING_BYTES) =>
-            {
-                None
-            }
-            Ok(source) => Some((source, expression)),
+                {
+                    Some((expression, projected_unbound))
+                }
+                Ok(_) | Err(_) => None,
+            },
             Err(CanonicalAuthoringProjectionError::Complexity(_)) => None,
             Err(error) => return Err(tracker_error(&error.to_string())),
         },
         Err(_) => None,
     };
-    let Some((source, expression)) = projected else {
+    let Some((expression, projected_unbound)) = projected else {
         return keep_import_cache(
             document,
             target,
@@ -2361,17 +2387,8 @@ fn bind_import_formula(
             "guarding blank cells for MIN/MAX makes the formula larger than Tachiko allows",
         );
     };
-    // `FormulaUpdate` parsed and bound the projected text again before
-    // publishing it; do the same here, then write the bound expression into
-    // its slot. The final `from_document` validates and calculates the
-    // complete document once, including the required Number target rule.
-    let projected_unbound = parse_expression(&source).map_err(|error| {
-        tachiko_workspace_engine::WorkspaceError::InvalidFormula {
-            field: target.clone(),
-            input: source.clone(),
-            source: error,
-        }
-    })?;
+    // The parser above checks the projected text once, including its node
+    // bound. The final admission validates and calculates the whole document.
     // Canonical projection often preserves the parsed tree exactly. Its
     // addresses already resolved against this same document and index.
     let bound = if projected_unbound == unbound {
@@ -4430,7 +4447,7 @@ impl DesignerRuntime {
         } else if let Some(maps) = export_maps {
             maps
         } else {
-            built_maps = export_a1_maps(document, metadata);
+            built_maps = export_a1_maps(document, metadata, None);
             &built_maps
         };
         let mut sheets = Vec::new();
@@ -5849,7 +5866,17 @@ mod import_dependency_tests {
                     .collect(),
             }],
         };
-        let maps = export_a1_maps(&document, &metadata);
+        let referenced = BTreeMap::from([
+            ("a".into(), BTreeSet::from(["value".into()])),
+            ("b".into(), BTreeSet::from(["value".into()])),
+        ]);
+        let maps = export_a1_maps(&document, &metadata, Some(&referenced));
+        assert_eq!(maps.0.len(), 2);
+        assert_eq!(maps.1.len(), 2);
+        assert_eq!(
+            maps.0[&FieldRef::new("a", "value")].absolute(),
+            "'Sheet''s'!$A$4"
+        );
         let index = AddressIndex::build(&document).unwrap();
         let target = FieldRef::new("a", "total");
         let cell = crate::interop_adapter::SourceCell {
@@ -5888,7 +5915,7 @@ mod import_dependency_tests {
                 )
                 .unwrap()
             );
-            let rebuilt = export_a1_maps(&document, &metadata);
+            let rebuilt = export_a1_maps(&document, &metadata, None);
             for (reference, before) in &maps.0 {
                 let after = &rebuilt.0[reference];
                 assert_eq!(before.absolute(), after.absolute());
