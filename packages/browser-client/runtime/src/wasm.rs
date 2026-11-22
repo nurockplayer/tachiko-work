@@ -1486,17 +1486,12 @@ mod row_rank_parity_tests {
                 ),
             );
         }
-        document
-            .entities
-            .get_mut("e03")
-            .unwrap()
-            .fields
-            .insert(
-                "calc".into(),
-                tachiko_semantic_core::Value::Formula(
-                    tachiko_semantic_core::Expression::SameRowReference("amount".into()),
-                ),
-            );
+        document.entities.get_mut("e03").unwrap().fields.insert(
+            "calc".into(),
+            tachiko_semantic_core::Value::Formula(
+                tachiko_semantic_core::Expression::SameRowReference("amount".into()),
+            ),
+        );
         let tree = tachiko_storage::encode_roproj_v3(&document).unwrap();
         let bundle = crate::encode_project_bundle(
             tree.files().iter().map(|file| (file.path(), file.bytes())),
