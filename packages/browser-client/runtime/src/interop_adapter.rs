@@ -2730,12 +2730,12 @@ fn checkbox_property_bags(root: &Xml) -> bool {
 #[allow(clippy::case_sensitive_file_extension_comparisons)] // Compared path is already ASCII-lowercase.
 fn root_inventory(
     parts: &BTreeMap<String, Vec<u8>>,
-    worksheets: &BTreeSet<String>,
+    worksheets: &BTreeMap<String, usize>,
     ledger: &mut Vec<FidelityFinding>,
     working: bool,
 ) -> Result<()> {
     let worksheet_relationships = worksheets
-        .iter()
+        .keys()
         .map(|path| worksheet_relationship_path(path))
         .collect::<BTreeSet<_>>();
     for (path, bytes) in parts {
@@ -2772,7 +2772,7 @@ fn root_inventory(
                 | "xl/_rels/workbook.xml.rels"
                 | "xl/styles.xml"
                 | "xl/sharedStrings.xml"
-        ) || worksheets.contains(path);
+        ) || worksheets.contains_key(path);
         if worksheet_relationships.contains(path) {
             ledger.push(worksheet_relationship_finding(path, bytes, working)?);
             inventoried = true;
@@ -2803,23 +2803,32 @@ fn root_inventory(
             ));
         }
         if lower.ends_with(".xml") || lower.ends_with(".rels") {
-            let xml = parse_xml_profile(bytes, working)?;
-            let mut relationships = Vec::new();
-            xml.all("Relationship", &mut relationships);
-            for node in relationships {
-                if node.ns.as_str() == REL && node.attr("TargetMode") == Some("External") {
-                    ledger.push(finding(
-                        FidelityCategory::UnsupportedSafeDisabled,
-                        "external_relationship",
-                        path,
-                        "External relationship will not be followed",
-                        false,
-                    ));
-                }
+            let external_relationships = if let Some(count) = worksheets.get(path) {
+                *count
+            } else {
+                external_relationship_count(&parse_xml_profile(bytes, working)?)
+            };
+            for _ in 0..external_relationships {
+                ledger.push(finding(
+                    FidelityCategory::UnsupportedSafeDisabled,
+                    "external_relationship",
+                    path,
+                    "External relationship will not be followed",
+                    false,
+                ));
             }
         }
     }
     Ok(())
+}
+
+fn external_relationship_count(xml: &Xml) -> usize {
+    let mut relationships = Vec::new();
+    xml.all("Relationship", &mut relationships);
+    relationships
+        .into_iter()
+        .filter(|node| node.ns.as_str() == REL && node.attr("TargetMode") == Some("External"))
+        .count()
 }
 fn worksheet_relationship_path(path: &str) -> String {
     path.rsplit_once('/').map_or_else(
@@ -3766,7 +3775,7 @@ pub(crate) fn import_xlsx_profile(
         return fail("header_rows has more entries than the workbook has sheets");
     }
     let mut sheets = Vec::new();
-    let mut worksheet_paths = BTreeSet::new();
+    let mut worksheet_paths = BTreeMap::new();
     let mut formula_count = 0;
     let mut names = BTreeSet::new();
     for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
@@ -3804,7 +3813,12 @@ pub(crate) fn import_xlsx_profile(
                 .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
         let xml = xml_part(&parts, &path, "worksheet", MAIN, working)?;
-        if !worksheet_paths.insert(path.clone()) {
+        // Inventory reuses this count after decoding instead of rebuilding the
+        // worksheet XML tree. Findings remain in package-path order below.
+        if worksheet_paths
+            .insert(path.clone(), external_relationship_count(&xml))
+            .is_some()
+        {
             return fail("Duplicate worksheet part mapping");
         }
         for singleton in ["sheetData", "dimension", "sheetFormatPr"] {
