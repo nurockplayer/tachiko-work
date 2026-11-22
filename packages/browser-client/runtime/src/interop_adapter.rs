@@ -1522,9 +1522,12 @@ pub enum SourceValue {
     },
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)] // Independent attributes are part of the serialized interop shape.
 pub struct CellStyle {
     pub number_format: Option<String>,
     pub bold: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
     pub fill: Option<String>,
     pub wrap: bool,
     pub border: bool,
@@ -3218,6 +3221,7 @@ fn parse_styles(
         styles.push(CellStyle {
             number_format,
             bold,
+            italic: false,
             fill,
             wrap,
             border: has_border,
