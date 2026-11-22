@@ -1111,7 +1111,7 @@ fn current_revision(runtime: Option<&DesignerRuntime>) -> &str {
 
 #[cfg(test)]
 mod source_reuse_tests {
-    use super::*;
+    use super::{DesignerHost, ImportOptions, SourceWorkbook, import_csv_profile};
     use serde_json::json;
 
     #[test]

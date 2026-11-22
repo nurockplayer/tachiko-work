@@ -51,7 +51,9 @@ impl InspectedSource {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{InspectedSource, SourceIdentity};
+    use crate::interop_adapter::{ImportOptions, SourceWorkbook};
+    use crate::{DesignerResponse, DesignerWireReply};
 
     fn retained() -> InspectedSource {
         InspectedSource::from_preview(
