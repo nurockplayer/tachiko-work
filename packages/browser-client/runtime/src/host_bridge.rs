@@ -12,6 +12,8 @@
 
 use serde::Deserialize;
 
+use crate::source_reuse::{InspectedSource, SourceIdentity};
+
 use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
@@ -72,6 +74,7 @@ impl HostReply {
 #[derive(Default)]
 pub struct DesignerHost {
     runtime: Option<DesignerRuntime>,
+    retained_source: Option<InspectedSource>,
 }
 
 impl DesignerHost {
@@ -144,6 +147,7 @@ impl DesignerHost {
             };
         }
         let result = if source.len() > MAX_PROJECT_TRANSFER_BYTES {
+            self.retained_source = None;
             Err(DesignerError::ProjectTransferTooLarge {
                 actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
                 maximum: MAX_PROJECT_TRANSFER_BYTES,
@@ -153,7 +157,14 @@ impl DesignerHost {
                 .map_err(|error| DesignerError::InvalidProjectTransfer {
                     message: format!("Invalid spreadsheet operation: {error}"),
                 })
-                .and_then(|operation| spreadsheet_operation(runtime.as_ref(), operation, source))
+                .and_then(|operation| {
+                    spreadsheet_operation(
+                        runtime.as_ref(),
+                        operation,
+                        source,
+                        &mut self.retained_source,
+                    )
+                })
         };
         match result {
             Ok(result) => {
@@ -168,8 +179,12 @@ impl DesignerHost {
                     if let Some(candidate) = result.candidate {
                         *runtime = Some(candidate);
                     }
+                    let encoded = encode_reply(&reply);
+                    if let Some(identity) = result.inspected_source {
+                        self.retained_source = Some(InspectedSource::from_preview(identity, reply));
+                    }
                     HostReply {
-                        reply: encode_reply(&reply),
+                        reply: encoded,
                         bytes: result.export,
                     }
                 }
@@ -380,6 +395,7 @@ impl DesignerHost {
 
     /// Destroy the current occurrence.
     pub fn close_project(&mut self) {
+        self.retained_source = None;
         self.runtime = None;
     }
 
@@ -551,6 +567,7 @@ enum MetadataControlKind {
 }
 
 struct SpreadsheetResult {
+    inspected_source: Option<SourceIdentity>,
     profile: SessionProfile,
     response: DesignerResponse,
     candidate: Option<DesignerRuntime>,
@@ -560,6 +577,7 @@ struct SpreadsheetResult {
 impl SpreadsheetResult {
     fn read_only(response: DesignerResponse) -> Self {
         Self {
+            inspected_source: None,
             profile: SessionProfile::Ordinary,
             response,
             candidate: None,
@@ -617,6 +635,7 @@ fn spreadsheet_operation(
     runtime: Option<&DesignerRuntime>,
     operation: SpreadsheetOperation,
     project: &[u8],
+    retained: &mut Option<InspectedSource>,
 ) -> Result<SpreadsheetResult, DesignerError> {
     match operation {
         SpreadsheetOperation::Inspect {
@@ -624,6 +643,7 @@ fn spreadsheet_operation(
             csv_options,
             profile,
         } => {
+            *retained = None;
             let working = profile.is_some();
             let workbook = import_source(project, format, &csv_options, working)?;
             let profile = if working {
@@ -636,6 +656,9 @@ fn spreadsheet_operation(
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
             result.profile = profile;
+            if matches!(format, SpreadsheetFormat::Xlsx) {
+                result.inspected_source = Some(SourceIdentity::new(project, csv_options, working));
+            }
             Ok(result)
         }
         SpreadsheetOperation::Import {
@@ -646,7 +669,18 @@ fn spreadsheet_operation(
             install,
             profile,
         } => {
-            let workbook = import_source(project, format, &csv_options, profile.is_some())?;
+            let workbook = retained.take().and_then(|source| {
+                source.consume(
+                    project,
+                    &csv_options,
+                    profile.is_some(),
+                    matches!(format, SpreadsheetFormat::Xlsx),
+                )
+            });
+            let workbook = match workbook {
+                Some(workbook) => *workbook,
+                None => import_source(project, format, &csv_options, profile.is_some())?,
+            };
             import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
         SpreadsheetOperation::InspectProject { metadata, profile } => {
@@ -713,6 +747,7 @@ fn import_spreadsheet(
         None => {
             let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::Imported(Box::new(imported)),
                 candidate: install.then_some(candidate),
@@ -723,6 +758,7 @@ fn import_spreadsheet(
             let (candidate, imported) =
                 import_workbook_working_size(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::ImportedWindow(Box::new(imported)),
                 candidate: install.then_some(candidate),
@@ -768,6 +804,7 @@ fn open_imported_project_spreadsheet(
             let (candidate, opened) =
                 crate::admit_imported_project(project, occurrence_id, metadata)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::Opened(Box::new(opened)),
                 candidate: Some(candidate),
@@ -778,6 +815,7 @@ fn open_imported_project_spreadsheet(
             let (candidate, opened) =
                 crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::OpenedWindow(Box::new(opened)),
                 candidate: Some(candidate),
@@ -803,6 +841,7 @@ fn export_native_tables_spreadsheet(
         matches!(format, SpreadsheetFormat::Csv),
     )?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response,
         candidate: None,
@@ -870,6 +909,7 @@ fn export_native_tracker_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -948,6 +988,7 @@ fn export_native_budget_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -1040,6 +1081,7 @@ fn export_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -1099,4 +1141,61 @@ impl IntoProjectExport for crate::CanonicalTreeExport {
 
 fn current_revision(runtime: Option<&DesignerRuntime>) -> &str {
     runtime.map_or("unavailable", DesignerRuntime::current_revision)
+}
+
+#[cfg(test)]
+mod source_reuse_tests {
+    use super::{DesignerHost, ImportOptions, SourceWorkbook, import_csv_profile};
+    use serde_json::json;
+
+    #[test]
+    fn inspected_source_lifecycle_and_fallback_replies() {
+        let options = ImportOptions::default();
+        let source = export_xlsx(&import_csv_profile(b"Name\nAda\n", &options, false).unwrap());
+        let different =
+            export_xlsx(&import_csv_profile(b"Name\nGrace\n", &options, false).unwrap());
+        let inspect = json!({"type":"inspect", "format":"xlsx", "csv_options":options});
+        let import = json!({"type":"import", "format":"xlsx", "csv_options":options,
+            "selection":{"column_types":[["text"]], "extra_columns":[[]]},
+            "occurrence_id":"00000000-0000-4000-8000-000000000678", "install":true});
+        let mut host = DesignerHost::new();
+        let inspect_bytes = serde_json::to_vec(&inspect).unwrap();
+        for (bytes, changed_options) in [(&source, false), (&different, false), (&source, true)] {
+            let preview = host.spreadsheet(&inspect_bytes, &source);
+            assert!(host.retained_source.is_some());
+            assert_eq!(
+                preview.reply,
+                DesignerHost::new()
+                    .spreadsheet(&inspect_bytes, &source)
+                    .reply
+            );
+            let mut request = import.clone();
+            if changed_options {
+                request["csv_options"]["keep_summary_rows"] = true.into();
+            }
+            let request = serde_json::to_vec(&request).unwrap();
+            let actual = host.spreadsheet(&request, bytes);
+            let expected = DesignerHost::new().spreadsheet(&request, bytes);
+            assert_eq!(actual.reply, expected.reply);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&actual.reply).unwrap()["status"],
+                "ok"
+            );
+            assert!(host.retained_source.is_none());
+        }
+        let _ = host.spreadsheet(&inspect_bytes, &source);
+        host.close_project();
+        assert!(host.retained_source.is_none());
+        let _ = host.spreadsheet(&inspect_bytes, &source);
+        let failed = host.spreadsheet(&inspect_bytes, b"invalid zip");
+        assert!(host.retained_source.is_none());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&failed.reply).unwrap()["status"],
+            "error"
+        );
+    }
+
+    fn export_xlsx(workbook: &SourceWorkbook) -> Vec<u8> {
+        crate::interop_adapter::export_xlsx(workbook).unwrap()
+    }
 }
