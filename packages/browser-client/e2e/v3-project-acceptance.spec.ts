@@ -171,7 +171,7 @@ test("actual Worker imports, explicitly exports and reopens every v3 profile", a
       rows: [`${prefix}0008`, `${prefix}0009`],
     };
     const assertOpened = (opened: any, input: any): void => {
-      const collection = { id: literalIds.schema, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
+      const collection = { headerless: false, data_start_row: 2, id: literalIds.schema, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
       equal(opened.bootstrap, {
         title: "Imported workbook", revision: input.revision, default_collection: "sheet_1",
         collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue,
@@ -528,7 +528,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
       const prefix = `import_${input.identityUuid ?? "00000000-0000-4000-8000-000000000001"}_`;
       const fields = ["0003", "0004", "0005", "0006", "0007"].map((id) => `${prefix}${id}`);
       const rows = [`${prefix}0008`, `${prefix}0009`];
-      const collection = { id: `${prefix}0002`, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
+      const collection = { headerless: false, data_start_row: 2, id: `${prefix}0002`, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
       const values = [["PEN", "Stationery", input.quantity, 200, input.dateValue], ["NOTE", "Paper", 5, 200, "2026-09-27"]];
       const expected = {
         bootstrap: { title: "Imported workbook", revision: input.revision, default_collection: "sheet_1", collections: [collection], keyed_grouped_sum_definition_ids: input.catalogue },
@@ -577,7 +577,7 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const boundaryEntityIds = [`${boundaryPrefix}0008`, `${boundaryPrefix}0009`];
     const boundaryFieldIds = ["0003", "0004", "0005", "0006", "0007"].map((id) => `${boundaryPrefix}${id}`);
     const boundaryProjection = (revision: string, ids: string[], dateValue = "2026-09-28", quantity = 4): any => {
-      const collection = { id: `${boundaryPrefix}0002`, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
+      const collection = { headerless: false, data_start_row: 2, id: `${boundaryPrefix}0002`, key: "sheet_1", display_name: "sheet_1", entity_count: 2 };
       // Preserve ColumnProjection's declared wire member order for the strict JSON checks below.
       const columns = boundaryFieldIds.map((id, i) => ({ required: false, id, key: `column_${i + 1}`, display_name: `column_${i + 1}`, field_type: ["text", "text", "number", "number", "date"][i] }));
       const sourceRows = [
@@ -1111,8 +1111,8 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const newSchema = `native_table_schema_0002_${newUuid}`;
     const newField = `native_table_field_0003_${newUuid}`;
     const newExpected = {
-      bootstrap: { title: "reset", revision: "resident/0", default_collection: "reset", collections: [{ id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
+      bootstrap: { title: "reset", revision: "resident/0", default_collection: "reset", collections: [{ headerless: false, data_start_row: 2, id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { headerless: false, data_start_row: 2, id: newSchema, key: "reset", display_name: "reset", entity_count: 0 }, columns: [{ id: newField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(newOpen, newExpected, "New did not produce the literal native table document");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${newUuid}/${newDocument}`, revision: "resident/0" }, "New scope/document identity changed");
@@ -1165,8 +1165,8 @@ test("Worker preserves typed failures and resets origin after replacement or clo
     const afterCloseSchema = `native_table_schema_0002_${afterCloseUuid}`;
     const afterCloseField = `native_table_field_0003_${afterCloseUuid}`;
     const afterCloseExpected = {
-      bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
-      table: { revision: "resident/0", native_table_profile: true, collection: { id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
+      bootstrap: { title: "after_close", revision: "resident/0", default_collection: "after_close", collections: [{ headerless: false, data_start_row: 2, id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }], keyed_grouped_sum_definition_ids: [] },
+      table: { revision: "resident/0", native_table_profile: true, collection: { headerless: false, data_start_row: 2, id: afterCloseSchema, key: "after_close", display_name: "after_close", entity_count: 0 }, columns: [{ id: afterCloseField, key: "value", display_name: "value", display_name_explicit: true, field_type: "text", required: true }], rows: [], column_totals: {} },
     };
     equal(afterClose, afterCloseExpected, "Close/New did not install the fresh native table");
     equal(await client.observeOccurrence(), { scope: `designer-occurrence/${afterCloseUuid}/${afterCloseDocument}`, revision: "resident/0" }, "Close/New retained the previous occurrence identity");
