@@ -6661,6 +6661,7 @@ mod date_guard_inventory_tests {
 #[cfg(test)]
 mod xml_scope_tests {
     use super::{MAIN, parse_xml};
+    use std::fmt::Write;
 
     #[test]
     fn declarations_restore_after_empty_and_nested_elements() {
@@ -6674,9 +6675,10 @@ mod xml_scope_tests {
             let error = parse_xml(format!("<root>{body}<p:c/></root>").as_bytes()).unwrap_err();
             assert_eq!(error.to_string(), "Unbound XML namespace prefix");
         }
-        let declarations = (0..63)
-            .map(|i| format!(" xmlns:p{i}=\"uri\""))
-            .collect::<String>();
+        let mut declarations = String::new();
+        for i in 0..63 {
+            write!(declarations, " xmlns:p{i}=\"uri\"").unwrap();
+        }
         parse_xml(format!("<root{declarations}><a xmlns:p0=\"shadow\"/><p0:b/></root>").as_bytes())
             .unwrap();
         let error =
