@@ -97,11 +97,6 @@ impl DesignerRuntime {
                 number_format: None,
                 date_format: None,
             };
-            forward.push(SemanticCommand::AppendSchemaField {
-                schema: schema_id.clone(),
-                field: field.clone(),
-                values: BTreeMap::new(),
-            });
             added = Some(field);
             id
         } else {
@@ -115,6 +110,21 @@ impl DesignerRuntime {
         } else {
             Some(parse_column_initializer(&definition.field_type, input)?)
         };
+        let added_values = if added.is_some() && row <= spec.entities.len() {
+            value
+                .iter()
+                .map(|value| (spec.entities[row - 1].clone(), value.clone()))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+        if let Some(field) = &added {
+            forward.push(SemanticCommand::AppendSchemaField {
+                schema: schema_id.clone(),
+                field: field.clone(),
+                values: added_values.clone(),
+            });
+        }
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let entity_id = if row > spec.entities.len() {
             let mut entity = native_table_row(document, &spec, &mut row_ids, &mut BTreeSet::new())?;
@@ -138,8 +148,8 @@ impl DesignerRuntime {
             let id = spec.entities[row - 1].clone();
             let target = FieldRef::new(id.clone(), field_id.clone());
             let before = document.entities[&id].fields.get(&field_id).cloned();
-            // No value command is needed for a new, blank optional column.
-            if before != value {
+            // A new column carries its initial value in AppendSchemaField.
+            if added.is_none() && before != value {
                 forward.push(value_command(&target, value.as_ref()));
                 inverse.push(value_command(&target, before.as_ref()));
             }
@@ -163,7 +173,7 @@ impl DesignerRuntime {
             inverse.push(SemanticCommand::RemoveSchemaField {
                 schema: schema_id.clone(),
                 field,
-                values: BTreeMap::new(),
+                values: added_values,
             });
             inverse.push(SemanticCommand::SetSchemaFieldOrder {
                 schema: schema_id,

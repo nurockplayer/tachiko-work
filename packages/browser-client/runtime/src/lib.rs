@@ -3839,9 +3839,9 @@ impl DesignerRuntime {
             }
             let projection = match fields.remove(&field) {
                 Some(mut projection) => {
-                    projection.display = columns
-                        .get(&field)
-                        .and_then(|column| field_display_text(&projection, column));
+                    projection.display = columns.get(&field).and_then(|column| {
+                        field_display_text(&projection, column, &self.presentation)
+                    });
                     projection
                 }
                 None => blanks.remove(&field)?,
@@ -5722,7 +5722,7 @@ impl DesignerRuntime {
             if display {
                 // Set the text before the row's bytes are counted, so an
                 // oversized reply still refuses.
-                attach_display_text(spec, &mut row);
+                attach_display_text(spec, &mut row, &self.presentation);
             }
             let row_bytes = serde_json::to_vec(&row)
                 .map_err(|error| view_encoding_failure("row", &error))?
@@ -9479,7 +9479,11 @@ fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> Gro
 /// Attach display text to Number and Date cells of one window row. Text,
 /// Yes/No and Reference cells carry none, because their own value is
 /// already the text and repeating it would double the reply bytes.
-fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
+fn attach_display_text(
+    spec: &CollectionSpec,
+    row: &mut RowProjection,
+    presentation: &PresentationStore,
+) {
     for field in &mut row.fields {
         let Some(column) = spec
             .columns
@@ -9488,21 +9492,33 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
         else {
             continue;
         };
-        field.display = field_display_text(field, column);
+        field.display = field_display_text(field, column, presentation);
     }
 }
 
-/// The Number or Date a field shows as display text, in its column's format.
-fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+/// The Number or Date a field shows, with cell formatting overriding its column.
+fn field_display_text(
+    field: &FieldProjection,
+    column: &ColumnSpec,
+    presentation: &PresentationStore,
+) -> Option<String> {
+    let target = field.target.as_field_ref();
+    let style = presentation
+        .cells
+        .get(&(target.entity, target.field))
+        .and_then(|id| presentation.styles.get(id));
+    let number_format = style
+        .and_then(|style| style.number_format.as_ref())
+        .or(column.number_format.as_ref());
+    let date_format = style
+        .and_then(|style| style.date_format.as_ref())
+        .or(column.date_format.as_ref());
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
-        return Some(display_text::format_date(
-            *value,
-            column.date_format.as_ref(),
-        ));
+        return Some(display_text::format_date(*value, date_format));
     }
     display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
-        .map(|value| display_text::format_number(value, column.number_format.as_ref()))
+        .map(|value| display_text::format_number(value, number_format))
 }
 
 fn blank_field_ids(
