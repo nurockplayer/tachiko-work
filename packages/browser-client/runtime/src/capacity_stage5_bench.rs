@@ -200,7 +200,9 @@ fn capacity_stage5_small() {
 #[test]
 #[ignore = "Stage 5c: explicit release-only measurement; never run 10k rows on the Owner's Mac"]
 fn capacity_stage5_qualification() {
-    assert!(!cfg!(debug_assertions), "run with --release");
+    if cfg!(debug_assertions) {
+        panic!("run with --release");
+    }
     let rows = std::env::var("STAGE5_ROWS").map_or(10_000, |value| value.parse().unwrap());
     let directory = std::env::var_os("STAGE5_DIR").map_or_else(
         || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/678-stage5-5c"),
