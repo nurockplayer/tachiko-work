@@ -7069,7 +7069,6 @@ mod native_tables_output_tests {
     };
     use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     fn sheet(columns: usize, rows: usize) -> SourceSheet {
@@ -8092,7 +8091,6 @@ mod xstring_tests {
     };
     use quick_xml::{Reader, events::Event};
     use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
     use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
     const LITERALS: &[(&str, &str)] = &[
