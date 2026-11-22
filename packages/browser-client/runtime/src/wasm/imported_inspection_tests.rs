@@ -1,7 +1,9 @@
 use serde_json::{Value, json};
 
 use super::{
-    PROJECT, REQUEST, RESPONSE, tachiko_designer_project_close, tachiko_designer_request_run,
+    PROJECT, REQUEST, RESPONSE, tachiko_designer_portable_ro_export,
+    tachiko_designer_project_close, tachiko_designer_project_export,
+    tachiko_designer_project_export_v3, tachiko_designer_request_run,
     tachiko_designer_spreadsheet_run,
 };
 use crate::imported_lifecycle_tests::{fixture, selection};
@@ -68,6 +70,54 @@ fn wasm_inspection_recovers_rename_and_undo_mappings_for_export() {
             assert_eq!(workbook.sheets.len(), 2);
             assert_eq!(workbook.sheets[0].name, name);
         }
+        tachiko_designer_project_close();
+    }
+}
+
+#[test]
+fn import_metadata_host_changes_export_bridges() {
+    for route in ["project", "v3", "portable"] {
+        tachiko_designer_project_close();
+        let source = export_xlsx(&fixture(false)).unwrap();
+        let input = json!({
+            "type": "import", "format": "xlsx", "csv_options": {"delimiter": ",", "header": true},
+            "selection": selection(), "install": true,
+            "occurrence_id": "00000000-0000-4000-8000-000000000895",
+        });
+        let imported = spreadsheet(&input, source.clone());
+        let mut host = crate::host_bridge::DesignerHost::new();
+        let native_import = host.spreadsheet(&serde_json::to_vec(&input).unwrap(), &source);
+        assert_eq!(
+            native_import.reply,
+            RESPONSE.with(|slot| slot.borrow().clone())
+        );
+        let mut metadata = imported["metadata"].clone();
+        metadata["sheets"][0]["name"] = json!("Host Renamed Input");
+        metadata["sheets"][0]["columns"][0]["width"] = json!(24.0);
+        let request = serde_json::to_vec(&json!({
+            "expected_revision": "resident/0", "metadata": metadata,
+        }))
+        .unwrap();
+        REQUEST.with(|slot| *slot.borrow_mut() = request.clone());
+        match route {
+            "project" => tachiko_designer_project_export(),
+            "v3" => tachiko_designer_project_export_v3(),
+            "portable" => tachiko_designer_portable_ro_export(),
+            _ => unreachable!(),
+        }
+        let exported = reply_payload();
+        assert_eq!(exported["import_metadata"], metadata);
+        let native = match route {
+            "project" => host.export_project(&request),
+            "v3" => host.export_project_v3(&request),
+            "portable" => host.export_portable_ro(&request),
+            _ => unreachable!(),
+        };
+        assert_eq!(native.reply, RESPONSE.with(|slot| slot.borrow().clone()));
+        assert_eq!(
+            native.bytes.unwrap(),
+            PROJECT.with(|slot| slot.borrow().clone())
+        );
         tachiko_designer_project_close();
     }
 }

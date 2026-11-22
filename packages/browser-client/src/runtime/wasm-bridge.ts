@@ -1,4 +1,4 @@
-import type { SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { InteropMetadata, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferToEntries } from "../host/project-transfer.ts";
 import type {
   CanonicalTreeExport,
@@ -49,16 +49,16 @@ export type DesignerWasmBridge = {
   openProjectWorkingSize(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   openLocalDocument(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
   openLocalDocumentWorkingSize(bytes: Uint8Array, occurrenceId: string): DesignerWireReply;
-  exportProject(expectedRevision: string):
+  exportProject(expectedRevision: string, metadata?: InteropMetadata):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
-  exportProjectV3(expectedRevision: string):
+  exportProjectV3(expectedRevision: string, metadata?: InteropMetadata):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
   exportCanonicalTree(expectedRevision: string):
     | { status: "ok"; export: CanonicalTreeExport }
     | Extract<DesignerWireReply, { status: "error" }>;
-  exportPortableRo(expectedRevision: string):
+  exportPortableRo(expectedRevision: string, metadata?: InteropMetadata):
     | { status: "ok"; export: ProjectExport }
     | Extract<DesignerWireReply, { status: "error" }>;
   verifyPortableRo(bytes: Uint8Array): DesignerWireReply;
@@ -173,10 +173,12 @@ export async function createDesignerWasmBridge(
       openProjectArena(bytes, occurrenceId, () => exports.tachiko_designer_project_open_local_document()),
     openLocalDocumentWorkingSize: (bytes, occurrenceId) =>
       openProjectArena(bytes, occurrenceId, () => exports.tachiko_designer_project_open_local_document_working_size()),
-    exportProject: (expectedRevision) => {
-      const revision = encoder.encode(expectedRevision);
-      if (!writeRequest(revision)) {
-        return tooLargeReply("The expected revision exceeds the bridge limit.");
+    exportProject: (expectedRevision, metadata) => {
+      const revision = encoder.encode(metadata === undefined
+        ? expectedRevision
+        : JSON.stringify({ expected_revision: expectedRevision, metadata }));
+      if (!writeRequest(revision, metadata === undefined ? MAX_WIRE_REQUEST_BYTES : MAX_METADATA_REQUEST_BYTES)) {
+        return tooLargeReply("The project export request exceeds the bridge limit.");
       }
       exports.tachiko_designer_project_export();
       try {
@@ -209,10 +211,12 @@ export async function createDesignerWasmBridge(
         exports.tachiko_designer_project_release();
       }
     },
-    exportProjectV3: (expectedRevision) => {
-      const revision = encoder.encode(expectedRevision);
-      if (!writeRequest(revision)) {
-        return tooLargeReply("The expected revision exceeds the bridge limit.");
+    exportProjectV3: (expectedRevision, metadata) => {
+      const revision = encoder.encode(metadata === undefined
+        ? expectedRevision
+        : JSON.stringify({ expected_revision: expectedRevision, metadata }));
+      if (!writeRequest(revision, metadata === undefined ? MAX_WIRE_REQUEST_BYTES : MAX_METADATA_REQUEST_BYTES)) {
+        return tooLargeReply("The project export request exceeds the bridge limit.");
       }
       exports.tachiko_designer_project_export_v3();
       try {
@@ -269,9 +273,11 @@ export async function createDesignerWasmBridge(
         exports.tachiko_designer_project_release();
       }
     },
-    exportPortableRo: (expectedRevision) => {
-      const revision = encoder.encode(expectedRevision);
-      if (!writeRequest(revision)) return tooLargeReply("The expected revision exceeds the bridge limit.");
+    exportPortableRo: (expectedRevision, metadata) => {
+      const revision = encoder.encode(metadata === undefined
+        ? expectedRevision
+        : JSON.stringify({ expected_revision: expectedRevision, metadata }));
+      if (!writeRequest(revision, metadata === undefined ? MAX_WIRE_REQUEST_BYTES : MAX_METADATA_REQUEST_BYTES)) return tooLargeReply("The project export request exceeds the bridge limit.");
       exports.tachiko_designer_portable_ro_export();
       try {
         const reply = readReply();
