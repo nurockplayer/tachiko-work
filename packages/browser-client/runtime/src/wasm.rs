@@ -1454,6 +1454,54 @@ mod row_rank_parity_tests {
     }
 
     #[test]
+    fn wasm_copy_shifts_same_row_columns() {
+        tachiko_designer_project_close();
+        let mut document = ranked_document();
+        let schema = document.schemas.get_mut("rows").unwrap();
+        let mut extra = schema.fields["calc"].clone();
+        extra.id = "z".into();
+        extra.key = "z".into();
+        schema.fields.insert("z".into(), extra);
+        schema.field_order = Some(vec![
+            "amount".into(),
+            "calc".into(),
+            "z".into(),
+            "label".into(),
+        ]);
+        for entity in document.entities.values_mut() {
+            entity.fields.insert(
+                "z".into(),
+                tachiko_semantic_core::Value::Number(
+                    tachiko_semantic_core::Number::new(0.0).unwrap(),
+                ),
+            );
+        }
+        document.entities.get_mut("e03").unwrap().fields.insert(
+            "calc".into(),
+            tachiko_semantic_core::Value::Formula(
+                tachiko_semantic_core::Expression::SameRowReference("amount".into()),
+            ),
+        );
+        let tree = tachiko_storage::encode_roproj_v3(&document).unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+        PROJECT.with(|slot| *slot.borrow_mut() = bundle);
+        tachiko_designer_project_open();
+        response();
+        request(
+            &json!({"type":"copy_formula", "expected_revision":"resident/0", "source":{"entity":"e03","field":"calc"}, "destinations":[{"entity":"e03","field":"z"}], "fixed_references":[], "relative_rows":false, "relative_columns":true}),
+        );
+        request(
+            &json!({"type":"query_fields", "expected_revision":"resident/1", "fields":[{"entity":"e03","field":"z"}]}),
+        );
+        assert!(response().to_string().contains("[.calc]"));
+        tachiko_designer_project_close();
+    }
+
+    #[test]
     fn ranked_wasm_and_native_keep_positions_edits_save_and_export_bytes() {
         tachiko_designer_project_close();
         let tree = tachiko_storage::encode_roproj_v3(&ranked_document()).unwrap();
