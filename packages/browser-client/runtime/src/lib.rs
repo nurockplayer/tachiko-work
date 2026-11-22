@@ -114,6 +114,7 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+mod source_reuse;
 pub use cell_style::{CellBorderTarget, CellStyleChange};
 #[cfg(test)]
 mod cell_border_tests;

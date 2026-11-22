@@ -149,3 +149,28 @@ fn csv_escape_text_survives_host_and_wasm_xlsx_export_reimport_save_reopen() {
         }
     }
 }
+
+#[test]
+fn xlsx_inspect_reuse_and_close_match_native() {
+    use super::RETAINED_SOURCE;
+    use serde_json::json;
+
+    tachiko_designer_project_close();
+    let mut host = DesignerHost::new();
+    let options = ImportOptions::default();
+    let source = export_xlsx(&import_csv(b"Name\nAda\n", &options).unwrap()).unwrap();
+    let inspect = json!({"type":"inspect", "format":"xlsx", "csv_options":options});
+    let (preview, _) = spreadsheet(&mut host, &inspect, &source);
+    assert_ok(&preview);
+    assert!(RETAINED_SOURCE.with(|slot| slot.borrow().is_some()));
+    let (imported, _) = spreadsheet(&mut host, &import_request(&["text"], "xlsx"), &source);
+    assert_ok(&imported);
+    assert!(RETAINED_SOURCE.with(|slot| slot.borrow().is_none()));
+    let _ = spreadsheet(&mut host, &inspect, &source);
+    tachiko_designer_project_close();
+    host.close_project();
+    assert!(RETAINED_SOURCE.with(|slot| slot.borrow().is_none()));
+    let (reimported, _) = spreadsheet(&mut host, &import_request(&["text"], "xlsx"), &source);
+    assert_ok(&reimported);
+    assert_eq!(imported, reimported);
+}
