@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reuse the last inspected XLSX's decoded source for an identical import in
+  native and browser hosts. Match bytes, import options and capacity profile;
+  release the single retained source on import, the next inspect or close (#678 5d).
+
 - Add `setCellStyle` for rectangular record/field selections: set or toggle bold
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;
