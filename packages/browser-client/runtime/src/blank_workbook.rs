@@ -2,9 +2,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey,
-    FieldRef, FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput,
-    SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input, cell_edit_commands,
+    DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey, FieldRef,
+    FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput, SchemaId,
+    SemanticCommand, SemanticIdKind, appended_field_id, auto_input, cell_edit_commands,
     native_table_row, parse_column_initializer, table_error,
 };
 
