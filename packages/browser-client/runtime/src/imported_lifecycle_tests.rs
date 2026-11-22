@@ -526,6 +526,7 @@ fn assert_import_metadata_host_changes(
         &str,
         Option<&InteropMetadata>,
     ) -> Result<crate::ProjectExport, crate::DesignerError>,
+    legacy_export: bool,
 ) {
     let (mut runtime, mut metadata) = imported(false);
     metadata.sheets[0].name = "Host Renamed Input".into();
@@ -550,51 +551,55 @@ fn assert_import_metadata_host_changes(
     );
     assert_eq!(xlsx(&reopened, &companion), expected_xlsx);
 
-    // All lifecycle changes keep runtime metadata authoritative, including widths.
-    let renamed = runtime
-        .rename_table("resident/0", "sheet_1", "Runtime Name")
-        .unwrap();
-    let added = runtime
-        .add_table("resident/1", "Added", &columns())
-        .unwrap();
-    let deleted = runtime
-        .delete_table("resident/2", &added.collection.key)
-        .unwrap();
+    // Legacy exports cannot represent display names, so exercise deletion there.
+    // V3 exports exercise rename, add and delete lifecycle authority as well.
+    let deleted = if legacy_export {
+        runtime.delete_table("resident/0", "sheet_2").unwrap()
+    } else {
+        let renamed = runtime
+            .rename_table("resident/0", "sheet_1", "Runtime Name")
+            .unwrap();
+        assert_eq!(
+            renamed.import_metadata.unwrap().sheets[0].name,
+            "Runtime Name"
+        );
+        let added = runtime
+            .add_table("resident/1", "Added", &columns())
+            .unwrap();
+        runtime
+            .delete_table("resident/2", &added.collection.key)
+            .unwrap()
+    };
     let authoritative = deleted.import_metadata.unwrap();
-    assert_eq!(
-        renamed.import_metadata.unwrap().sheets[0].name,
-        "Runtime Name"
-    );
+    let revision = runtime.current_revision();
     let mut host_presentation = authoritative.clone();
     host_presentation.sheets[0].columns[0].width = Some(40.0);
     assert_eq!(
-        export(&runtime, "resident/3", Some(&host_presentation))
+        export(&runtime, revision, Some(&host_presentation))
             .unwrap()
             .import_metadata,
         Some(authoritative.clone()),
     );
     assert_eq!(
-        export(&runtime, "resident/3", None)
-            .unwrap()
-            .import_metadata,
+        export(&runtime, revision, None).unwrap().import_metadata,
         Some(authoritative)
     );
-    assert!(export(&runtime, "resident/3", Some(&metadata)).is_err());
+    assert!(export(&runtime, revision, Some(&metadata)).is_err());
 }
 
 #[test]
 fn import_metadata_host_changes_export_project() {
-    assert_import_metadata_host_changes(DesignerRuntime::export_project_with_metadata);
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_with_metadata, true);
 }
 
 #[test]
 fn import_metadata_host_changes_export_project_v3() {
-    assert_import_metadata_host_changes(DesignerRuntime::export_project_v3_with_metadata);
+    assert_import_metadata_host_changes(DesignerRuntime::export_project_v3_with_metadata, false);
 }
 
 #[test]
 fn import_metadata_host_changes_export_portable_ro() {
-    assert_import_metadata_host_changes(DesignerRuntime::export_portable_ro_with_metadata);
+    assert_import_metadata_host_changes(DesignerRuntime::export_portable_ro_with_metadata, false);
 }
 
 #[test]
