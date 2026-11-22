@@ -397,12 +397,7 @@ fn decode_spreadsheet_operation(
         })
         .and_then(|operation| {
             RETAINED_SOURCE.with(|retained| {
-                spreadsheet_operation(
-                    runtime.as_ref(),
-                    operation,
-                    &project,
-                    &mut retained.borrow_mut(),
-                )
+                spreadsheet_operation(runtime, operation, project, &mut retained.borrow_mut())
             })
         })
 }
