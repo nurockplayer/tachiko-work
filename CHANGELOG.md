@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reduce XLSX source XML parsing and tree destruction costs by sharing element
+  names and namespace URIs and updating namespace scopes only at declarations
+  (Part of #678 5d).
+
 - Add `setCellStyle` for rectangular record/field selections: set or toggle bold
   and italic, set or clear fill, and Undo/Redo each call as one presentation-only
   revision. Native and imported table/window rows share resolved style projections;
