@@ -52,6 +52,96 @@ fn filled() -> DesignerRuntime {
 }
 
 #[test]
+fn blank_workbook_clear_unallocated_cells_is_no_change_and_write_still_undoes() {
+    let mut runtime = blank();
+    let blank_document = runtime.session.document().clone();
+    let revision = runtime.current_revision().to_owned();
+    let error = runtime
+        .handle(DesignerRequest::WriteCellAt {
+            expected_revision: revision.clone(),
+            collection: "sheet".into(),
+            row: 1,
+            column: 1,
+            input: ScalarEditInput::Clear,
+        })
+        .unwrap_err();
+    assert_eq!(error.generic_failure().0, "no_change");
+    assert_eq!(runtime.session.document(), &blank_document);
+    assert_eq!(runtime.current_revision(), revision);
+    assert!(runtime.undo.is_empty());
+    assert!(runtime.redo.is_empty());
+    let table = window(&mut runtime);
+    assert_eq!(table.total_rows, 0);
+    assert!(table.rows.is_empty());
+    assert!(table.columns.is_empty());
+
+    write(&mut runtime, 1, 1, "Tea");
+    let written = runtime.session.document().clone();
+    let revision = runtime.current_revision().to_owned();
+    for (row, column) in [(1, 2), (2, 1), (2, 2)] {
+        let error = runtime
+            .write_cell_at(&revision, "sheet", row, column, &ScalarEditInput::Clear)
+            .unwrap_err();
+        assert_eq!(error.generic_failure().0, "no_change");
+        assert_eq!(runtime.session.document(), &written);
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.undo.len(), 1);
+    }
+    runtime.history_edit(&revision, false).unwrap();
+    assert_eq!(runtime.session.document(), &blank_document);
+    assert!(window(&mut runtime).columns.is_empty());
+    assert!(window(&mut runtime).rows.is_empty());
+}
+
+#[test]
+fn required_number_clear_unallocated_cell_does_not_create_a_record() {
+    let mut runtime = DesignerRuntime::new_working_size_table(
+        "00000000-0000-4000-8000-000000000899",
+        "Numbers",
+        &[crate::NewTableColumnInput {
+            name: "Amount".into(),
+            field_type: "number".into(),
+            required: true,
+        }],
+    )
+    .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let document = runtime.session.document().clone();
+    let revision = runtime.current_revision().to_owned();
+    let error = runtime
+        .write_cell_at(&revision, &collection, 1, 1, &ScalarEditInput::Clear)
+        .unwrap_err();
+    assert_eq!(error.generic_failure().0, "no_change");
+    assert_eq!(runtime.session.document(), &document);
+    assert!(runtime.session.document().entities.is_empty());
+    assert_eq!(runtime.current_revision(), revision);
+    assert!(runtime.undo.is_empty());
+    assert!(runtime.redo.is_empty());
+
+    runtime
+        .write_cell_at(
+            &revision,
+            &collection,
+            1,
+            1,
+            &ScalarEditInput::Number { input: "7".into() },
+        )
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    let table = runtime
+        .query_table_window(&revision, &collection, &TableView::default(), 0, 10, true)
+        .unwrap();
+    assert_eq!(table.total_rows, 1);
+    assert_eq!(
+        table.rows[0].fields[0].stored,
+        Some(StoredValueProjection::Number { value: 7.0 })
+    );
+    assert_eq!(runtime.undo.len(), 1);
+    runtime.history_edit(&revision, false).unwrap();
+    assert_eq!(runtime.session.document(), &document);
+}
+
+#[test]
 fn blank_workbook_first_adjacent_writes_are_tagged_headerless_and_undo_exactly() {
     let mut runtime = blank();
     let opened = runtime.opened_window().unwrap();

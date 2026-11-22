@@ -68,6 +68,11 @@ impl DesignerRuntime {
         if !spec.native_table_rows {
             return Err(table_error("write_cell_at requires a native scalar table"));
         }
+        if matches!(input, ScalarEditInput::Clear)
+            && (row > spec.entities.len() || column > spec.columns.len())
+        {
+            return Err(crate::PatchLifecycleError::NoChange.into());
+        }
         let document = self.session.document();
         let schema_id = SchemaId::from(spec.summary.id.clone());
         let schema = &document.schemas[&schema_id];
