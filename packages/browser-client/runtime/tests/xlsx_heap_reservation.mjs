@@ -31,7 +31,7 @@ async function inspect(bytes) {
 
 const invalid = await inspect(new Uint8Array(1200 * 1024));
 assert.equal(invalid.status, "error");
-assert.equal(invalid.error.code, "invalid_project_transfer");
+assert.equal(invalid.error.code, "invalid_project");
 assert.match(invalid.error.message, /ZIP/);
 console.log("invalid reserving-size input refuses without heap warmup: PASS");
 assert.equal((await inspect(await readFile(imageWorkbookPath))).status, "ok");
