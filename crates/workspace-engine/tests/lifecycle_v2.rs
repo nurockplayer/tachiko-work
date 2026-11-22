@@ -1406,6 +1406,7 @@ fn constraint_review_requires_transitive_formula_dependency_query() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn text_constraint_review_marks_nonnumeric_instances_without_calculation() {
     let mut document = Document::empty("game", "Text constraints");
     document.schemas.insert(

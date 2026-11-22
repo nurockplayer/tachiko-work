@@ -526,6 +526,8 @@ fn assert_opened_fixture(opened: &OpenedProjection, expected: &Document) {
         key: "sheet_1".into(),
         display_name: "sheet_1".into(),
         entity_count: 2,
+        headerless: false,
+        data_start_row: 2,
     };
     assert_eq!(opened.bootstrap.title, "Imported workbook");
     assert_eq!(opened.bootstrap.default_collection, "sheet_1");
@@ -1182,6 +1184,8 @@ fn independent_opened_projection(
         key: "sheet_1".to_owned(),
         display_name: "sheet_1".to_owned(),
         entity_count: 2,
+        headerless: false,
+        data_start_row: 2,
     };
     let columns = [
         ("column_1", "text"),
@@ -2256,7 +2260,9 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 id: new_schema_id.into(),
                 key: "reset".into(),
                 display_name: "reset".into(),
-                entity_count: 0
+                entity_count: 0,
+                headerless: false,
+                data_start_row: 2,
             }],
             keyed_grouped_sum_definition_ids: vec![],
         }
@@ -2271,7 +2277,9 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 id: new_schema_id.into(),
                 key: "reset".into(),
                 display_name: "reset".into(),
-                entity_count: 0
+                entity_count: 0,
+                headerless: false,
+                data_start_row: 2,
             },
             columns: vec![ColumnProjection {
                 required: true,

@@ -468,6 +468,8 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             key: schema.key.to_string(),
             display_name: schema.key.to_string(),
             entity_count: entities.len(),
+            headerless: false,
+            data_start_row: 2,
         },
         columns: schema
             .fields
