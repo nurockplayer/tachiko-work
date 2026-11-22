@@ -1234,6 +1234,7 @@ fn independent_opened_projection(
         .into_iter()
         .map(|(row_id, row_key, values)| RowProjection {
             blank_fields: Vec::new(),
+            styles: Vec::new(),
             id: row_id.to_owned(),
             key: row_key.to_owned(),
             position: None,

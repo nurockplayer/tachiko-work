@@ -9,6 +9,7 @@ import type {
   CapacityProjection,
   FieldBatchProjection,
   FieldExplanationProjection,
+  CellStyleChange,
   FieldTarget,
   CanonicalTreeExport,
   CanonicalProjectFile,
@@ -88,6 +89,7 @@ export interface DesignerClient {
   setColumnDateFormat?(expectedRevision: string, collection: string, field: string, dateFormat: DateFormat | null): Promise<PublicationProjection>;
   setColumnAlignment?(expectedRevision: string, collection: string, field: string, alignment: "left" | "center" | "right" | null): Promise<PublicationProjection>;
   setColumnWrap?(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection>;
+  setCellStyle?(expectedRevision: string, collection: string, entities: string[], fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection>;
   setColumnWidth?(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection>;
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn?(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;

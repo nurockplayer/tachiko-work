@@ -498,6 +498,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .into_iter()
             .map(|entity| RowProjection {
                 blank_fields: Vec::new(),
+                styles: Vec::new(),
                 id: entity.id.to_string(),
                 key: entity.key.to_string(),
                 position: None,

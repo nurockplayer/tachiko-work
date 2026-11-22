@@ -174,8 +174,14 @@ This route guards cells, headers, worksheet/reference names and number-format
 codes. Generated formulas cannot contain string literals. Issue #637 adds the
 shared ST_Xstring cell Text encoder to imported workbooks, native tables,
 TextCapacity, Tracker and Budget writers, and cell Text decoding on import.
-This does not claim independent-reader qualification across every export profile
-or close [#547](https://github.com/nurockplayer/tachiko-work/issues/547).
+Issue [#547](https://github.com/nurockplayer/tachiko-work/issues/547) tests the raw
+shared/inline XML with an independent ST_Xstring decoder across all five writer
+profiles (Budget shares the imported-workbook profile), alongside Work readback.
+Literal `_xHHHH_` prefixes, `_x005F_` itself and trailing partial `_x00` retain
+their text. Encoding CR must also protect a preceding `_xHHHH` prefix, since
+the generated `_x000D_` would otherwise complete a new escape. These encoding
+rules add no lossy fidelity finding; unsupported decoded Text retains the
+existing located import refusal.
 Number-format attributes retain their escape-pattern refusal under the existing
 style finding; they are outside the cell Text encoder. Attribute whitespace
 continues to use XML character references.

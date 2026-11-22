@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation, SourceStyle } from "./interop-protocol.ts";
 
 export type FieldTarget = {
   entity: string;
@@ -163,6 +163,8 @@ export type TableRowProjection = {
   /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
   blank_fields?: string[];
   fields: FieldProjection[];
+  /** Resolved styles in column order, as in imported rows. Omission means defaults. */
+  styles?: SourceStyle[];
 };
 
 export type TableProjection = {
@@ -600,6 +602,11 @@ export function isFormulaFailure(failure: FailureProjection): failure is Formula
   return FORMULA_FAILURE_CODES.includes(failure.code);
 }
 
+export type CellStyleChange =
+  | { kind: "bold" | "italic"; value: boolean }
+  | { kind: "toggle_bold" | "toggle_italic" }
+  | { kind: "fill"; color: string | null };
+
 export type TrackerCommand =
   | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
@@ -617,6 +624,7 @@ export type TrackerCommand =
   | { type: "set_column_date_format"; expected_revision: string; collection: string; field: string; date_format: DateFormat | null }
   | { type: "set_column_alignment"; expected_revision: string; collection: string; field: string; alignment: CellAlignment | null }
   | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
+  | { type: "set_cell_style"; expected_revision: string; collection: string; entities: string[]; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
