@@ -3491,7 +3491,11 @@ impl DesignerRuntime {
         presentation: PresentationStore,
     ) -> Result<String, DesignerError> {
         self.check_revision(expected_revision)?;
-        self.preflight_presentation(self.session.document(), &presentation)?;
+        self.preflight_presentation(
+            self.session.document(),
+            &presentation,
+            self.imported.as_ref().map(|state| &state.metadata),
+        )?;
         let bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let bytes = save_size::presentation_saved_bytes(&presentation)?;
@@ -7445,7 +7449,11 @@ impl DesignerRuntime {
         candidate: Document,
     ) -> Result<Option<WorkingAdmission>, DesignerError> {
         if !self.presentation.is_empty() {
-            self.preflight_presentation(&candidate, &self.presentation)?;
+            self.preflight_presentation(
+                &candidate,
+                &self.presentation,
+                self.imported.as_ref().map(|state| &state.metadata),
+            )?;
         }
         match self.profile {
             // Working size never rebuilds the occurrence; it re-proves only its
@@ -7872,7 +7880,14 @@ impl DesignerRuntime {
                 }
                 let presentation = input_presentation.as_ref().unwrap_or(&self.presentation);
                 if !presentation.is_empty() {
-                    self.preflight_presentation(prepared.document(), presentation)?;
+                    self.preflight_presentation(
+                        prepared.document(),
+                        presentation,
+                        imported
+                            .as_ref()
+                            .or(self.imported.as_ref())
+                            .map(|state| &state.metadata),
+                    )?;
                 }
             }
             // Preflight only upgrades a constraint mismatch into its typed

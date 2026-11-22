@@ -778,7 +778,7 @@ fn cell_style_formula_preflight_keeps_resident_styles() {
     let presentation = runtime.presentation.clone();
     let undo = runtime.undo.len();
     let redo = runtime.redo.len();
-    let longer = vec!["1234567890"; 100].join("+");
+    let longer = vec!["1234567890"; 32].join("+");
     // The same formula fits without styles, so this exercises styled projection admission.
     let mut unstyled =
         DesignerRuntime::from_document(runtime.session.document().clone(), OCCURRENCE).unwrap();
@@ -902,7 +902,7 @@ fn imported_text_capacity_style_edits_refuse_before_publication() {
         let sheet = &imported.metadata.sheets[0];
         for change in [
             json!({"kind": "bold", "value": true}),
-            json!({"kind": "fill", "color": "FFFF00"}),
+            json!({"kind": "fill", "color": "#FFFF00"}),
         ] {
             let revision = runtime.current_revision().to_owned();
             let table = runtime.query_table(&sheet.schema_id).unwrap();
