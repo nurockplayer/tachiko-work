@@ -149,6 +149,94 @@ fn table(host: &mut DesignerHost, collection: &Value, revision: &str) -> Value {
 }
 
 #[test]
+fn delete_then_expand_bridge_keeps_names_unique_for_adjacent_and_distant_writes() {
+    for (count, deleted, row, column, names) in [
+        (2, 0, 1, 2, json!(["Column B", "Column B (2)"])),
+        (2, 1, 1, 2, json!(["Column A", "Column B"])),
+        (
+            3,
+            0,
+            40,
+            6,
+            json!([
+                "Column B",
+                "Column C",
+                "Column C (2)",
+                "Column D",
+                "Column E",
+                "Column F"
+            ]),
+        ),
+        (
+            3,
+            1,
+            40,
+            6,
+            json!([
+                "Column A",
+                "Column C",
+                "Column C (2)",
+                "Column D",
+                "Column E",
+                "Column F"
+            ]),
+        ),
+        (
+            3,
+            2,
+            40,
+            6,
+            json!([
+                "Column A", "Column B", "Column C", "Column D", "Column E", "Column F"
+            ]),
+        ),
+    ] {
+        let (mut host, collection, mut revision) = start(&json!({
+            "type":"new_blank_workbook", "profile":"working_size",
+            "occurrence_id":"00000000-0000-4000-8000-000000000919"
+        }));
+        write_at(&mut host, &collection, &mut revision, 1, count);
+        let before = table(&mut host, &collection, &revision);
+        let reply = exchange(
+            &mut host,
+            &json!({"type":"remove_column", "expected_revision":revision,
+            "collection":collection, "field":before["columns"][deleted]["id"]}),
+        );
+        assert_eq!(reply["status"], "ok", "{reply}");
+        reply["response"]["payload"]["resulting_revision"]
+            .as_str()
+            .unwrap()
+            .clone_into(&mut revision);
+        let retained = table(&mut host, &collection, &revision)["columns"].clone();
+        write_at(&mut host, &collection, &mut revision, row, column);
+        let after = table(&mut host, &collection, &revision);
+        let columns = after["columns"].as_array().unwrap();
+        assert_eq!(
+            &columns[..count - 1],
+            retained.as_array().unwrap().as_slice()
+        );
+        assert_eq!(
+            json!(
+                columns
+                    .iter()
+                    .map(|c| &c["display_name"])
+                    .collect::<Vec<_>>()
+            ),
+            names
+        );
+        assert_eq!(after["total_rows"], row);
+        let written = after["rows"][row - 1]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["target"]["field"] == columns[column - 1]["id"])
+            .unwrap();
+        assert_eq!(written["stored"], json!({"kind":"number","value":923.0}));
+        tachiko_designer_project_close();
+    }
+}
+
+#[test]
 fn distant_write_bridge_preserves_sparse_positions_and_labels() {
     let (mut host, collection, mut revision) = seeded();
     write_at(&mut host, &collection, &mut revision, 40, 6);
