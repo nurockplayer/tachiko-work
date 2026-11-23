@@ -112,24 +112,19 @@ fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
             let mut translation = request(&text);
             translation["geometry"]["header_row"] = header_row.into();
             translation["geometry"]["columns"] =
-                serde_json::json!(["qty", "name", "price", "total"]);
+                serde_json::from_str(r#"["qty","name","price","total"]"#).unwrap();
             let translated = call(&mut runtime, &translation);
             assert_eq!(translated["status"], "ok", "{translated}");
             assert_eq!(translated["response"]["payload"]["source"], source);
-            let updated = call(
-                &mut runtime,
-                &serde_json::json!({
-                    "type":"formula_update", "expected_revision":"resident/0",
-                    "target":{"entity":"r2", "field":"total"}, "source":source,
-                }),
-            );
+            let updated = call(&mut runtime, &serde_json::from_str(&format!(
+                r#"{{"type":"formula_update","expected_revision":"resident/0","target":{{"entity":"r2","field":"total"}},"source":{}}}"#,
+                serde_json::to_string(source).unwrap(),
+            )).unwrap());
             assert_eq!(updated["status"], "ok", "{updated}");
             let revision = updated["response"]["payload"]["resulting_revision"].clone();
-            let render = serde_json::json!({
-                "type":"render_a1_formula", "expected_revision":revision,
-                "collection_id":"Items", "row_entity_id":"r2", "target_field_id":"total",
-                "geometry":translation["geometry"],
-            });
+            let mut render: Json = serde_json::from_str(r#"{"type":"render_a1_formula","expected_revision":"resident/1","collection_id":"Items","row_entity_id":"r2","target_field_id":"total","geometry":{}}"#).unwrap();
+            render["expected_revision"] = revision.clone();
+            render["geometry"] = translation["geometry"].clone();
             let rendered = call(&mut runtime, &render);
             assert_eq!(rendered["status"], "ok", "{rendered}");
             assert_eq!(rendered["response"]["payload"]["source"], display);
@@ -145,7 +140,7 @@ fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
             let mut outside = translation;
             outside["type"] = "render_a1_formula".into();
             outside.as_object_mut().unwrap().remove("text");
-            outside["geometry"]["rows"] = serde_json::json!(["r2", "r3"]);
+            outside["geometry"]["rows"] = serde_json::from_str(r#"["r2","r3"]"#).unwrap();
             if source != "[.qty]" {
                 refused(&mut runtime, &outside, "out_of_bounds");
             }
@@ -163,19 +158,16 @@ fn headerless_cross_sheet_a1_starts_at_row_one() {
     );
     let mut input = request("Other!A1");
     input["geometry"]["header_row"] = 0.into();
-    input["geometry"]["sheets"] = serde_json::json!({"Other":{
-        "collection_id":"Other", "header_row":0, "rows":["o1"], "columns":["x"],
-    }});
+    input["geometry"]["sheets"] = serde_json::from_str(
+        r#"{"Other":{"collection_id":"Other","header_row":0,"rows":["o1"],"columns":["x"]}}"#,
+    )
+    .unwrap();
     let translated = call(&mut runtime, &input);
     assert_eq!(translated["status"], "ok", "{translated}");
     assert_eq!(translated["response"]["payload"]["source"], "[o1.x]");
-    let updated = call(
-        &mut runtime,
-        &serde_json::json!({
-            "type":"formula_update", "expected_revision":"resident/0",
-            "target":{"entity":"r2", "field":"total"}, "source":"[o1.x]",
-        }),
-    );
+    let updated = call(&mut runtime, &serde_json::from_str(
+        r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":"[o1.x]"}"#,
+    ).unwrap());
     assert_eq!(updated["status"], "ok", "{updated}");
     input["type"] = "render_a1_formula".into();
     input["expected_revision"] = updated["response"]["payload"]["resulting_revision"].clone();

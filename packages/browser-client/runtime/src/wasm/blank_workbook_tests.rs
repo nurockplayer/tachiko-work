@@ -6,7 +6,7 @@ use super::{
     tachiko_designer_request_run,
 };
 use crate::host_bridge::DesignerHost;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 fn exchange(host: &mut DesignerHost, request: &Value) -> Value {
     let bytes = serde_json::to_vec(request).unwrap();
@@ -21,42 +21,31 @@ fn exchange(host: &mut DesignerHost, request: &Value) -> Value {
 fn positional_block_paste_uses_the_same_wasm_and_native_host_boundary() {
     tachiko_designer_project_close();
     let mut host = DesignerHost::default();
-    let created = exchange(
-        &mut host,
-        &json!({
-            "type":"new_blank_workbook", "occurrence_id":"00000000-0000-4000-8000-000000000936",
-            "profile":"working_size",
-        }),
-    );
+    let created: Value = serde_json::from_str(r#"{"type":"new_blank_workbook","occurrence_id":"00000000-0000-4000-8000-000000000936","profile":"working_size"}"#).unwrap();
+    let created = exchange(&mut host, &created);
     assert_eq!(created["status"], "ok", "{created}");
     let collection = created["response"]["payload"]["bootstrap"]["default_collection"].clone();
     for (revision, row, column) in [("resident/0", 1, 1), ("resident/1", 40, 3)] {
-        let reply = exchange(
-            &mut host,
-            &json!({
-                "type":"paste_cells_at", "expected_revision":revision, "collection":collection,
-                "row":row, "column":column, "rows":[["00123", "2"], ["3", "4"]],
-            }),
-        );
+        let request: Value = serde_json::from_str(&format!(
+            r#"{{"type":"paste_cells_at","expected_revision":"{revision}","collection":{},"row":{row},"column":{column},"rows":[["00123","2"],["3","4"]]}}"#,
+            serde_json::to_string(&collection).unwrap(),
+        )).unwrap();
+        let reply = exchange(&mut host, &request);
         assert_eq!(reply["status"], "ok", "{reply}");
         assert_eq!(reply["response"]["type"], "published");
         assert_eq!(reply["response"]["payload"]["base_revision"], revision);
     }
-    let refused = exchange(
-        &mut host,
-        &json!({
-            "type":"paste_cells_at", "expected_revision":"resident/2", "collection":collection,
-            "row":1, "column":1, "rows":[["5", "6"], ["7", "=A1"]],
-        }),
-    );
+    let refused_request: Value = serde_json::from_str(&format!(
+        r#"{{"type":"paste_cells_at","expected_revision":"resident/2","collection":{},"row":1,"column":1,"rows":[["5","6"],["7","=A1"]]}}"#,
+        serde_json::to_string(&collection).unwrap(),
+    )).unwrap();
+    let refused = exchange(&mut host, &refused_request);
     assert_eq!(refused["status"], "error", "{refused}");
-    let table = exchange(
-        &mut host,
-        &json!({
-            "type":"query_table_window", "expected_revision":"resident/2", "collection":collection,
-            "start":0, "count":1,
-        }),
-    );
+    let query: Value = serde_json::from_str(&format!(
+        r#"{{"type":"query_table_window","expected_revision":"resident/2","collection":{},"start":0,"count":1}}"#,
+        serde_json::to_string(&collection).unwrap(),
+    )).unwrap();
+    let table = exchange(&mut host, &query);
     assert_eq!(table["status"], "ok", "{table}");
     assert_eq!(table["response"]["payload"]["total_rows"], 41);
     assert_eq!(
@@ -67,8 +56,12 @@ fn positional_block_paste_uses_the_same_wasm_and_native_host_boundary() {
         4
     );
     assert_eq!(
-        table["response"]["payload"]["rows"][0]["fields"][0]["stored"],
-        json!({"kind":"text", "value":"00123"})
+        table["response"]["payload"]["rows"][0]["fields"][0]["stored"]["kind"],
+        "text"
+    );
+    assert_eq!(
+        table["response"]["payload"]["rows"][0]["fields"][0]["stored"]["value"],
+        "00123"
     );
     tachiko_designer_project_close();
 }
