@@ -321,8 +321,8 @@ fn promotion_refuses_failed_and_unavailable_formulas_atomically() {
         assert_eq!(error.generic_failure().0, "header_formula_unavailable");
         assert_eq!(runtime.current_revision(), "resident/0");
         assert_eq!(runtime.session.document(), &before);
-        assert!(runtime.undo.is_empty());
-        assert!(runtime.redo.is_empty());
+        assert_eq!(runtime.undo.len(), 0);
+        assert_eq!(runtime.redo.len(), 0);
     }
 }
 
@@ -411,7 +411,7 @@ pub(super) fn near_limit_imported_header() -> DesignerRuntime {
     let metadata = publication.import_metadata.as_mut().unwrap();
     let mut original = metadata.clone();
     original.sheets[0].has_header = false;
-    assert!(!publication.header_fallbacks.is_empty());
+    assert_ne!(publication.header_fallbacks.len(), 0);
     publication.header_fallbacks.clear();
     crate::ensure_wire_reply_size(&reply, runtime.profile).unwrap();
     let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
@@ -440,6 +440,6 @@ fn promotion_refuses_reply_overflow_from_header_fallbacks_atomically() {
     let after = runtime.imported.as_ref().unwrap();
     assert_eq!(after.metadata, imported.metadata);
     assert_eq!(after.lifecycle_changed, imported.lifecycle_changed);
-    assert!(runtime.undo.is_empty());
-    assert!(runtime.redo.is_empty());
+    assert_eq!(runtime.undo.len(), 0);
+    assert_eq!(runtime.redo.len(), 0);
 }
