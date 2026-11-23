@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 
 use super::{
-    PROJECT, REQUEST, RESPONSE, tachiko_designer_portable_ro_export,
+    PROJECT, REQUEST, RESPONSE, RUNTIME, tachiko_designer_portable_ro_export,
     tachiko_designer_portable_ro_open_working_size, tachiko_designer_project_close,
     tachiko_designer_project_export_v3, tachiko_designer_project_open_working_size,
     tachiko_designer_request_run,
@@ -257,4 +257,69 @@ fn header_promotion_bridge_keeps_direct_and_same_row_formula_bindings() {
         assert_eq!(current["calculated"]["value"], 120.0);
     }
     tachiko_designer_project_close();
+}
+
+fn assert_bridge_refusal(native: crate::DesignerRuntime, wasm: crate::DesignerRuntime, code: &str) {
+    // Inject retained failure states and a sidecar larger than the spreadsheet
+    // request arena, then exercise the production ordinary-request byte paths.
+    let document = native.session.document().clone();
+    let imported = native
+        .imported
+        .as_ref()
+        .map(|state| (state.metadata.clone(), state.lifecycle_changed));
+    let assert_unchanged = |runtime: &crate::DesignerRuntime| {
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.session.document(), &document);
+        assert_eq!(
+            runtime
+                .imported
+                .as_ref()
+                .map(|state| (&state.metadata, state.lifecycle_changed)),
+            imported
+                .as_ref()
+                .map(|(metadata, changed)| (metadata, *changed)),
+        );
+        assert!(runtime.undo.is_empty());
+        assert!(runtime.redo.is_empty());
+    };
+    let request = serde_json::to_vec(&json!({
+        "type":"promote_first_row_to_headers", "expected_revision":"resident/0",
+        "collection":native.default_collection,
+    }))
+    .unwrap();
+    let mut native = Some(native);
+    RUNTIME.with(|slot| *slot.borrow_mut() = Some(wasm));
+    REQUEST.with(|slot| slot.borrow_mut().clone_from(&request));
+    tachiko_designer_request_run();
+    let reply = crate::process_wire_request(&mut native, &request);
+    assert_eq!(RESPONSE.with(|slot| slot.borrow().clone()), reply);
+    let reply: Value = serde_json::from_slice(&reply).unwrap();
+    assert_eq!(reply["status"], "error");
+    assert_eq!(reply["error"]["code"], code);
+    assert_eq!(reply["error"]["current_revision"], "resident/0");
+    assert_unchanged(native.as_ref().unwrap());
+    RUNTIME.with(|slot| assert_unchanged(slot.borrow().as_ref().unwrap()));
+    tachiko_designer_project_close();
+}
+
+#[test]
+fn header_promotion_bridge_refuses_failed_and_unavailable_formulas_atomically() {
+    use crate::header_promotion_tests::formula_header;
+    for failed in [true, false] {
+        assert_bridge_refusal(
+            formula_header(failed),
+            formula_header(failed),
+            "header_formula_unavailable",
+        );
+    }
+}
+
+#[test]
+fn header_promotion_bridge_refuses_oversized_fallback_reply_atomically() {
+    use crate::header_promotion_tests::near_limit_imported_header;
+    assert_bridge_refusal(
+        near_limit_imported_header(),
+        near_limit_imported_header(),
+        "query_too_large",
+    );
 }

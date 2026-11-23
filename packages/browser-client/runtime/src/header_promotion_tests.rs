@@ -253,3 +253,194 @@ fn promotion_retains_field_ids_and_bound_direct_and_same_row_formulas() {
         );
     }
 }
+
+// Failed calculations cannot pass open-time validation. Install the retained
+// session directly so promotion must handle both failure and unavailability.
+pub(super) fn formula_header(failed: bool) -> DesignerRuntime {
+    let mut runtime = typed();
+    let spec = &runtime.collection_specs["sheet"];
+    let mut document = runtime.session.document().clone();
+    let division = Expression::Divide {
+        left: Box::new(Expression::Number(crate::Number::new(1.0).unwrap())),
+        right: Box::new(Expression::Number(crate::Number::new(0.0).unwrap())),
+    };
+    document
+        .entities
+        .get_mut(&spec.entities[0])
+        .unwrap()
+        .fields
+        .insert(
+            spec.columns[5].id.clone(),
+            Value::Formula(if failed {
+                division.clone()
+            } else {
+                Expression::SameRowReference(spec.columns[1].id.clone())
+            }),
+        );
+    document
+        .entities
+        .get_mut(&spec.entities[1])
+        .unwrap()
+        .fields
+        .insert(spec.columns[6].id.clone(), Value::Formula(division));
+    runtime.session = tachiko_workspace_engine::resident_session::ResidentWorkspaceSession::new(
+        runtime.document_scope.clone(),
+        document,
+    );
+    runtime
+}
+
+#[test]
+fn promotion_refuses_failed_and_unavailable_formulas_atomically() {
+    for failed in [true, false] {
+        let mut runtime = formula_header(failed);
+        let spec = &runtime.collection_specs["sheet"];
+        let fields = runtime
+            .session
+            .query_fields(&[FieldRef::new(
+                spec.entities[0].clone(),
+                spec.columns[5].id.clone(),
+            )])
+            .unwrap();
+        let outcome = &fields.value()[0].calculated_value;
+        if failed {
+            assert!(matches!(
+                outcome,
+                Some(crate::FormulaCalculationOutcome::Failure(_))
+            ));
+        } else {
+            assert_eq!(
+                outcome,
+                &Some(crate::FormulaCalculationOutcome::Unavailable)
+            );
+        }
+        let before = runtime.session.document().clone();
+        let error = runtime
+            .promote_first_row_to_headers("resident/0", "sheet")
+            .unwrap_err();
+        assert!(matches!(error, DesignerError::HeaderFormulaUnavailable));
+        assert_eq!(error.generic_failure().0, "header_formula_unavailable");
+        assert_eq!(runtime.current_revision(), "resident/0");
+        assert_eq!(runtime.session.document(), &before);
+        assert_eq!(runtime.undo.len(), 0);
+        assert_eq!(runtime.redo.len(), 0);
+    }
+}
+
+fn pad_header_reply(reply: &mut crate::DesignerWireReply, start: usize) {
+    let mut padding = crate::MAX_TEXT_CAPACITY_PROJECTION_BYTES + 1
+        - crate::serialized_projection_bytes(reply).unwrap();
+    let crate::DesignerWireReply::Ok {
+        response: DesignerResponse::Published(publication),
+    } = reply
+    else {
+        unreachable!()
+    };
+    let metadata = publication.import_metadata.as_mut().unwrap();
+    for row in &mut metadata.sheets[0].rows[start..] {
+        let bytes = padding.min(crate::MAX_PROFILE_STRING_BYTES);
+        row.styles[0].number_format = Some("0".repeat(bytes));
+        padding -= bytes;
+    }
+    assert_eq!(padding, 0);
+}
+
+pub(super) fn near_limit_imported_header() -> DesignerRuntime {
+    use crate::interop_adapter::{CellStyle, ImportOptions, import_csv};
+    use crate::interop_document::InteropRowMetadata;
+
+    let source = import_csv(
+        b",Item,Item\nTea,1,2\n",
+        &ImportOptions {
+            header: false,
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap();
+    let selection = crate::ImportSelection {
+        column_types: vec![vec![crate::ImportFieldType::Text; 3]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut runtime, _) =
+        crate::import_workbook_working_size(&source, &selection, OCCURRENCE).unwrap();
+    let document = runtime.session.document().clone();
+    let collection = runtime.default_collection.clone();
+    let response = runtime
+        .handle(DesignerRequest::PromoteFirstRowToHeaders {
+            expected_revision: "resident/0".into(),
+            collection,
+        })
+        .unwrap();
+    let DesignerResponse::Published(mut publication) = response else {
+        panic!("expected published")
+    };
+    let metadata = publication.import_metadata.as_mut().unwrap();
+    metadata.version = 1;
+    metadata.sheets[0].rows = document
+        .entities
+        .values()
+        .map(|entity| InteropRowMetadata {
+            entity_id: entity.id.to_string(),
+            styles: vec![CellStyle::default(); 3],
+        })
+        .collect();
+    let rows = &mut metadata.sheets[0].rows;
+    let start = rows.len();
+    for index in 0..=crate::MAX_TEXT_CAPACITY_PROJECTION_BYTES / crate::MAX_PROFILE_STRING_BYTES {
+        rows.push(InteropRowMetadata {
+            entity_id: format!("historical_{index}"),
+            styles: vec![
+                CellStyle {
+                    number_format: Some(String::new()),
+                    ..CellStyle::default()
+                };
+                3
+            ],
+        });
+    }
+    let mut reply = crate::DesignerWireReply::Ok {
+        response: DesignerResponse::Published(publication),
+    };
+    pad_header_reply(&mut reply, start);
+    assert!(crate::ensure_wire_reply_size(&reply, runtime.profile).is_err());
+    let crate::DesignerWireReply::Ok {
+        response: DesignerResponse::Published(publication),
+    } = &mut reply
+    else {
+        unreachable!()
+    };
+    let metadata = publication.import_metadata.as_mut().unwrap();
+    let mut original = metadata.clone();
+    original.sheets[0].has_header = false;
+    assert_ne!(publication.header_fallbacks.len(), 0);
+    publication.header_fallbacks.clear();
+    crate::ensure_wire_reply_size(&reply, runtime.profile).unwrap();
+    let mut runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    crate::interop_document::validate_import_metadata_for_profile(
+        runtime.session.document(),
+        &original,
+        runtime.profile,
+    )
+    .unwrap();
+    runtime.attach_imported_metadata(&original);
+    runtime
+}
+
+#[test]
+fn promotion_refuses_reply_overflow_from_header_fallbacks_atomically() {
+    let mut runtime = near_limit_imported_header();
+    let before = runtime.session.document().clone();
+    let imported = runtime.imported.clone().unwrap();
+    let collection = runtime.default_collection.clone();
+    assert!(matches!(
+        runtime.promote_first_row_to_headers("resident/0", &collection),
+        Err(DesignerError::ProjectionTooLarge { .. })
+    ));
+    assert_eq!(runtime.current_revision(), "resident/0");
+    assert_eq!(runtime.session.document(), &before);
+    let after = runtime.imported.as_ref().unwrap();
+    assert_eq!(after.metadata, imported.metadata);
+    assert_eq!(after.lifecycle_changed, imported.lifecycle_changed);
+    assert_eq!(runtime.undo.len(), 0);
+    assert_eq!(runtime.redo.len(), 0);
+}
