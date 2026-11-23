@@ -3,13 +3,13 @@
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 
-const [wasmPath, imageWorkbookPath, malformedWorkbookPath] = process.argv.slice(2);
+const [wasmPath, imageWorkbookPath, malformedWorkbookPath, refusedWorkbookPath] = process.argv.slice(2);
 const module = await WebAssembly.compile(await readFile(wasmPath));
 const request = new TextEncoder().encode(JSON.stringify({
   type: "inspect", format: "xlsx", csv_options: {delimiter: ",", header: true},
 }));
 
-async function inspect(bytes) {
+async function inspect(bytes, maximumGrowth = 16 * 1024 * 1024) {
   const {exports: wasm} = await WebAssembly.instantiate(module, {});
   function put(arena, value) {
     const pointer = wasm[`tachiko_designer_${arena}_reserve`](value.length);
@@ -24,7 +24,7 @@ async function inspect(bytes) {
   const after = wasm.memory.buffer.byteLength;
   const reply = JSON.parse(new TextDecoder().decode(new Uint8Array(wasm.memory.buffer,
     wasm.tachiko_designer_response_ptr(), wasm.tachiko_designer_response_len())));
-  assert.ok(after - before < 16 * 1024 * 1024,
+  assert.ok(after - before < maximumGrowth,
     `unnecessary heap reservation: ${before} -> ${after}`);
   return reply;
 }
@@ -38,3 +38,9 @@ assert.equal((await inspect(await readFile(imageWorkbookPath))).status, "ok");
 console.log("small image-heavy workbook skips heap warmup: PASS");
 assert.equal((await inspect(await readFile(malformedWorkbookPath))).status, "error");
 console.log("malformed worksheet skips heap warmup: PASS");
+
+const refused = await inspect(await readFile(refusedWorkbookPath), 32 * 1024 * 1024);
+assert.equal(refused.status, "error");
+assert.equal(refused.error.code, "invalid_project");
+assert.match(refused.error.message, /Unknown sheetData construct/);
+console.log("large worksheet refused by authoritative parse avoids speculative growth (#920): PASS");

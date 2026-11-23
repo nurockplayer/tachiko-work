@@ -129,7 +129,6 @@ thread_local! {
     static RETAINED_SOURCE: RefCell<Option<InspectedSource>> = const { RefCell::new(None) };
     static REQUEST_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
     static PROJECT_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
-    static PROJECT_HEAP_RESERVATION: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Resize the private request arena and return its linear-memory offset.
@@ -203,66 +202,6 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
         project.resize(length as usize, 0);
         project.as_mut_ptr() as usize as u32
     })
-}
-
-// The archive and workbook/sheet inventory have already passed admission.
-// Only worksheet/shared-string XML contributes; images and source compression
-// do not predict the parser's live allocations. Small workbooks need no warmup.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn reserve_xlsx_heap<'a>(parts: impl Iterator<Item = (&'a [u8], &'static [u8])>) {
-    use quick_xml::{NsReader, events::Event, name::ResolveResult};
-
-    let mut xml_bytes = 0;
-    for (bytes, root) in parts {
-        let mut reader = NsReader::from_reader(bytes);
-        let mut depth = 0usize;
-        let mut roots = 0;
-        loop {
-            let Ok((namespace, event)) = reader.read_resolved_event() else {
-                // This is only a warmup: the authoritative parser below returns
-                // the original refusal, without reserving speculative memory.
-                return;
-            };
-            match event {
-                Event::Start(ref node) | Event::Empty(ref node) => {
-                    if depth == 0 {
-                        roots += 1;
-                        if roots != 1
-                            || node.local_name().as_ref() != root
-                            || !matches!(namespace, ResolveResult::Bound(ns)
-                                if ns.as_ref() == b"http://schemas.openxmlformats.org/spreadsheetml/2006/main")
-                        {
-                            return;
-                        }
-                    }
-                    if matches!(event, Event::Start(_)) {
-                        depth += 1;
-                    }
-                }
-                Event::End(_) => depth -= 1,
-                Event::DocType(_) => return,
-                Event::Eof => break,
-                _ => {}
-            }
-        }
-        if roots != 1 || depth != 0 {
-            return;
-        }
-        xml_bytes += bytes.len();
-    }
-    if xml_bytes < 64 * 1024 {
-        return;
-    }
-    let headroom = xml_bytes.saturating_mul(32).min(256 * 1024 * 1024);
-    PROJECT_HEAP_RESERVATION.with(|reserved| {
-        if headroom > reserved.get() {
-            let mut buffer = Vec::<u8>::new();
-            if buffer.try_reserve_exact(headroom).is_ok() {
-                drop(std::hint::black_box(buffer));
-                reserved.set(headroom);
-            }
-        }
-    });
 }
 
 /// Fully admit and install one project candidate from the project arena.

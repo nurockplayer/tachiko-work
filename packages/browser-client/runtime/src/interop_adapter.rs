@@ -3803,17 +3803,6 @@ pub(crate) fn import_xlsx_profile(
         }
         sheet_inventory.push((sheet_index, name, path));
     }
-    #[cfg(target_arch = "wasm32")]
-    crate::wasm::reserve_xlsx_heap(
-        sheet_inventory
-            .iter()
-            .map(|(_, _, path)| (parts[path].as_slice(), b"worksheet".as_slice()))
-            .chain(
-                parts
-                    .get("xl/sharedStrings.xml")
-                    .map(|bytes| (bytes.as_slice(), b"sst".as_slice())),
-            ),
-    );
     let styles = parse_styles(&parts, &mut ledger, working)?;
     let shared = if parts.contains_key("xl/sharedStrings.xml") {
         let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
