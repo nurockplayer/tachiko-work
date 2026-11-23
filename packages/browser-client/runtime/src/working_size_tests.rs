@@ -1628,6 +1628,7 @@ fn publication_with_targets(total: usize) -> PublicationProjection {
         many: false,
         changed: Vec::new(),
         import_metadata: None,
+        header_fallbacks: Vec::new(),
     }
 }
 

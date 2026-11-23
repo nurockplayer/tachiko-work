@@ -1366,6 +1366,8 @@ mod native_tables_parity_tests {
 mod auto_field_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod blank_workbook_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod header_promotion_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod import_profile_tests;

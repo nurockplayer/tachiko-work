@@ -164,6 +164,11 @@ including text that looks like a heading. This is semantic state under
 with independent v2 delta/merge meaning and frozen-writer refusal. Generated
 `Column A` labels are stored display names under ADR-0043.
 
+First-row header promotion (#924) uses these existing members: the consumed
+entity is removed, admitted headings become field `display_name` values, and
+`headerless` is omitted again. Field IDs, keys, types and surviving entity
+values remain unchanged. No persisted member or format version is added.
+
 ### Optional Number display format (R3)
 
 FieldDefinition admits optional non-null `number_format`, after `constraint`.

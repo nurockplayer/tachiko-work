@@ -42,6 +42,9 @@ mod field_order_tests;
 mod formula_blank_tests;
 #[cfg(test)]
 mod formula_new_row_tests;
+mod header_promotion;
+#[cfg(test)]
+mod header_promotion_tests;
 #[cfg(test)]
 mod number_format_tests;
 #[cfg(test)]
@@ -294,6 +297,10 @@ pub enum DesignerRequest {
     NewBlankWorkbook {
         occurrence_id: String,
         profile: DesignerProfile,
+    },
+    PromoteFirstRowToHeaders {
+        expected_revision: String,
+        collection: String,
     },
     WriteCellAt {
         expected_revision: String,
@@ -1814,6 +1821,23 @@ pub struct PublicationProjection {
     /// Next client-held import mapping after a worksheet lifecycle edit or history step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_metadata: Option<InteropMetadata>,
+    /// Generated labels used for blank or duplicate header cells, in column order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_fallbacks: Vec<HeaderFallbackProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HeaderFallbackProjection {
+    pub field: String,
+    pub name: String,
+    pub reason: HeaderFallbackReason,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeaderFallbackReason {
+    Blank,
+    Duplicate,
 }
 
 /// The reply's "re-query instead" marker: no target list, no changed cells.
@@ -1872,6 +1896,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         }
     }
 }
@@ -1994,6 +2019,10 @@ pub enum DesignerError {
     InvalidOccurrenceIdentity,
     #[error("collection '{collection}' is not available in this Designer slice")]
     MissingCollection { collection: String },
+    #[error("the table already has headers")]
+    TableAlreadyHasHeaders,
+    #[error("the table has no data row to promote")]
+    NoHeaderRow,
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
     #[error(
@@ -2149,6 +2178,8 @@ impl DesignerError {
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::A1Translation { code, .. } => (code.as_str(), Vec::new()),
+            Self::TableAlreadyHasHeaders => ("table_already_has_headers", Vec::new()),
+            Self::NoHeaderRow => ("no_header_row", Vec::new()),
             Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
                 ("capacity_exceeded", Vec::new())
             }
@@ -3687,6 +3718,7 @@ impl DesignerRuntime {
                 | SemanticCommand::AppendSchemaField { .. }
                 | SemanticCommand::RemoveSchemaField { .. }
                 | SemanticCommand::RenameSchemaField { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -3983,6 +4015,12 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(response)
             }
+            DesignerRequest::PromoteFirstRowToHeaders {
+                expected_revision,
+                collection,
+            } => self
+                .promote_first_row_to_headers(&expected_revision, &collection)
+                .map(DesignerResponse::Published),
             DesignerRequest::WriteCellAt {
                 expected_revision,
                 collection,
@@ -6388,6 +6426,7 @@ impl DesignerRuntime {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         })
     }
 
@@ -8117,6 +8156,7 @@ impl DesignerRuntime {
             || commands.iter().any(|command| match command {
                 SemanticCommand::AppendEntity { entity } => entity.rank.is_some(),
                 SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -12398,6 +12438,7 @@ fn ensure_static_profile(
         many: false,
         changed: Vec::new(),
         import_metadata: None,
+        header_fallbacks: Vec::new(),
     };
     ensure_projection_size_with_limit(
         &publication,

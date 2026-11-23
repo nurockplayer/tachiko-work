@@ -375,6 +375,11 @@ pub enum SemanticCommand {
         field: FieldId,
         key: FieldKey,
     },
+    /// Change the existing canonical header state without changing identities.
+    SetSchemaHeaderless {
+        schema: SchemaId,
+        headerless: bool,
+    },
     /// Set or clear only the durable name of a continuing stable schema.
     SetSchemaDisplayName {
         schema: SchemaId,
@@ -509,6 +514,7 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
         SemanticCommand::RenameSchemaField { schema, field, key } => {
             schema.as_str().len() + field.as_str().len() + key.as_str().len()
         }
+        SemanticCommand::SetSchemaHeaderless { schema, .. } => schema.as_str().len(),
         SemanticCommand::SetSchemaDisplayName {
             schema,
             display_name,
@@ -3619,6 +3625,7 @@ impl PatchLifecycle {
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetSchemaHeaderless { .. }
                     | SemanticCommand::SetSchemaDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -4458,6 +4465,19 @@ impl PatchLifecycle {
                 }
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
+                }
+                SemanticCommand::SetSchemaHeaderless { schema, headerless } => {
+                    let definition = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    definition.headerless = *headerless;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_scope(schema),
+                    });
                 }
                 SemanticCommand::SetSchemaDisplayName {
                     schema,
@@ -5616,6 +5636,7 @@ impl PatchBodyIndex {
                 }
                 SemanticCommand::SetEntityRank { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
@@ -5728,6 +5749,7 @@ impl<'a> DisclosureDerivation<'a> {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaHeaderless { .. }
             | SemanticCommand::SetSchemaDisplayName { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
@@ -6870,7 +6892,8 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
                     },
                 );
             }
-            SemanticCommand::SetEntityRank { .. }
+            SemanticCommand::SetSchemaHeaderless { .. }
+            | SemanticCommand::SetEntityRank { .. }
             | SemanticCommand::RemoveCollection { .. }
             | SemanticCommand::AppendEntity { .. }
             | SemanticCommand::RemoveEntity { .. }

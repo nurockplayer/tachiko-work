@@ -340,6 +340,29 @@ as JSON) are allowed; requests are limited to 64 KiB. Refusals use
 
 ## Optional native columns
 
+`promoteFirstRowToHeaders(expectedRevision, collection)` sends
+`{type:"promote_first_row_to_headers", expected_revision, collection}`. It
+promotes the first row in stored order of a headerless collection, independently
+of the host's current sort/filter, and returns `published`. The row leaves the
+data, `headerless` becomes false and `data_start_row` becomes 2. Re-query the
+window and columns after publication. Field IDs, keys, declared types (including
+Auto), surviving values and bound column references remain unchanged; this
+command does not infer or retype columns.
+
+Headings use the cell's displayed scalar text and ADR-0043's frozen whitespace
+trim and spelling rules. Empty Text and missing values are blank headings.
+The first occurrence of each exact trimmed name keeps its spelling. Blank or
+later duplicate headings receive their positional `Column A`, `Column B`, …
+label, with ` (2)`, ` (3)`, … appended when needed. All real heading names are
+reserved before allocation. The reply's optional
+`header_fallbacks: {field, name, reason:"blank"|"duplicate"}[]` reports every
+generated heading in column order. Other invalid name spellings use the
+existing naming refusal. A headed table refuses with `table_already_has_headers`;
+an empty headerless table refuses with `no_header_row`. Refusals publish nothing.
+One Undo restores the complete original headerless schema and first row;
+Redo reapplies promotion. Both v3 and portable `.ro` preserve the promoted state
+using the existing persisted representation (#924, #668 PR4).
+
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
 `newTable(name, columns)` accepts `required?: boolean` per column. Omission
 defaults to `true`; any scalar column (Text, Number, Date or Yes/No) may be

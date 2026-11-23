@@ -4,6 +4,12 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Promote the first stored data row of a headerless table with
+  `promote_first_row_to_headers`. Headings retain field identities and types;
+  blank and duplicate labels receive reported deterministic generated names.
+  Promotion is one Undo/Redo step and survives v3 and portable `.ro` reopen
+  (#924, #668 PR4).
+
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;
   release the single retained source on import, the next inspect or close (#678 5d).
