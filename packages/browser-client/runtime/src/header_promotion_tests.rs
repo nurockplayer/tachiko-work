@@ -89,7 +89,7 @@ pub(super) fn typed() -> DesignerRuntime {
 #[test]
 fn promotion_consumes_first_stored_row_and_reports_unique_generated_fallbacks() {
     let mut runtime = blank();
-    for (column, text) in ["", "Column A", " Item ", "Item", "", "item"]
+    for (column, text) in ["", "Column A", " Item ", "Item", "", "item", "Column A (2)"]
         .iter()
         .enumerate()
     {
@@ -112,12 +112,13 @@ fn promotion_consumes_first_stored_row_and_reports_unique_generated_fallbacks() 
             .map(|c| c.display_name.as_str())
             .collect::<Vec<_>>(),
         [
-            "Column A (2)",
+            "Column A (3)",
             "Column A",
             "Item",
             "Column D",
             "Column E",
-            "item"
+            "item",
+            "Column A (2)"
         ]
     );
     assert_eq!(publication.header_fallbacks.len(), 3);

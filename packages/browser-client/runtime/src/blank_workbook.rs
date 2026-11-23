@@ -33,7 +33,7 @@ pub(super) fn candidate(
     Ok((runtime, DesignerResponse::OpenedWindow(Box::new(opened))))
 }
 
-pub(super) fn column_label(mut index: usize) -> String {
+pub(super) fn column_label(mut index: usize, occupied: &mut BTreeSet<String>) -> String {
     let mut letters = Vec::new();
     while index > 0 {
         index -= 1;
@@ -42,7 +42,14 @@ pub(super) fn column_label(mut index: usize) -> String {
         ));
         index /= 26;
     }
-    format!("Column {}", letters.into_iter().rev().collect::<String>())
+    let base = format!("Column {}", letters.into_iter().rev().collect::<String>());
+    let mut generated = base.clone();
+    let mut suffix = 2;
+    while !occupied.insert(generated.clone()) {
+        generated = format!("{base} ({suffix})");
+        suffix += 1;
+    }
+    generated
 }
 
 impl DesignerRuntime {
@@ -157,13 +164,24 @@ fn added_columns(
         .values()
         .map(|field| field.key.to_string())
         .collect();
+    let mut names = schema
+        .fields
+        .values()
+        .map(|field| {
+            field
+                .display_name
+                .as_deref()
+                .unwrap_or(field.key.as_str())
+                .to_owned()
+        })
+        .collect();
     let mut added = Vec::new();
     for position in existing + 1..=column {
         serial = serial
             .checked_add(1)
             .ok_or_else(|| table_error("column identity allocation is exhausted"))?;
         let id = appended_field_id(&schema, serial, namespace);
-        let name = column_label(position);
+        let name = column_label(position, &mut names);
         let key = crate::allocate_key(&name, "column", &occupied)?;
         occupied.insert(key.clone());
         let field = FieldDefinition {
