@@ -316,7 +316,7 @@ function tokensFor(source, path) {
 
 // Issue #678 Guarded exception: only this exact wasm32-only allocator unit.
 // Any source change requires updating this reviewed fingerprint.
-const APPROVED_ALLOCATOR_SHA256 = "54438b831f86a71658303a50db69cfd30ac6a8fe29881d5b2d2ff8777ad8002a";
+const APPROVED_ALLOCATOR_SHA256 = "7e87f4eaf57b51acd108401f9947bd54af9a3dd5a032265100b0307445c43bdd";
 
 function approvedAllocator(source, path, packageRoot) {
   return relative(resolve(packageRoot), path).split(sep).join("/") === "src/wasm_allocator.rs" &&

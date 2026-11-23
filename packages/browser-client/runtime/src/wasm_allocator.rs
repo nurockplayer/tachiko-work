@@ -20,7 +20,8 @@ fn replenish(previous_pages: usize, pointer: *mut u8) {
     if size == 0 {
         return;
     }
-    let layout = Layout::from_size_align(size, 16).unwrap();
+    // This unused byte reserve needs no over-alignment (or memalign chunk splitting).
+    let layout = Layout::from_size_align(size, 1).unwrap();
     // SAFETY: layout is nonzero and valid. This temporary allocation is never
     // exposed or accessed, and is freed exactly once with its original layout.
     // Null means optional headroom failed; the caller's allocation is untouched.
