@@ -107,17 +107,9 @@ impl DesignerRuntime {
             .map(|c| &schema.fields[&c.id])
             .chain(added.iter())
             .collect::<Vec<_>>();
-        let (mut forward, mut inverse) =
-            column_commands(&schema_id, &added, &fields[0].id, &BTreeMap::new());
-        if !added.is_empty() {
-            inverse.insert(
-                0,
-                SemanticCommand::SetSchemaFieldOrder {
-                    schema: schema_id.clone(),
-                    order: schema.field_order.clone(),
-                },
-            );
-        }
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        let mut added_values = BTreeMap::new();
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let mut allocated = BTreeSet::new();
         let mut new_rows = (spec.entities.len()..last_row)
@@ -148,11 +140,21 @@ impl DesignerRuntime {
                 let target = FieldRef::new(entity_id.clone(), definition.id.clone());
                 auto_input::collect_display(&definition.field_type, &target, &input, &mut displays);
                 if existing.is_some() {
-                    let before = document.entities[&entity_id].fields.get(&definition.id);
-                    if before != value.as_ref() {
-                        let (command, undo) = cell_edit_commands(&target, before, value.as_ref());
-                        forward.push(command);
-                        inverse.extend(undo);
+                    if schema.fields.contains_key(&definition.id) {
+                        let before = document.entities[&entity_id].fields.get(&definition.id);
+                        if before != value.as_ref() {
+                            let (command, undo) =
+                                cell_edit_commands(&target, before, value.as_ref());
+                            forward.push(command);
+                            inverse.extend(undo);
+                        }
+                    } else if let Some(value) = value {
+                        // New-field initializers belong to schema mutation scope,
+                        // not SetFieldValue against a field absent from the base.
+                        added_values
+                            .entry(definition.id.clone())
+                            .or_insert_with(BTreeMap::new)
+                            .insert(entity_id.clone(), value);
                     }
                 } else {
                     let entity = &mut new_rows[position - spec.entities.len()];
@@ -164,6 +166,25 @@ impl DesignerRuntime {
                 }
             }
         }
+        let mut column_forward = Vec::new();
+        let mut column_inverse = Vec::new();
+        if !added.is_empty() {
+            column_inverse.push(SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id.clone(),
+                order: schema.field_order.clone(),
+            });
+        }
+        for field in &added {
+            let values = added_values.remove(&field.id).unwrap_or_default();
+            let (append, remove) =
+                column_commands(&schema_id, std::slice::from_ref(field), &field.id, &values);
+            column_forward.extend(append);
+            column_inverse.extend(remove);
+        }
+        column_forward.append(&mut forward);
+        column_inverse.append(&mut inverse);
+        forward = column_forward;
+        inverse = column_inverse;
         if !new_rows.is_empty() {
             let (ranks, restore) = tachiko_workspace_engine::row_order::plan_insertion(
                 document,
