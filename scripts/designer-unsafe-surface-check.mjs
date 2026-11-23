@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -313,6 +314,15 @@ function tokensFor(source, path) {
   return tokens;
 }
 
+// Issue #678 Guarded exception: only this exact wasm32-only allocator unit.
+// Any source change requires updating this reviewed fingerprint.
+const APPROVED_ALLOCATOR_SHA256 = "54438b831f86a71658303a50db69cfd30ac6a8fe29881d5b2d2ff8777ad8002a";
+
+function approvedAllocator(source, path, packageRoot) {
+  return relative(resolve(packageRoot), path).split(sep).join("/") === "src/wasm_allocator.rs" &&
+    createHash("sha256").update(source).digest("hex") === APPROVED_ALLOCATOR_SHA256;
+}
+
 function approvedNoMangle(tokens, index, path, packageRoot) {
   return relative(resolve(packageRoot), path).split(sep).join("/") === "src/wasm.rs" &&
     tokens[index - 2]?.value === "#" &&
@@ -437,6 +447,7 @@ function scan(root) {
     } catch (error) {
       fail(`cannot read ${path}: ${error.message}`);
     }
+    const allocatorUnit = approvedAllocator(source, path, resolvedRoot);
     const tokens = tokensFor(source, path);
     const tokenModuleDepths = moduleDepths(tokens);
     const includeNames = new Set(["include", ...(inheritedScope.includeNames ?? [])]);
@@ -615,7 +626,7 @@ function scan(root) {
         if (tokens[index + 3]?.value === "::" || (tokens[index + 3]?.value === ":" && tokens[index + 4]?.value === ":")) {
           fail(`${path}:${token.line}:${token.column}: qualified attribute ${attributeName} may expand outside the auditable source surface`);
         }
-        if (!KNOWN_SAFE_ATTRIBUTES.has(attributeName)) {
+        if (!KNOWN_SAFE_ATTRIBUTES.has(attributeName) && !(allocatorUnit && attributeName === "global_allocator")) {
           fail(`${path}:${token.line}:${token.column}: attribute ${attributeName} may expand outside the auditable source surface`);
         }
         if (shadowedNames.has(attributeName)) {
@@ -689,7 +700,7 @@ function scan(root) {
           }
         }
       }
-      if (token.value === "unsafe" && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
+      if (token.value === "unsafe" && !allocatorUnit && !approvedNoMangle(tokens, index, path, resolvedRoot)) {
         fail(`${path}:${token.line}:${token.column}: unsafe is outside the approved #[unsafe(no_mangle)] boundary in src/wasm.rs`);
       }
       if (unsafeMacroNames.has(normalizedIdentifier(token.value)) && tokens[index + 1]?.value === "!") {

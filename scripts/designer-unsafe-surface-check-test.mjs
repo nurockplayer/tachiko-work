@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -41,6 +41,17 @@ function assertAccepted(name, files) {
   const result = runFixture(files);
   assert.equal(result.status, 0, `${name} failed: ${result.stderr}`);
 }
+
+const allocator = readFileSync(resolve(import.meta.dirname,
+  "../packages/browser-client/runtime/src/wasm_allocator.rs"), "utf8");
+assertAccepted("exact Guarded allocator unit", { "wasm_allocator.rs": allocator });
+assertRejected("allocator exception cannot move", { "other.rs": allocator });
+assertRejected("allocator exception cannot expand", {
+  "wasm_allocator.rs": allocator + "\nunsafe fn extra() {}\n",
+});
+assertRejected("allocator exception cannot enable native targets", {
+  "wasm_allocator.rs": allocator.replace('#![cfg(target_arch = "wasm32")]', ""),
+});
 
 for (const [name, source] of [
   ["unsafe block", "fn f() { unsafe { call(); } }"],

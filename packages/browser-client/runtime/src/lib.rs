@@ -3,6 +3,9 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+#[cfg(target_arch = "wasm32")]
+mod wasm_allocator;
+
 mod move_cells;
 #[cfg(test)]
 mod positional_insert_tests;
