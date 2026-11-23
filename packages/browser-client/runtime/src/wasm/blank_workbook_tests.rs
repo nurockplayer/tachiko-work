@@ -174,7 +174,7 @@ fn distant_write_bridge_preserves_sparse_positions_and_labels() {
         .map(|column| column["id"].clone())
         .collect::<Vec<_>>();
     for row in &window["rows"].as_array().unwrap()[3..39] {
-        assert!(row["fields"].as_array().unwrap().is_empty());
+        assert_eq!(row["fields"].as_array().unwrap().as_slice(), []);
         assert_eq!(row["blank_fields"], json!(column_ids));
     }
     tachiko_designer_project_close();
