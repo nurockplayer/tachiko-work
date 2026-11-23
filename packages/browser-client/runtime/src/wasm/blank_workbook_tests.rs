@@ -132,10 +132,10 @@ fn write_at(
         "input":{"kind":"auto","input":"923"}}),
     );
     assert_eq!(reply["status"], "ok", "{reply}");
-    *revision = reply["response"]["payload"]["resulting_revision"]
+    reply["response"]["payload"]["resulting_revision"]
         .as_str()
         .unwrap()
-        .to_owned();
+        .clone_into(revision);
 }
 
 fn table(host: &mut DesignerHost, collection: &Value, revision: &str) -> Value {
@@ -159,18 +159,23 @@ fn distant_write_bridge_preserves_sparse_positions_and_labels() {
         assert_eq!(column["display_name"], format!("Column {letter}"));
         assert_eq!(column["field_type"], "auto");
     }
-    assert_eq!(
-        window["rows"][39]["fields"][5]["stored"],
-        json!({"kind":"number","value":923.0})
-    );
+    assert_eq!(window["rows"][39]["position"], 40);
+    let written = window["rows"][39]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["target"]["field"] == window["columns"][5]["id"])
+        .unwrap();
+    assert_eq!(written["stored"], json!({"kind":"number","value":923.0}));
+    let column_ids = window["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["id"].clone())
+        .collect::<Vec<_>>();
     for row in &window["rows"].as_array().unwrap()[3..39] {
-        assert!(
-            row["fields"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|field| field["stored"].is_null())
-        );
+        assert!(row["fields"].as_array().unwrap().is_empty());
+        assert_eq!(row["blank_fields"], json!(column_ids));
     }
     tachiko_designer_project_close();
 }
@@ -272,10 +277,15 @@ fn distant_write_bridge_capacity_refusals_are_typed_and_atomic() {
         reply["response"]["payload"]["columns"][31]["display_name"],
         "Column AF"
     );
-    assert_eq!(
-        reply["response"]["payload"]["rows"][0]["fields"][31]["stored"],
-        json!({"kind":"number","value":923.0})
-    );
+    let window = &reply["response"]["payload"];
+    assert_eq!(window["rows"][0]["position"], 10_000);
+    let written = window["rows"][0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["target"]["field"] == window["columns"][31]["id"])
+        .unwrap();
+    assert_eq!(written["stored"], json!({"kind":"number","value":923.0}));
     tachiko_designer_project_close();
 }
 

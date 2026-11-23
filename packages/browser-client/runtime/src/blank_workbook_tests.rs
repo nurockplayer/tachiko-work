@@ -410,20 +410,31 @@ fn distant_write_creates_sparse_rows_and_generated_columns() {
         assert_eq!(column.display_name, format!("Column {letter}"));
         assert_eq!(column.field_type, "auto");
     }
+    assert_eq!(table.rows[39].position, Some(40));
     assert_eq!(
-        table.rows[39].fields[5].stored,
+        table.rows[39]
+            .fields
+            .iter()
+            .find(|field| field.target.field == table.columns[5].id)
+            .unwrap()
+            .stored,
         Some(StoredValueProjection::Number { value: 923.0 })
     );
+    let column_ids = table
+        .columns
+        .iter()
+        .map(|column| column.id.clone())
+        .collect::<Vec<_>>();
     assert!(
         table.rows[3..39]
             .iter()
-            .all(|row| row.fields.iter().all(|field| field.stored.is_none()))
+            .all(|row| row.fields.is_empty() && row.blank_fields == column_ids)
     );
-    assert!(
-        table.rows[..3]
+    assert!(table.rows[..3].iter().all(|row| {
+        column_ids[2..]
             .iter()
-            .all(|row| row.fields[2..].iter().all(|field| field.stored.is_none()))
-    );
+            .all(|id| row.blank_fields.contains(id))
+    }));
     assert_eq!(
         runtime
             .session
@@ -538,8 +549,14 @@ fn distant_write_capacity_refusals_are_typed_and_atomic() {
         .unwrap();
     assert_eq!(edge.total_rows, 10_000);
     assert_eq!(edge.columns[31].display_name, "Column AF");
+    assert_eq!(edge.rows[0].position, Some(10_000));
     assert_eq!(
-        edge.rows[0].fields[31].stored,
+        edge.rows[0]
+            .fields
+            .iter()
+            .find(|field| field.target.field == edge.columns[31].id)
+            .unwrap()
+            .stored,
         Some(StoredValueProjection::Number { value: 923.0 })
     );
 }
