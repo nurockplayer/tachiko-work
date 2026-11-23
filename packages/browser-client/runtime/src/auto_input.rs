@@ -234,6 +234,7 @@ impl DesignerRuntime {
                 many: false,
                 changed: Vec::new(),
                 import_metadata: None,
+                header_fallbacks: Vec::new(),
             }));
         }
         let mut publication = self.publish_commands_with_imported(

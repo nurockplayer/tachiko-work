@@ -399,7 +399,10 @@ export type FieldExplanationProjection = {
 
 export type SchemaFieldTarget = { schema: string; field: string };
 
+export type HeaderFallbackProjection = {field: string; name: string; reason: "blank" | "duplicate"};
+
 export type PublicationProjection = {
+  header_fallbacks?: HeaderFallbackProjection[];
   base_revision: string;
   resulting_revision: string;
   /** Stable schema presentation targets, including tables with no rows. */
@@ -609,6 +612,7 @@ export type CellStyleChange =
   | { kind: "border"; target: "top" | "right" | "bottom" | "left" | "outline" | "all"; value: boolean };
 
 export type TrackerCommand =
+  | { type: "promote_first_row_to_headers"; expected_revision: string; collection: string }
   | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }

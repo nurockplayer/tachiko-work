@@ -33,7 +33,7 @@ pub(super) fn candidate(
     Ok((runtime, DesignerResponse::OpenedWindow(Box::new(opened))))
 }
 
-fn column_label(mut index: usize) -> String {
+pub(super) fn column_label(mut index: usize) -> String {
     let mut letters = Vec::new();
     while index > 0 {
         index -= 1;

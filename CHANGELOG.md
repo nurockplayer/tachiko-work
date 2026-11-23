@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Promote the first stored data row of a headerless table with
+  `promote_first_row_to_headers`. Headings retain field identities and types;
+  blank and duplicate labels receive reported deterministic generated names.
+  Promotion is one Undo/Redo step and survives v3 and portable `.ro` reopen
+  (#924, #668 PR4).
 - `write_cell_at` accepts distant stored positions without a request change.
   Intervening rows and generated Auto columns have empty optional cells;
   the write and all created structure Undo/Redo together and survive v3/portable

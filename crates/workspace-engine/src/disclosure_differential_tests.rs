@@ -799,6 +799,7 @@ mod reference {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaHeaderless { .. }
             | SemanticCommand::SetSchemaDisplayName { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }

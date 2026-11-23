@@ -66,6 +66,7 @@ export interface DesignerClient {
   newTrackerWorkingSize?(): Promise<OpenedWindowProjection>;
   newBudget?(): Promise<OpenedProjection>;
   newBudgetWorkingSize?(): Promise<OpenedWindowProjection>;
+  promoteFirstRowToHeaders?(expectedRevision: string, collection: string): Promise<PublicationProjection>;
   newBlankWorkbook?(): Promise<OpenedWindowProjection>;
   writeCellAt?(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
