@@ -4274,6 +4274,16 @@ pub(crate) fn import_xlsx_profile(
         validate_import_geometry_profile(&workbook, working)?;
         finish_source_admission(workbook, working)
     };
+    #[cfg(target_arch = "wasm32")]
+    if !workbook.ledger.iter().any(|finding| finding.blocking) {
+        let xml_bytes = worksheet_paths
+            .keys()
+            .map(|path| parts[path].len())
+            .sum::<usize>()
+            + parts.get("xl/sharedStrings.xml").map_or(0, Vec::len);
+        drop(parts);
+        crate::wasm::reserve_xlsx_heap(xml_bytes);
+    }
     Ok(workbook)
 }
 

@@ -31,8 +31,8 @@ tachiko-semantic-core = { path = "../../../crates/semantic-core" }
 [workspace]
 
 [lints.rust]
-# This exception covers private Rust 2024 `#[unsafe(no_mangle)]` ABI exports
-# and the Issue #678 Guarded wasm_allocator.rs unit. It is not permission
+# This crate-level exception exists only because the browser bridge uses Rust
+# 2024 `#[unsafe(no_mangle)]` on its private C ABI exports. It is not permission
 # to add unsafe blocks, unsafe functions, unsafe impls, or unrelated unsafe
 # attributes; expanding that surface requires explicit Issue scope and Guarded
 # review under the repository Rust ownership/unsafe policy in AGENTS.md.
