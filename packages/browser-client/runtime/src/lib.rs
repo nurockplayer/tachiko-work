@@ -24,6 +24,9 @@ mod authored_input_tests;
 #[cfg(test)]
 mod auto_field_tests;
 mod auto_input;
+mod blank_workbook;
+#[cfg(test)]
+mod blank_workbook_tests;
 #[cfg(test)]
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -39,6 +42,9 @@ mod field_order_tests;
 mod formula_blank_tests;
 #[cfg(test)]
 mod formula_new_row_tests;
+mod header_promotion;
+#[cfg(test)]
+mod header_promotion_tests;
 #[cfg(test)]
 mod number_format_tests;
 #[cfg(test)]
@@ -68,7 +74,7 @@ use tachiko_storage::{
     decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 use tachiko_workspace_engine::validate;
 use tachiko_workspace_engine::{
     CalculationFailure, CellAlignment, CellStyle, ColumnRef, ConditionalAggregate, Date,
@@ -287,6 +293,21 @@ pub enum DesignerRequest {
         occurrence_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<DesignerProfile>,
+    },
+    NewBlankWorkbook {
+        occurrence_id: String,
+        profile: DesignerProfile,
+    },
+    PromoteFirstRowToHeaders {
+        expected_revision: String,
+        collection: String,
+    },
+    WriteCellAt {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        column: usize,
+        input: ScalarEditInput,
     },
     NewTable {
         occurrence_id: String,
@@ -653,6 +674,8 @@ pub struct BootstrapProjection {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CollectionSummary {
+    pub headerless: bool,
+    pub data_start_row: usize,
     pub id: String,
     pub key: String,
     pub display_name: String,
@@ -1136,6 +1159,7 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_field_orders()
         || document.has_row_ranks()
         || document.has_auto_fields()
+        || document.has_headerless_schemas()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -1797,6 +1821,23 @@ pub struct PublicationProjection {
     /// Next client-held import mapping after a worksheet lifecycle edit or history step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_metadata: Option<InteropMetadata>,
+    /// Generated labels used for blank or duplicate header cells, in column order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_fallbacks: Vec<HeaderFallbackProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HeaderFallbackProjection {
+    pub field: String,
+    pub name: String,
+    pub reason: HeaderFallbackReason,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeaderFallbackReason {
+    Blank,
+    Duplicate,
 }
 
 /// The reply's "re-query instead" marker: no target list, no changed cells.
@@ -1855,6 +1896,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         }
     }
 }
@@ -1977,6 +2019,10 @@ pub enum DesignerError {
     InvalidOccurrenceIdentity,
     #[error("collection '{collection}' is not available in this Designer slice")]
     MissingCollection { collection: String },
+    #[error("the table already has headers")]
+    TableAlreadyHasHeaders,
+    #[error("the table has no data row to promote")]
+    NoHeaderRow,
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
     #[error(
@@ -2132,6 +2178,8 @@ impl DesignerError {
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::A1Translation { code, .. } => (code.as_str(), Vec::new()),
+            Self::TableAlreadyHasHeaders => ("table_already_has_headers", Vec::new()),
+            Self::NoHeaderRow => ("no_header_row", Vec::new()),
             Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
                 ("capacity_exceeded", Vec::new())
             }
@@ -3670,6 +3718,7 @@ impl DesignerRuntime {
                 | SemanticCommand::AppendSchemaField { .. }
                 | SemanticCommand::RemoveSchemaField { .. }
                 | SemanticCommand::RenameSchemaField { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -3958,6 +4007,29 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(response)
             }
+            DesignerRequest::NewBlankWorkbook {
+                occurrence_id,
+                profile: DesignerProfile::WorkingSize,
+            } => {
+                let (candidate, response) = blank_workbook::candidate(&occurrence_id)?;
+                *self = candidate;
+                Ok(response)
+            }
+            DesignerRequest::PromoteFirstRowToHeaders {
+                expected_revision,
+                collection,
+            } => self
+                .promote_first_row_to_headers(&expected_revision, &collection)
+                .map(DesignerResponse::Published),
+            DesignerRequest::WriteCellAt {
+                expected_revision,
+                collection,
+                row,
+                column,
+                input,
+            } => self
+                .write_cell_at(&expected_revision, &collection, row, column, &input)
+                .map(DesignerResponse::Published),
             DesignerRequest::NewTable {
                 occurrence_id,
                 name,
@@ -6354,6 +6426,7 @@ impl DesignerRuntime {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         })
     }
 
@@ -7287,6 +7360,7 @@ impl DesignerRuntime {
             .zip(ordered_ids)
             .collect();
         let mut schema = Schema {
+            headerless: source_schema.headerless,
             // The copy keeps the source's projected column order.
             field_order: Some(
                 source_spec
@@ -8082,6 +8156,7 @@ impl DesignerRuntime {
             || commands.iter().any(|command| match command {
                 SemanticCommand::AppendEntity { entity } => entity.rank.is_some(),
                 SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -8324,6 +8399,7 @@ impl DesignerRuntime {
     fn tracker_document(occurrence_id: &str) -> Document {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
@@ -8439,6 +8515,7 @@ impl DesignerRuntime {
             );
         }
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
@@ -10546,6 +10623,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id,
         key: SchemaKey::from(key),
@@ -11007,7 +11085,8 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
             if let Some(occurrence_id) = match &request {
                 DesignerRequest::NewTracker { occurrence_id, .. }
                 | DesignerRequest::NewBudget { occurrence_id, .. }
-                | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
+                | DesignerRequest::NewTable { occurrence_id, .. }
+                | DesignerRequest::NewBlankWorkbook { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
@@ -11016,6 +11095,9 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     }
                     DesignerRequest::NewBudget { profile, .. } => {
                         starter_candidate(occurrence_id, *profile, Starter::Budget)
+                    }
+                    DesignerRequest::NewBlankWorkbook { .. } => {
+                        blank_workbook::candidate(occurrence_id)
                     }
                     DesignerRequest::NewTable {
                         name,
@@ -11542,6 +11624,8 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                 id: schema.id.to_string(),
                 key: schema.key.to_string(),
                 display_name: schema.effective_name().to_owned(),
+                headerless: schema.headerless,
+                data_start_row: if schema.headerless { 1 } else { 2 },
                 entity_count: entities.len(),
             };
             (
@@ -12408,6 +12492,7 @@ fn ensure_static_profile(
         many: false,
         changed: Vec::new(),
         import_metadata: None,
+        header_fallbacks: Vec::new(),
     };
     ensure_projection_size_with_limit(
         &publication,
@@ -13139,7 +13224,7 @@ fn has_scalar_row_authoring_shape(
     schema: &Schema,
     entities: &[EntityId],
 ) -> bool {
-    (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
+    (usize::from(!schema.headerless)..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
@@ -16173,6 +16258,8 @@ mod tests {
             direct_tracker_rows: false,
             native_table_rows: false,
             summary: super::CollectionSummary {
+                headerless: false,
+                data_start_row: 2,
                 id: "s".to_owned(),
                 key: "s".to_owned(),
                 display_name: "S".to_owned(),

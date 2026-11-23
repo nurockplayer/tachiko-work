@@ -36,6 +36,7 @@ fn fixture(sole: bool) -> Document {
     document.schemas.insert(
         "items".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "items".into(),
             key: "items".into(),

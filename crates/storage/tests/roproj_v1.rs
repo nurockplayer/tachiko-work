@@ -101,6 +101,7 @@ fn frozen_roproj_v1_rejects_date_instead_of_widening_the_contract() {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-date"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("schema-date"),
                 key: SchemaKey::from("date"),
@@ -884,6 +885,7 @@ fn character_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-character"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("schema-character"),
                 key: SchemaKey::from("character"),
@@ -1039,6 +1041,7 @@ fn full_shape_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema-record"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("schema-record"),
                 key: SchemaKey::from("record"),

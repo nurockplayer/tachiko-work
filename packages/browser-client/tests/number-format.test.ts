@@ -8,7 +8,7 @@ const amount: ColumnProjection = {
   id: "field_amount", key: "amount", display_name: "Amount", field_type: "number", required: true,
 };
 const table: TableProjection = {
-  revision: "resident/0", collection: {id: "tasks", key: "tasks", display_name: "Tasks", entity_count: 0},
+  revision: "resident/0", collection: {id: "tasks", key: "tasks", display_name: "Tasks", headerless: false, data_start_row: 2, entity_count: 0},
   columns: [amount], rows: [],
 };
 

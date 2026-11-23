@@ -277,6 +277,17 @@ display names do not enable constraints or complete #452. CORE packages still
 omit Sheet source bytes, interop/fidelity metadata, and report settings;
 ADR-0042's actual attachment-loss disclosure remains required.
 
+## Blank-grid generated-label amendment (#899)
+
+Under [#668's sizing decision](https://github.com/nurockplayer/tachiko-work/issues/668#issuecomment-7067055398),
+a blank headerless workbook starts with no fields or records. Positional writes
+create optional Auto fields labelled `Column A`, `Column B`, … `Column AA`, in
+stored column order. These generated labels are stored `display_name` values,
+a bounded exception to the nameless key fallback: they do not rename keys or
+replace stable identities. Save/reopen and Undo/Redo preserve them exactly.
+Other unnamed fields continue to use their keys. Header promotion is separate
+work; generated labels do not consume or interpret the first data row.
+
 ## Consequences and rejected alternatives
 
 People can use their own language and retain the case they typed while stable

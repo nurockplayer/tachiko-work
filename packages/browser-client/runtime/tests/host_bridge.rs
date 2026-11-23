@@ -429,6 +429,7 @@ fn portable_bridge_preserves_v3_bytes_and_admits_constrained_packages() {
 fn long_text_document() -> Document {
     let mut document = Document::empty("working-size-bridge", "Working Size Bridge");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),

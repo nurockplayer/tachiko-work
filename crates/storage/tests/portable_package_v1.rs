@@ -437,6 +437,7 @@ fn reference_document() -> Document {
             (
                 target_schema.clone(),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: target_schema.clone(),
                     key: SchemaKey::from("target"),
@@ -447,6 +448,7 @@ fn reference_document() -> Document {
             (
                 owner_schema.clone(),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: owner_schema.clone(),
                     key: SchemaKey::from("owner"),

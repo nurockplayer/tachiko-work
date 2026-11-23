@@ -350,6 +350,7 @@ fn publish(runtime: &mut DesignerRuntime, request: DesignerRequest) {
 fn native_required_mixed_document(rows: usize, text_width: usize) -> Document {
     let mut document = Document::empty("native", "capacity");
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),

@@ -153,6 +153,22 @@ explicit order. Decode requires an exact permutation of the schema's fields;
 anything else fails admission. See the
 [semantic declaration](semantic-data-model.md#per-schema-field-order-r4a).
 
+### Headerless schema (#899)
+
+Schema admits optional `headerless:true` after `display_name` and before
+`field_order` and `fields`. Absence means false and is canonical omission;
+explicit false, null, a non-Boolean or an unknown member MUST be refused.
+Headerless schemas may contain no fields and no entities. Stored row 1 is data,
+including text that looks like a heading. This is semantic state under
+[ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md#headerless-schema-amendment-899),
+with independent v2 delta/merge meaning and frozen-writer refusal. Generated
+`Column A` labels are stored display names under ADR-0043.
+
+First-row header promotion (#924) uses these existing members: the consumed
+entity is removed, admitted headings become field `display_name` values, and
+`headerless` is omitted again. Field IDs, keys, types and surviving entity
+values remain unchanged. No persisted member or format version is added.
+
 ### Optional Number display format (R3)
 
 FieldDefinition admits optional non-null `number_format`, after `constraint`.

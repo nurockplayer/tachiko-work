@@ -25,6 +25,7 @@ fn field_type(name: &str) -> FieldType {
 fn schema(name: &str, fields: &[&str]) -> Schema {
     let id = SchemaId::from(name);
     Schema {
+        headerless: false,
         field_order: None,
         id: id.clone(),
         key: SchemaKey::from(name),

@@ -646,6 +646,7 @@ fn oversized_post_edit_document() -> Document {
         document.schemas.insert(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 id: schema_id.clone(),
                 key: SchemaKey::from(format!("sheet_{sheet}")),
                 display_name: None,

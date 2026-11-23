@@ -278,6 +278,7 @@ impl DesignerRuntime {
             many: true,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         })
     }
 

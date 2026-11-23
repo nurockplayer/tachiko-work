@@ -100,6 +100,7 @@ impl std::error::Error for UnsupportedTargetFacetV2 {}
 /// Complete constraint-aware schema subject payload.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaSubjectV2 {
+    pub headerless: bool,
     pub key: SchemaKey,
     pub display_name: Option<String>,
     pub fields: BTreeMap<FieldId, SchemaFieldSubjectV2>,
@@ -108,6 +109,7 @@ pub struct SchemaSubjectV2 {
 impl From<&Schema> for SchemaSubjectV2 {
     fn from(schema: &Schema) -> Self {
         Self {
+            headerless: schema.headerless,
             key: schema.key.clone(),
             display_name: schema.display_name.clone(),
             fields: schema
@@ -323,6 +325,9 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         }
         MergeOutcome::UnsupportedDisplayName => unreachable!("v2 strips names before invoking v1"),
         MergeOutcome::UnsupportedAutoField => unreachable!("v2 admits Auto fields"),
+        MergeOutcome::UnsupportedHeaderless => {
+            unreachable!("v2 strips headerless state before invoking v1")
+        }
         MergeOutcome::UnsupportedRowRank => unreachable!("v2 strips ranks before invoking v1"),
         MergeOutcome::UnsupportedFieldOrder => {
             unreachable!("v2 strips field orders before invoking v1")
@@ -368,6 +373,7 @@ mod tests;
 fn without_constraints(document: &Document) -> Document {
     let mut document = document.clone();
     for schema in document.schemas.values_mut() {
+        schema.headerless = false;
         schema.display_name = None;
         for field in schema.fields.values_mut() {
             field.constraint = FieldConstraint::None;
@@ -870,6 +876,11 @@ fn apply_selected_names(
             left.schemas.get(schema_id),
             right.schemas.get(schema_id),
         );
+        schema.headerless = match (b, l, r) {
+            (Some(b), Some(l), Some(r)) => choose(&b.headerless, &l.headerless, &r.headerless)
+                .expect("a Boolean facet cannot have divergent concurrent edits"),
+            (_, l, r) => l.or(r).expect("candidate schema has a source").headerless,
+        };
         schema.display_name = selected_name(b, l, r, |schema| schema.display_name.as_deref());
         for (field_id, field) in &mut schema.fields {
             field.display_name = selected_name(

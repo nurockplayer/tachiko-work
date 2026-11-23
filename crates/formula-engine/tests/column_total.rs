@@ -67,6 +67,7 @@ fn plan_row(id: &str, key: &str, reserve: Value) -> Entity {
 
 fn schema(id: &str, key: &str, fields: BTreeMap<FieldId, FieldDefinition>) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from(id),
         key: SchemaKey::from(key),

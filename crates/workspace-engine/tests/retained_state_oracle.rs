@@ -1235,6 +1235,7 @@ fn oracle_document() -> Document {
             (
                 SchemaId::from("metrics"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("metrics"),
                     key: SchemaKey::from("metrics"),
@@ -1245,6 +1246,7 @@ fn oracle_document() -> Document {
             (
                 SchemaId::from("plan"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("plan"),
                     key: SchemaKey::from("plan"),

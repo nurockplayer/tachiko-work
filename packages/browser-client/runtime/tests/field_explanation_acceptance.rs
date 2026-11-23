@@ -34,6 +34,7 @@ fn document(fields: Vec<(&str, &str, FieldType, Value)>) -> Document {
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("weapons"),

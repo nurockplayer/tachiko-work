@@ -1280,6 +1280,7 @@ fn imported_style_inventory_refuses_before_excel_format_resource_limits() {
         document.schemas.insert(
             schema.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema.clone(),
                 key: SchemaKey::from(format!("sheet_{n}")),

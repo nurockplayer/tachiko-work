@@ -80,6 +80,52 @@ fn history(runtime: &mut DesignerRuntime, redo: bool) {
 }
 
 #[test]
+fn positional_formula_clear_and_replace_restore_formula_and_earlier_undo_entries() {
+    for input in [
+        ScalarEditInput::Clear,
+        ScalarEditInput::Number { input: "42".into() },
+    ] {
+        let (mut runtime, collection, _, tax, rows) = fixture();
+        let before_formula = runtime.session.document().clone();
+        let target = FieldTarget {
+            entity: rows[0].clone(),
+            field: tax.clone(),
+        };
+        let revision = runtime.current_revision().to_owned();
+        runtime
+            .update_formula(&revision, &target, "[.amount]*0.1")
+            .unwrap();
+        let with_formula = runtime.session.document().clone();
+        let column = runtime
+            .query_table(&collection)
+            .unwrap()
+            .columns
+            .iter()
+            .position(|column| column.id == tax)
+            .unwrap()
+            + 1;
+        let revision = runtime.current_revision().to_owned();
+        runtime
+            .write_cell_at(&revision, &collection, 1, column, &input)
+            .unwrap();
+        let edited = runtime.query_table(&collection).unwrap();
+        assert!(
+            edited.rows[0]
+                .fields
+                .iter()
+                .all(|field| field.formula.is_none())
+        );
+        history(&mut runtime, false);
+        assert_eq!(runtime.session.document(), &with_formula);
+        assert_eq!(tax_value(&runtime, &collection, &tax, 0), Some(320.0));
+        history(&mut runtime, false);
+        assert_eq!(runtime.session.document(), &before_formula);
+        history(&mut runtime, false);
+        assert_eq!(runtime.query_table(&collection).unwrap().rows.len(), 1);
+    }
+}
+
+#[test]
 fn formula_into_blank_cell_calculates_and_undoes_to_blank() {
     let (mut runtime, collection, _, tax, rows) = fixture();
     assert_eq!(tax_value(&runtime, &collection, &tax, 0), None);

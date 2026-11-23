@@ -1933,6 +1933,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema-store-id"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("schema-declared-id"),
                     key: "Invalid Schema Key".into(),
@@ -2051,6 +2052,7 @@ mod issue_175_research {
             document.schemas.insert(
                 SchemaId::from("schema"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("schema"),
                     key: "items".into(),

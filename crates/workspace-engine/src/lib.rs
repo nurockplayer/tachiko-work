@@ -631,10 +631,14 @@ pub enum WorkspaceError {
     UnsupportedNumberFormatMerge,
     #[error("the selected merge contract does not support durable field order")]
     UnsupportedFieldOrderMerge,
+    #[error("frozen v1 merge does not support headerless schema; use merge_documents_v2")]
+    UnsupportedHeaderlessMerge,
     #[error("frozen v1 merge does not support row rank; use merge_documents_v2")]
     UnsupportedRowRankMerge,
     #[error("frozen v1 merge does not support Auto fields; use merge_documents_v2")]
     UnsupportedAutoFieldMerge,
+    #[error("the frozen runtime export cannot represent headerless schema")]
+    UnsupportedHeaderlessRepresentation,
     #[error("the frozen runtime export cannot represent row rank")]
     UnsupportedRowRankRepresentation,
     #[error("the field order for schema {schema} must name every field exactly once")]
@@ -1318,6 +1322,7 @@ pub fn merge_documents(
         }
         MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
         MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
+        MergeOutcome::UnsupportedHeaderless => Err(WorkspaceError::UnsupportedHeaderlessMerge),
         MergeOutcome::UnsupportedRowRank => Err(WorkspaceError::UnsupportedRowRankMerge),
         MergeOutcome::UnsupportedAutoField => Err(WorkspaceError::UnsupportedAutoFieldMerge),
         MergeOutcome::UnsupportedDisplayName => {
@@ -1414,6 +1419,9 @@ fn require_merge_keyed_definitions(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
+    if document.has_headerless_schemas() {
+        return Err(WorkspaceError::UnsupportedHeaderlessRepresentation);
+    }
     if document.has_row_ranks() {
         return Err(WorkspaceError::UnsupportedRowRankRepresentation);
     }
@@ -3787,6 +3795,7 @@ fn game_balance_schemas(
         schemas.insert(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),

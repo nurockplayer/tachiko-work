@@ -24,6 +24,7 @@ fn field(id: &str, field_type: FieldType) -> (FieldId, FieldDefinition) {
 
 fn document() -> Document {
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "orders".into(),
         key: "orders".into(),
@@ -503,6 +504,7 @@ fn bounded_store(count: usize) -> (Document, PresentationStore) {
         .map(|index| field(&format!("f{index:04}"), FieldType::Number))
         .collect();
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "orders".into(),
         key: "orders".into(),
@@ -542,6 +544,7 @@ fn bounded_store(count: usize) -> (Document, PresentationStore) {
 fn rules_store(count: usize) -> (Document, PresentationStore) {
     let mut document = Document::empty("d", "Rules");
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: "orders".into(),
         key: "orders".into(),
@@ -570,6 +573,7 @@ fn rules_store(count: usize) -> (Document, PresentationStore) {
 
 fn schema(id: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: id.into(),

@@ -47,6 +47,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "meters".into(),
@@ -213,6 +214,7 @@ fn schema_key_and_field_key_changes_preserve_unchanged_entity_presentation() {
 fn additions_removals_keys_text_and_references_keep_exact_order() {
     let mut before = fixture();
     let removed = Schema {
+        headerless: false,
         field_order: None,
         id: "old".into(),
         key: "old".into(),
@@ -220,6 +222,7 @@ fn additions_removals_keys_text_and_references_keep_exact_order() {
         fields: BTreeMap::new(),
     };
     let added = Schema {
+        headerless: false,
         field_order: None,
         id: "new".into(),
         key: "new".into(),

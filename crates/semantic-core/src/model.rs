@@ -429,6 +429,13 @@ pub struct Schema {
         deserialize_with = "stored_display_name"
     )]
     pub display_name: Option<String>,
+    /// A grid whose first stored row is data, rather than a header.
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "stored_headerless"
+    )]
+    pub headerless: bool,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
     /// Presentation order of `fields`. `None` means field-id order. `Some` must be an exact
     /// permutation of `fields` and must differ from id order (see `normalize_field_order`).
@@ -458,6 +465,14 @@ pub struct FieldDefinition {
         deserialize_with = "optional_date_format"
     )]
     pub date_format: Option<crate::DateFormat>,
+}
+
+fn stored_headerless<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    if bool::deserialize(deserializer)? {
+        Ok(true)
+    } else {
+        Err(serde::de::Error::custom("headerless false must be omitted"))
+    }
 }
 
 fn optional_date_format<'de, D: Deserializer<'de>>(
@@ -524,6 +539,11 @@ impl FieldDefinition {
 }
 
 impl Document {
+    #[must_use]
+    pub fn has_headerless_schemas(&self) -> bool {
+        self.schemas.values().any(|schema| schema.headerless)
+    }
+
     #[must_use]
     pub fn has_auto_fields(&self) -> bool {
         self.schemas

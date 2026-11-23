@@ -64,6 +64,7 @@ fn owner(entity: &str, field: &str) -> FieldRef {
 
 fn schema(id: &str, fields: BTreeMap<FieldId, FieldDefinition>) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from(id),
         key: SchemaKey::from(id),

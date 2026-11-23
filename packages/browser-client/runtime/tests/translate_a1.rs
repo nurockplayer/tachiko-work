@@ -41,6 +41,7 @@ fn fixture_document() -> Document {
         doc.schemas.insert(
             schema.into(),
             Schema {
+                headerless: false,
                 id: schema.into(),
                 key: schema.to_ascii_lowercase().into(),
                 display_name: Some(schema.into()),

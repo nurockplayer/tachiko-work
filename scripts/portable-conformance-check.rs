@@ -53,7 +53,7 @@ use tachiko_workspace_engine::{
     runtime_export, set_scalar, validate, validation_report,
 };
 
-const CASE_COUNT: u32 = 59;
+const CASE_COUNT: u32 = 60;
 const VALUE: u32 = 0;
 const DIVISION_BY_ZERO: u32 = 1;
 const NON_FINITE: u32 = 2;
@@ -152,6 +152,7 @@ fn formula_document(input: Number, expression: Expression) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("numbers"),
@@ -222,6 +223,7 @@ fn date_document(value: Date) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("dates"),
@@ -662,6 +664,7 @@ fn complete_oracle_record() -> Record {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("oracle-schema"),
@@ -1107,6 +1110,7 @@ fn oracle_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
@@ -1382,6 +1386,7 @@ fn disjoint_cycle_document(reverse_insertion: bool) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "schema".into(),
                 key: "schema".into(),
@@ -1615,6 +1620,7 @@ fn analysis_document() -> Document {
         schemas: BTreeMap::from([(
             schema.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema,
                 key: SchemaKey::from("analysis-weapons"),
@@ -2859,6 +2865,7 @@ fn constraint_text_literal_record() -> Record {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "schema".into(),
             key: "items".into(),
@@ -2931,6 +2938,39 @@ fn constraint_number_formula_record() -> Record {
         return Record::failure(UNEXPECTED, (58_u64 << 32) | mismatches as u64);
     }
     Record::failure(VALIDATION_REPORT, mismatches as u64)
+}
+
+fn headerless_record() -> Record {
+    use tachiko_workspace_engine::{CanonicalDirectFact, canonical_delta};
+    let mut base = Document::empty("headerless", "Blank");
+    base.schemas.insert("sheet".into(), Schema {
+        id: "sheet".into(), key: "sheet".into(), display_name: None,
+        headerless: false, field_order: None, fields: BTreeMap::new(),
+    });
+    let mut changed = base.clone();
+    changed.schemas.get_mut("sheet").unwrap().headerless = true;
+    let Ok(delta) = canonical_delta("tachiko.semantic-delta/v2", &base, &changed) else {
+        return Record::failure(UNEXPECTED, 590);
+    };
+    if !matches!(delta.facts(), [CanonicalDirectFact::SchemaHeaderlessChanged {before: false, after: true, ..}]) {
+        return Record::failure(UNEXPECTED, 591);
+    }
+    let Ok(tree) = encode_roproj_v3(&changed) else { return Record::failure(UNEXPECTED, 592); };
+    let Ok(bytes) = encode_portable_package_v1(&tree) else { return Record::failure(UNEXPECTED, 593); };
+    let Ok(package) = decode_portable_package_v1(&bytes) else { return Record::failure(UNEXPECTED, 594); };
+    if decode_roproj_v3(package.tree()).ok().as_ref() != Some(&changed) {
+        return Record::failure(UNEXPECTED, 595);
+    }
+    let Ok(tachiko_workspace_engine::WorkspaceMergeOutcomeV2::Merged(candidate)) =
+        tachiko_workspace_engine::merge_documents_v2("tachiko.semantic-conflict/v2", &base, &changed, &base)
+    else { return Record::failure(UNEXPECTED, 596); };
+    if candidate.document != changed {
+        return Record::failure(UNEXPECTED, 597);
+    }
+    match to_canonical_string(&changed) {
+        Err(StorageFormatError::UnsupportedHeaderless) => Record::value(number(1.0), 59),
+        _ => Record::failure(UNEXPECTED, 598),
+    }
 }
 
 fn case_record(index: u32) -> Record {
@@ -3082,6 +3122,7 @@ fn case_record(index: u32) -> Record {
         56 => no_change_record(),
         57 => constraint_text_literal_record(),
         58 => constraint_number_formula_record(),
+        59 => headerless_record(),
         _ => Record::failure(UNEXPECTED, 0),
     }
 }

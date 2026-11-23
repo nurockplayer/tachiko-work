@@ -134,6 +134,8 @@ pub enum FormatError {
     UnsupportedDateFormat,
     #[error("this frozen representation does not support durable field order; use .roproj/v3")]
     UnsupportedFieldOrder,
+    #[error("this frozen representation does not support headerless schema; use .roproj/v3")]
+    UnsupportedHeaderless,
     #[error("this frozen representation does not support row rank; use .roproj/v3")]
     UnsupportedRowRank,
     #[error("this frozen representation does not support Auto fields; use .roproj/v3")]
@@ -538,6 +540,9 @@ pub(crate) fn reject_number_formats(document: &Document) -> Result<(), FormatErr
 }
 
 pub(crate) fn reject_row_ranks(document: &Document) -> Result<(), FormatError> {
+    if document.has_headerless_schemas() {
+        return Err(FormatError::UnsupportedHeaderless);
+    }
     if document.has_row_ranks() {
         return Err(FormatError::UnsupportedRowRank);
     }
@@ -610,6 +615,7 @@ fn map_v1_encode_error(error: legacy_direct_ro::v1::CodecError) -> FormatError {
 
 fn map_v2_decode_error(error: V2CodecError) -> FormatError {
     match error {
+        V2CodecError::UnsupportedHeaderless => FormatError::UnsupportedHeaderless,
         V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
         V2CodecError::UnsupportedAutoField => FormatError::UnsupportedAutoField,
         V2CodecError::Json(source) => FormatError::InvalidRepresentation {
@@ -625,6 +631,7 @@ fn map_v2_decode_error(error: V2CodecError) -> FormatError {
 
 fn map_v2_encode_error(error: V2CodecError) -> FormatError {
     match error {
+        V2CodecError::UnsupportedHeaderless => FormatError::UnsupportedHeaderless,
         V2CodecError::UnsupportedRowRank => FormatError::UnsupportedRowRank,
         V2CodecError::UnsupportedAutoField => FormatError::UnsupportedAutoField,
         V2CodecError::Json(source) => FormatError::Json(source),

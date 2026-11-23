@@ -37,6 +37,7 @@ fn number_field(id: &str) -> FieldDefinition {
 
 fn number_schema(id: &str, fields: &[&str]) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from(id),
         key: SchemaKey::from(id),
@@ -798,6 +799,7 @@ mod reference {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaHeaderless { .. }
             | SemanticCommand::SetSchemaDisplayName { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }

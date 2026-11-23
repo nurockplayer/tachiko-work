@@ -55,6 +55,7 @@ fn document() -> Document {
         Value::Number(Number::new(0.0).unwrap()),
     );
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("schema"),
         key: SchemaKey::from("row"),

@@ -14,6 +14,7 @@ fn balance_document(damage: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapon"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("weapon"),
                 key: SchemaKey::from("weapon"),
@@ -269,6 +270,7 @@ fn schema_addition_and_removal_preserve_typed_definitions() {
     let before = balance_document(100.0);
     let mut after = before.clone();
     let armor = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("armor"),
         key: SchemaKey::from("armor"),
@@ -304,6 +306,7 @@ fn schema_field_changes_preserve_typed_definitions_and_order() {
     before.schemas.insert(
         SchemaId::from("metadata"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("metadata"),
             key: SchemaKey::from("metadata"),
@@ -437,6 +440,7 @@ fn shared_input_document(left: f64, right: f64) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("pair"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("pair"),
                 key: SchemaKey::from("pair"),
@@ -488,6 +492,7 @@ fn column_total_document(rent: f64, ads: f64) -> Document {
             (
                 SchemaId::from("plan"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("plan"),
                     key: SchemaKey::from("plan"),
@@ -501,6 +506,7 @@ fn column_total_document(rent: f64, ads: f64) -> Document {
             (
                 SchemaId::from("summary"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("summary"),
                     key: SchemaKey::from("summary"),

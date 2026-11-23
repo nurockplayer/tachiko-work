@@ -42,7 +42,7 @@ function transport() {
 function table(collection: string): TableProjection {
   return {
     revision: "resident/0",
-    collection: { id: collection, key: collection, display_name: collection, entity_count: 0 },
+    collection: { id: collection, key: collection, display_name: collection, headerless: false, data_start_row: 2, entity_count: 0 },
     columns: [],
     rows: [],
   };
@@ -119,7 +119,7 @@ describe("Designer Worker request lifecycle", () => {
   it("validates import mappings nested in an add-table publication", async () => {
     const worker = transport();
     const metadata: InteropMetadata = {version: 2, sheets: [{schema_id: "added", name: "Added", has_header: true, columns: [{field_id: "value", name: "Value"}]}]};
-    const payload = {collection: {id: "added", key: "added", display_name: "Added", entity_count: 0}, publication: {base_revision: "resident/0", resulting_revision: "resident/1", schemas: ["added"], schema_fields: [], entities: [], fields: [], affected_calculations: [], import_metadata: metadata}};
+    const payload = {collection: {id: "added", key: "added", display_name: "Added", headerless: false, data_start_row: 2, entity_count: 0}, publication: {base_revision: "resident/0", resulting_revision: "resident/1", schemas: ["added"], schema_fields: [], entities: [], fields: [], affected_calculations: [], import_metadata: metadata}};
     const added = worker.client.addTable("resident/0", "Added", [{name: "Value", field_type: "number", required: false}]);
     worker.reply({id: worker.request(0).id, status: "ok", response: {type: "duplicated", payload}});
     await expect(added).resolves.toEqual(payload);

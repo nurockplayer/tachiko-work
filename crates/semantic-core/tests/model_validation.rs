@@ -25,6 +25,7 @@ fn field(id: &str, field_type: FieldType, required: bool) -> (FieldId, FieldDefi
 
 fn valid_document() -> Document {
     let weapon_schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("weapon"),
         key: SchemaKey::from("weapon"),
@@ -136,6 +137,7 @@ fn reference_to_wrong_schema_is_rejected() {
     document.schemas.insert(
         SchemaId::from("character"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("character"),
             key: SchemaKey::from("character"),

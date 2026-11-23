@@ -272,6 +272,7 @@ fn row_document(rows: usize) -> Document {
     document.schemas.insert(
         SchemaId::from("rows"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "rows".into(),
             key: "rows".into(),
@@ -308,6 +309,7 @@ fn formula_document() -> Document {
     document.schemas.insert(
         SchemaId::from("weapons"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "weapons".into(),
             key: "weapons".into(),

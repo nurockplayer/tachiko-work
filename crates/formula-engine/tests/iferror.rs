@@ -36,6 +36,7 @@ fn document() -> Document {
     document.schemas.insert(
         SchemaId::from("r"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("r"),
             key: SchemaKey::from("r"),
@@ -46,6 +47,7 @@ fn document() -> Document {
     document.schemas.insert(
         SchemaId::from("t"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("t"),
             key: SchemaKey::from("t"),

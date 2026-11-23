@@ -9,6 +9,16 @@ All notable changes to Tachiko Work are documented in this file.
   (Part of #678 5e; MVP item 7). Compact private XML attributes and small child
   lists to reduce parser allocation and repeat-inspection memory growth; avoid
   cloning unchanged import documents and promoting empty column presentation.
+- Promote the first stored data row of a headerless table with
+  `promote_first_row_to_headers`. Headings retain field identities and types;
+  blank and duplicate labels receive reported deterministic generated names.
+  Promotion is one Undo/Redo step and survives v3 and portable `.ro` reopen
+  (#924, #668 PR4).
+- `write_cell_at` accepts distant stored positions without a request change.
+  Intervening rows and generated Auto columns have empty optional cells;
+  the write and all created structure Undo/Redo together and survive v3/portable
+  `.ro` reopen. Working-size row/field limits refuse atomically (#923, #668 PR3).
+
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;
   release the single retained source on import, the next inspect or close (#678 5d).
@@ -30,6 +40,12 @@ All notable changes to Tachiko Work are documented in this file.
   profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
   prefixes completed by CR encoding; shared and inline imports decode once
   and retain located refusals for unsupported decoded Text (#547).
+- Blank headerless workbooks expose `new_blank_workbook` and `write_cell_at`.
+  First and adjacent writes create optional Auto columns and rows atomically,
+  with generated Column A/B labels, tagged values and one Undo step. Headerless
+  schema state, labels and cells survive v3/portable `.ro` save/reopen and v2
+  delta/merge; distant writes and Auto formulas remain explicitly refused
+  (#899, #668 PR2).
 - Imported project, v3 and portable `.ro` exports accept optional host import
   metadata, preserving host worksheet names and column presentation in their
   companion and on reopen. Worksheet lifecycle changes retain runtime authority;
