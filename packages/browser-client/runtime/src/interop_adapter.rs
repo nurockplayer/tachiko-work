@@ -1816,9 +1816,8 @@ pub(crate) fn validate_import_geometry_profile(
             None,
             false,
         )?;
-        let bytes = serde_json::to_vec(workbook)
-            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?
-            .len();
+        let bytes = super::serialized_projection_bytes(workbook)
+            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?;
         check_import_limit(
             crate::CapacityLimit::SerializedSourceBytes,
             MAX_WORKING_SERIALIZED_SOURCE_BYTES,
@@ -2065,7 +2064,7 @@ pub(crate) fn import_csv_profile(
 struct Xml {
     name: Rc<String>,
     ns: Rc<String>,
-    attrs: BTreeMap<String, String>,
+    attrs: Vec<(String, String)>,
     namespace_declarations: Vec<String>,
     children: Vec<Xml>,
     text: String,
@@ -2074,7 +2073,10 @@ struct Xml {
 }
 impl Xml {
     fn attr(&self, key: &str) -> Option<&str> {
-        self.attrs.get(key).map(String::as_str)
+        self.attrs
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
     }
     fn child(&self, name: &str) -> Option<&Xml> {
         self.children
@@ -2283,7 +2285,7 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                     return fail("XML structure exceeds bounded profile");
                 }
                 let scope_start = binding_changes.len();
-                let mut attrs = BTreeMap::new();
+                let mut attrs = Vec::new();
                 let mut namespace_declarations = Vec::new();
                 let mut attribute_count = 0;
                 let mut plain_lexical_values = true;
@@ -2334,15 +2336,22 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                         let previous = bindings.insert(prefix.clone(), Rc::new(value));
                         binding_changes.push((prefix, previous));
                     } else {
-                        attrs.insert(key, value);
+                        if attrs.is_empty() {
+                            attrs.reserve_exact(1);
+                        }
+                        attrs.push((key, value));
                     }
                 }
                 if bindings.len() > 64 {
                     return fail("XML namespace scope exceeds profile");
                 }
-                let mut expanded_attributes = BTreeSet::new();
+                // The boundary above limits raw attributes to 64. Keep the
+                // expanded-name duplicate check on the stack, not one tree
+                // allocation per cell element.
+                attrs.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+                let mut expanded_attributes = [("", ""); 64];
                 let mut plain_attribute_namespaces = true;
-                for key in attrs.keys() {
+                for (index, (key, _)) in attrs.iter().enumerate() {
                     let (prefix, local) = key.split_once(':').unwrap_or(("", key));
                     let uri = if prefix.is_empty() {
                         ""
@@ -2354,9 +2363,10 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                                 InteropError::Invalid("Unbound XML attribute namespace".into())
                             })?
                     };
-                    if !expanded_attributes.insert((uri, local)) {
+                    if expanded_attributes[..index].contains(&(uri, local)) {
                         return fail("Duplicate expanded XML attribute");
                     }
+                    expanded_attributes[index] = (uri, local);
                     plain_attribute_namespaces &= uri.is_empty()
                         || (uri
                             == "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -2381,7 +2391,12 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml> {
                         }).then(|| (format!("rel:{local}"), value.clone()))
                     })
                     .collect();
-                attrs.extend(aliases);
+                for (key, value) in aliases {
+                    match attrs.binary_search_by(|(name, _)| name.cmp(&key)) {
+                        Ok(index) => attrs[index].1 = value,
+                        Err(index) => attrs.insert(index, (key, value)),
+                    }
+                }
                 let name = if let Some(name) = names.get(name) {
                     Rc::clone(name)
                 } else {
@@ -2480,6 +2495,11 @@ fn restore_xml_bindings(
 }
 fn attach_xml(node: Xml, stack: &mut [(Xml, usize)], root: &mut Option<Xml>) -> Result<()> {
     if let Some((parent, _)) = stack.last_mut() {
+        // Cell value/formula and inline-text nodes usually have one or two
+        // children. Vec's default first allocation holds four full Xml nodes.
+        if parent.children.is_empty() {
+            parent.children.reserve_exact(1);
+        }
         parent.children.push(node);
     } else if root.replace(node).is_some() {
         return fail("Multiple XML roots");
@@ -2710,12 +2730,12 @@ fn checkbox_property_bags(root: &Xml) -> bool {
 #[allow(clippy::case_sensitive_file_extension_comparisons)] // Compared path is already ASCII-lowercase.
 fn root_inventory(
     parts: &BTreeMap<String, Vec<u8>>,
-    worksheets: &BTreeSet<String>,
+    worksheets: &BTreeMap<String, usize>,
     ledger: &mut Vec<FidelityFinding>,
     working: bool,
 ) -> Result<()> {
     let worksheet_relationships = worksheets
-        .iter()
+        .keys()
         .map(|path| worksheet_relationship_path(path))
         .collect::<BTreeSet<_>>();
     for (path, bytes) in parts {
@@ -2752,7 +2772,7 @@ fn root_inventory(
                 | "xl/_rels/workbook.xml.rels"
                 | "xl/styles.xml"
                 | "xl/sharedStrings.xml"
-        ) || worksheets.contains(path);
+        ) || worksheets.contains_key(path);
         if worksheet_relationships.contains(path) {
             ledger.push(worksheet_relationship_finding(path, bytes, working)?);
             inventoried = true;
@@ -2783,23 +2803,32 @@ fn root_inventory(
             ));
         }
         if lower.ends_with(".xml") || lower.ends_with(".rels") {
-            let xml = parse_xml_profile(bytes, working)?;
-            let mut relationships = Vec::new();
-            xml.all("Relationship", &mut relationships);
-            for node in relationships {
-                if node.ns.as_str() == REL && node.attr("TargetMode") == Some("External") {
-                    ledger.push(finding(
-                        FidelityCategory::UnsupportedSafeDisabled,
-                        "external_relationship",
-                        path,
-                        "External relationship will not be followed",
-                        false,
-                    ));
-                }
+            let external_relationships = if let Some(count) = worksheets.get(path) {
+                *count
+            } else {
+                external_relationship_count(&parse_xml_profile(bytes, working)?)
+            };
+            for _ in 0..external_relationships {
+                ledger.push(finding(
+                    FidelityCategory::UnsupportedSafeDisabled,
+                    "external_relationship",
+                    path,
+                    "External relationship will not be followed",
+                    false,
+                ));
             }
         }
     }
     Ok(())
+}
+
+fn external_relationship_count(xml: &Xml) -> usize {
+    let mut relationships = Vec::new();
+    xml.all("Relationship", &mut relationships);
+    relationships
+        .into_iter()
+        .filter(|node| node.ns.as_str() == REL && node.attr("TargetMode") == Some("External"))
+        .count()
 }
 fn worksheet_relationship_path(path: &str) -> String {
     path.rsplit_once('/').map_or_else(
@@ -2971,7 +3000,7 @@ fn capacity_plain_node(node: &Xml) -> bool {
             ]
             .contains(&uri.as_str())
         })
-        || !node.attrs.keys().all(|key| {
+        || !node.attrs.iter().all(|(key, _)| {
             attrs.contains(&match key.rsplit_once(':') {
                 Some((_, "id")) => "rel:id",
                 Some((_, "space")) => "xml:space",
@@ -3025,11 +3054,11 @@ fn capacity_plain_values(node: &Xml) -> bool {
                 _ => false,
             }
         }
-        "t" => node.attrs.values().all(|value| value == "preserve"),
+        "t" => node.attrs.iter().all(|(_, value)| value == "preserve"),
         "sst" => node
             .attrs
-            .values()
-            .all(|value| value.parse::<usize>().ok() == Some(node.children.len())),
+            .iter()
+            .all(|(_, value)| value.parse::<usize>().ok() == Some(node.children.len())),
         "Relationship" => {
             let role = match node.attr("Target") {
                 Some("xl/workbook.xml") => "officeDocument",
@@ -3568,7 +3597,7 @@ fn inventory_workbook_children(xml: &Xml, ledger: &mut Vec<FidelityFinding>) -> 
                 }
                 "workbookPr"
                     if child.children.is_empty()
-                        && child.attrs.keys().all(|key| key == "date1904") =>
+                        && child.attrs.iter().all(|(key, _)| key == "date1904") =>
                 {
                     continue;
                 }
@@ -3620,7 +3649,8 @@ fn inventory_grid_attributes(node: &Xml, sheet: &str, ledger: &mut Vec<FidelityF
     };
     for key in node
         .attrs
-        .keys()
+        .iter()
+        .map(|(key, _)| key)
         .filter(|key| !mapped.contains(&key.as_str()))
     {
         ledger.push(finding(
@@ -3708,20 +3738,6 @@ pub(crate) fn import_xlsx_profile(
         Some("1" | "true") => true,
         Some(_) => return fail("Invalid workbook date1904 boolean"),
     };
-    let styles = parse_styles(&parts, &mut ledger, working)?;
-    let shared = if parts.contains_key("xl/sharedStrings.xml") {
-        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
-        if strings
-            .children
-            .iter()
-            .any(|node| node.name.as_str() != "si" || c_unknown(node))
-        {
-            return fail("Unknown shared string XML construct");
-        }
-        strings.kids("si").map(Xml::content).collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
     let sheet_nodes = workbook
         .child("sheets")
         .ok_or_else(|| InteropError::Invalid("Missing worksheets".into()))?
@@ -3744,9 +3760,8 @@ pub(crate) fn import_xlsx_profile(
     if options.header_rows.len() > sheet_nodes.len() {
         return fail("header_rows has more entries than the workbook has sheets");
     }
-    let mut sheets = Vec::new();
-    let mut worksheet_paths = BTreeSet::new();
-    let mut formula_count = 0;
+    let mut sheet_inventory = Vec::new();
+    let mut paths = BTreeSet::new();
     let mut names = BTreeSet::new();
     for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
         let name = sheet
@@ -3782,10 +3797,34 @@ pub(crate) fn import_xlsx_profile(
                 .attr("Target")
                 .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
         )?;
-        let xml = xml_part(&parts, &path, "worksheet", MAIN, working)?;
-        if !worksheet_paths.insert(path.clone()) {
+        part(&parts, &path)?;
+        if !paths.insert(path.clone()) {
             return fail("Duplicate worksheet part mapping");
         }
+        sheet_inventory.push((sheet_index, name, path));
+    }
+    let styles = parse_styles(&parts, &mut ledger, working)?;
+    let shared = if parts.contains_key("xl/sharedStrings.xml") {
+        let strings = xml_part(&parts, "xl/sharedStrings.xml", "sst", MAIN, working)?;
+        if strings
+            .children
+            .iter()
+            .any(|node| node.name.as_str() != "si" || c_unknown(node))
+        {
+            return fail("Unknown shared string XML construct");
+        }
+        strings.kids("si").map(Xml::content).collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let mut sheets = Vec::new();
+    let mut worksheet_paths = BTreeMap::new();
+    let mut formula_count = 0;
+    for (sheet_index, name, path) in sheet_inventory {
+        let xml = xml_part(&parts, &path, "worksheet", MAIN, working)?;
+        // Inventory reuses this count after decoding instead of rebuilding the
+        // worksheet XML tree. Findings remain in package-path order below.
+        worksheet_paths.insert(path.clone(), external_relationship_count(&xml));
         for singleton in ["sheetData", "dimension", "sheetFormatPr"] {
             if xml.kids(singleton).count() > 1 {
                 return fail("Duplicate singleton worksheet construct");
@@ -3889,7 +3928,7 @@ pub(crate) fn import_xlsx_profile(
                     false,
                 )?;
             }
-            rows.resize_with(rows.len().max(retained_index), Vec::new);
+            rows.resize_with(rows.len().max(retained_index), || Vec::with_capacity(width));
             for c in row.kids("c") {
                 let address = c
                     .attr("r")
@@ -4226,14 +4265,26 @@ pub(crate) fn import_xlsx_profile(
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let mut workbook = SourceWorkbook { sheets, ledger };
     cap_ledger(&mut workbook.ledger);
-    if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
+    let workbook = if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate isolated Number-feasibility hypotheses without changing
         // the typed values the user sees and explicitly selects.
         validate_capacity_source_inspection(&workbook)?;
-        return Ok(workbook);
+        workbook
+    } else {
+        validate_import_geometry_profile(&workbook, working)?;
+        finish_source_admission(workbook, working)
+    };
+    #[cfg(target_arch = "wasm32")]
+    if !workbook.ledger.iter().any(|finding| finding.blocking) {
+        let xml_bytes = worksheet_paths
+            .keys()
+            .map(|path| parts[path].len())
+            .sum::<usize>()
+            + parts.get("xl/sharedStrings.xml").map_or(0, Vec::len);
+        drop(parts);
+        crate::wasm::reserve_xlsx_heap(xml_bytes);
     }
-    validate_import_geometry_profile(&workbook, working)?;
-    Ok(finish_source_admission(workbook, working))
+    Ok(workbook)
 }
 
 /// Leading title rows are skipped only when a complete header follows them.

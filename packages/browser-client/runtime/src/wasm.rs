@@ -15,7 +15,7 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
-    ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
+    ProjectExportProjection, encode_reply, encode_sized_reply, inspect_project,
     inspect_project_working_size, open_local_document, open_local_document_working_size,
     open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
     process_wire_request, request_too_large_reply, verify_portable_ro, wire_request_limit,
@@ -204,6 +204,25 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
     })
 }
 
+// Called only after authoritative XLSX admission, with referenced XML sizes.
+// Keep an 8 MiB margin below the raw-ABI 256 MiB budget. The allocator can
+// reuse existing free blocks; any additional growth is bounded by this request
+// plus allocator/page rounding, rather than by compressed or padded source size.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn reserve_xlsx_heap(xml_bytes: usize) {
+    if xml_bytes < 64 * 1024 {
+        return;
+    }
+    let current = core::arch::wasm32::memory_size::<0>() * 64 * 1024;
+    let headroom = xml_bytes
+        .saturating_mul(32)
+        .min((248 * 1024 * 1024usize).saturating_sub(current));
+    let mut buffer = Vec::<u8>::new();
+    if buffer.try_reserve_exact(headroom).is_ok() {
+        drop(std::hint::black_box(buffer));
+    }
+}
+
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {
@@ -352,37 +371,42 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
         } else {
             decode_spreadsheet_operation(runtime.as_ref(), &request, &project)
         };
-        let mut inspected_source = None;
         let reply = match result {
             Ok(result) => {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_wire_reply_size(&reply, result.profile) {
-                    DesignerWireReply::Error {
+                // The response arena owns its allocation across spreadsheet calls;
+                // an inspect must not allocate another preview-sized output buffer.
+                let buffer = RESPONSE.with(|response| std::mem::take(&mut *response.borrow_mut()));
+                let encoded = match encode_sized_reply(&reply, result.profile, buffer) {
+                    Err(error) => encode_reply(&DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
+                    }),
+                    Ok(encoded) => {
+                        if let Some(candidate) = result.candidate {
+                            *runtime = Some(candidate);
+                        }
+                        if let Some(bytes) = result.export {
+                            PROJECT.with(|slot| *slot.borrow_mut() = bytes);
+                        }
+                        if let Some(identity) = result.inspected_source {
+                            RETAINED_SOURCE.with(|retained| {
+                                *retained.borrow_mut() =
+                                    Some(InspectedSource::from_preview(identity, reply));
+                            });
+                        }
+                        encoded
                     }
-                } else {
-                    if let Some(candidate) = result.candidate {
-                        *runtime = Some(candidate);
-                    }
-                    if let Some(bytes) = result.export {
-                        PROJECT.with(|slot| *slot.borrow_mut() = bytes);
-                    }
-                    inspected_source = result.inspected_source;
-                    reply
-                }
+                };
+                RESPONSE.with(|response| *response.borrow_mut() = encoded);
+                return;
             }
             Err(error) => DesignerWireReply::Error {
                 error: error.failure_projection(current_revision(runtime.as_ref())),
             },
         };
         set_response(&reply);
-        if let Some(identity) = inspected_source {
-            RETAINED_SOURCE.with(|retained| {
-                *retained.borrow_mut() = Some(InspectedSource::from_preview(identity, reply));
-            });
-        }
     });
 }
 

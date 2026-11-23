@@ -544,6 +544,15 @@ fn input_value(input: &ScalarEditInput) -> Result<Value, DesignerError> {
 }
 
 pub(crate) fn convert_value(value: &Value, kind: &FieldType) -> Result<Value, DesignerError> {
+    if matches!(
+        (value, kind),
+        (Value::Text(_), FieldType::Text)
+            | (Value::Number(_), FieldType::Number)
+            | (Value::Boolean(_), FieldType::Boolean)
+            | (Value::Date(_), FieldType::Date)
+    ) {
+        return Ok(value.clone());
+    }
     let text = match value {
         Value::Text(text) => text.clone(),
         Value::Number(number) => number.get().to_string(),
@@ -1416,11 +1425,10 @@ fn promote_import_presentation(
         TablePresentation,
     };
     let profile = runtime.profile;
-    let mut document = runtime.session.export_snapshot().into_document();
-    let mut runtime = Some(runtime);
+    let document = runtime.session.document();
     let mut store = PresentationStore::default();
     let mut pending = BTreeMap::new();
-    let mut formats_changed = false;
+    let mut date_formats = Vec::new();
     for (sheet, source) in metadata.sheets.iter_mut().zip(&workbook.sheets) {
         let schema_id = SchemaId::from(sheet.schema_id.clone());
         let mut table = TablePresentation::default();
@@ -1433,6 +1441,14 @@ fn promote_import_presentation(
             }
             let is_date =
                 document.schemas[&schema_id].fields[&field_id].field_type == FieldType::Date;
+            if !is_date
+                && sheet
+                    .rows
+                    .iter()
+                    .all(|row| row.styles[column_index] == CellStyle::default())
+            {
+                continue;
+            }
             let mut alignments = Vec::new();
             let mut wraps = Vec::new();
             let mut dates = Vec::new();
@@ -1498,7 +1514,6 @@ fn promote_import_presentation(
                     style.number_format = None;
                 }
                 numbers.push(number);
-                let entity = EntityId::from(row.entity_id.clone());
                 let pattern = source
                     .rows
                     .get(row_index)
@@ -1506,7 +1521,12 @@ fn promote_import_presentation(
                     .and_then(|cell| cell.style.number_format.as_deref());
                 // A blank cell formatted as a date is the format a date typed
                 // there later gets, so it takes part like a Date value.
-                let stored = document.entities[&entity].fields.get(&field_id);
+                let stored = if is_date {
+                    let entity = EntityId::from(row.entity_id.clone());
+                    document.entities[&entity].fields.get(&field_id)
+                } else {
+                    None
+                };
                 let is_date_value = is_date && matches!(stored, Some(Value::Date(_)));
                 blank_date_formats.push(
                     is_date
@@ -1573,15 +1593,7 @@ fn promote_import_presentation(
                 !source_date_locale && dates.iter().flatten().all(|date| date == first)
             });
             if let Some(format) = uniform_date.filter(|format| *format != DateFormat::Iso) {
-                document
-                    .schemas
-                    .get_mut(&schema_id)
-                    .expect("import schema")
-                    .fields
-                    .get_mut(&field_id)
-                    .expect("import field")
-                    .date_format = Some(format);
-                formats_changed = true;
+                date_formats.push((schema_id.clone(), field_id.clone(), format));
             }
             let common_bold = !bolds.is_empty() && bolds.iter().all(|value| *value);
             let common_italic = !italics.is_empty() && italics.iter().all(|value| *value);
@@ -1664,18 +1676,29 @@ fn promote_import_presentation(
     // Palette and cell bounds are enforced before the store is admitted.
     // A field date format changes the document, so only then is the import
     // admitted again; otherwise the admitted runtime takes the store as is.
-    let mut runtime = match (formats_changed, profile) {
-        (false, _) => runtime.take().expect("admitted import runtime"),
-        (true, SessionProfile::WorkingSize) => {
-            drop(runtime.take());
-            DesignerRuntime::from_document_working_size(document, occurrence_id)?
+    let mut runtime = if date_formats.is_empty() {
+        runtime
+    } else {
+        let mut document = runtime.session.export_snapshot().into_document();
+        drop(runtime);
+        for (schema, field, format) in date_formats {
+            document
+                .schemas
+                .get_mut(&schema)
+                .expect("import schema")
+                .fields
+                .get_mut(&field)
+                .expect("import field")
+                .date_format = Some(format);
         }
-        (true, SessionProfile::Ordinary) => {
-            drop(runtime.take());
-            DesignerRuntime::from_document(document, occurrence_id)?
-        }
-        (true, SessionProfile::TextCapacity) => {
-            unreachable!("capacity presentation remains in metadata")
+        match profile {
+            SessionProfile::WorkingSize => {
+                DesignerRuntime::from_document_working_size(document, occurrence_id)?
+            }
+            SessionProfile::Ordinary => DesignerRuntime::from_document(document, occurrence_id)?,
+            SessionProfile::TextCapacity => {
+                unreachable!("capacity presentation remains in metadata")
+            }
         }
     };
     runtime.set_presentation(store)?;
@@ -1817,22 +1840,15 @@ fn validate_selection(
         false,
     )
     .map_err(interop_admission_error)?;
-    let source_bytes = serde_json::to_vec(workbook)
-        .map_err(|_| tracker_error("source workbook is not encodable"))?
-        .len();
-    if working {
-        super::interop_adapter::check_import_limit(
-            super::CapacityLimit::SerializedSourceBytes,
-            super::interop_adapter::MAX_WORKING_SERIALIZED_SOURCE_BYTES,
-            source_bytes,
-            None,
-            false,
-        )
-        .map_err(interop_admission_error)?;
-    } else if source_bytes > super::interop_adapter::MAX_EXPANDED_BYTES {
-        return Err(tracker_error(
-            "source workbook exceeds the bounded expanded profile",
-        ));
+    // Working-size geometry admission above already checks serialized source bytes.
+    if !working {
+        let source_bytes = super::serialized_projection_bytes(workbook)
+            .map_err(|_| tracker_error("source workbook is not encodable"))?;
+        if source_bytes > super::interop_adapter::MAX_EXPANDED_BYTES {
+            return Err(tracker_error(
+                "source workbook exceeds the bounded expanded profile",
+            ));
+        }
     }
     Ok(())
 }
@@ -1925,7 +1941,7 @@ fn build_import_sheet(
             schema: schema_id.clone(),
             fields: BTreeMap::new(),
         };
-        let mut styles = Vec::new();
+        let mut styles = Vec::with_capacity(sheet.columns.len());
         for (column, cell) in cells.iter().enumerate() {
             let kind = selection.column_types[index][column].field_type();
             let value = if let Some(formula) = &cell.formula {

@@ -20,16 +20,24 @@ function take(arena) {
   return new Uint8Array(wasm.memory.buffer,
     wasm[`tachiko_designer_${arena}_ptr`](), wasm[`tachiko_designer_${arena}_len`]()).slice();
 }
+function trace(phase, operation) {
+  console.error(`wasm trace ${JSON.stringify({phase, operation,
+    now_ms: performance.now(), linear_bytes: wasm.memory.buffer.byteLength,
+    ...process.memoryUsage()})}`);
+}
 function run(request, bytes) {
   // Match native: input encoding/copy and reply decoding/copy are outside the timer.
   put("request", encoder.encode(JSON.stringify(request)));
   put("project", bytes);
+  trace("before_run", request.type);
   const start = performance.now();
   wasm.tachiko_designer_spreadsheet_run();
   const elapsed = performance.now() - start;
+  trace("after_run", request.type);
   const reply = take("response");
   const value = JSON.parse(decoder.decode(reply));
   assert.equal(value.status, "ok", JSON.stringify(value));
+  trace("after_decode", request.type);
   return {payload: value.response.payload, ms: elapsed, bytes: reply.length};
 }
 
