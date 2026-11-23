@@ -6,7 +6,7 @@ use super::{
     tachiko_designer_request_run,
 };
 use crate::host_bridge::DesignerHost;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn exchange(host: &mut DesignerHost, request: &Value) -> Value {
     let bytes = serde_json::to_vec(request).unwrap();
