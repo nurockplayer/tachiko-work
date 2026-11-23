@@ -2023,6 +2023,8 @@ pub enum DesignerError {
     TableAlreadyHasHeaders,
     #[error("the table has no data row to promote")]
     NoHeaderRow,
+    #[error("a first-row formula has a failed or unavailable calculation")]
+    HeaderFormulaUnavailable,
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
     #[error(
@@ -2180,6 +2182,7 @@ impl DesignerError {
             Self::A1Translation { code, .. } => (code.as_str(), Vec::new()),
             Self::TableAlreadyHasHeaders => ("table_already_has_headers", Vec::new()),
             Self::NoHeaderRow => ("no_header_row", Vec::new()),
+            Self::HeaderFormulaUnavailable => ("header_formula_unavailable", Vec::new()),
             Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
                 ("capacity_exceeded", Vec::new())
             }

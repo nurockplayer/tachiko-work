@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_workspace_engine::trim_display_name;
 
 use crate::{
-    DesignerError, DesignerRuntime, FieldRef, HeaderFallbackProjection, HeaderFallbackReason,
-    PublicationProjection, SchemaId, SemanticCommand, auto_input, blank_workbook, display_text,
-    name_admission, view_value,
+    DesignerError, DesignerResponse, DesignerRuntime, FieldRef, HeaderFallbackProjection,
+    HeaderFallbackReason, PublicationProjection, SchemaId, SemanticCommand, auto_input,
+    blank_workbook, display_text, name_admission, view_value,
 };
 
 fn header_names(
@@ -76,20 +76,23 @@ impl DesignerRuntime {
             .iter()
             .map(|value| (&value.field.field, value))
             .collect();
-        Ok(spec
-            .columns
+        spec.columns
             .iter()
             .map(|column| {
+                let value = values.get(&column.id).and_then(|value| view_value(value));
+                if matches!(row.fields.get(&column.id), Some(crate::Value::Formula(_)))
+                    && value.is_none()
+                {
+                    return Err(DesignerError::HeaderFormulaUnavailable);
+                }
                 let (number, date) =
                     auto_input::cell_formats(&self.presentation, column, row.id.as_str());
-                values
-                    .get(&column.id)
-                    .and_then(|value| view_value(value))
+                Ok(value
                     .as_ref()
                     .and_then(|value| display_text::display_text(value, number, date))
-                    .unwrap_or_default()
+                    .unwrap_or_default())
             })
-            .collect())
+            .collect()
     }
 
     pub(super) fn promote_first_row_to_headers(
@@ -142,6 +145,22 @@ impl DesignerRuntime {
         forward.push(SemanticCommand::RemoveEntity {
             entity: row_id.clone(),
         });
+        if let Some(imported) = &self.imported {
+            let mut metadata = imported.metadata.clone();
+            metadata
+                .sheets
+                .iter_mut()
+                .find(|sheet| sheet.schema_id == schema_id.as_str())
+                .expect("imported metadata covers the promoted schema")
+                .has_header = true;
+            // The operation-specific labels must fit alongside the complete
+            // imported publication before its commands or history are committed.
+            self.preflight_imported_reply(&metadata, |candidate| {
+                let mut publication = candidate.publish_commands("resident/0", &forward)?;
+                publication.header_fallbacks.clone_from(&fallbacks);
+                Ok(DesignerResponse::Published(publication))
+            })?;
+        }
         let mut publication = self.record_imported_table_edit(expected, forward, inverse)?;
         publication.header_fallbacks = fallbacks;
         Ok(publication)
