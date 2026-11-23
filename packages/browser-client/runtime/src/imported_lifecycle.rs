@@ -157,6 +157,7 @@ impl DesignerRuntime {
             matches!(
                 command,
                 SemanticCommand::SetSchemaDisplayName { .. }
+                    | SemanticCommand::SetSchemaHeaderless { .. }
                     | SemanticCommand::AppendCollection { .. }
                     | SemanticCommand::RemoveCollection { .. }
             )
@@ -169,8 +170,15 @@ impl DesignerRuntime {
             .sheets
             .retain(|sheet| document.schemas.contains_key(sheet.schema_id.as_str()));
         for sheet in &mut state.metadata.sheets {
-            if let Some(name) = &document.schemas[sheet.schema_id.as_str()].display_name {
+            let schema = &document.schemas[sheet.schema_id.as_str()];
+            if let Some(name) = &schema.display_name {
                 sheet.name.clone_from(name);
+            }
+            if commands.iter().any(|command| {
+                matches!(command, SemanticCommand::SetSchemaHeaderless { schema: id, .. }
+                    if id == &schema.id)
+            }) {
+                sheet.has_header = !schema.headerless;
             }
         }
         for schema in document.schemas.values() {
@@ -213,6 +221,7 @@ fn same_mapping(left: &InteropMetadata, right: &InteropMetadata) -> bool {
         && left.sheets.iter().zip(&right.sheets).all(|(left, right)| {
             left.schema_id == right.schema_id
                 && left.name == right.name
+                && left.has_header == right.has_header
                 && left.columns.len() == right.columns.len()
                 && left
                     .columns

@@ -4,8 +4,8 @@ use tachiko_storage::{decode_portable_package_v1, encode_portable_package_v1, en
 use tachiko_workspace_engine::Document;
 
 use crate::interop_adapter::{
-    CellStyle, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
-    export_xlsx, import_xlsx,
+    CellStyle, ImportOptions, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
+    SourceWorkbook, export_csv_for_profile, export_xlsx, import_csv, import_xlsx, import_xlsx_with,
 };
 use crate::{
     DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ImportFieldType,
@@ -215,6 +215,113 @@ fn xlsx(runtime: &DesignerRuntime, metadata: &InteropMetadata) -> Vec<u8> {
             .unwrap(),
     )
     .unwrap()
+}
+
+fn headerless_csv() -> SourceWorkbook {
+    import_csv(
+        b"Item,Price\nTea,120\nCoffee,180\n",
+        &ImportOptions {
+            header: false,
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+fn promotion_exports(runtime: &DesignerRuntime, metadata: &InteropMetadata) -> (Vec<u8>, Vec<u8>) {
+    let workbook = runtime
+        .export_imported_workbook(
+            runtime.current_revision(),
+            metadata,
+            crate::interop_document::ImportedOutput::Csv(&metadata.sheets[0].schema_id),
+        )
+        .unwrap();
+    (
+        export_csv_for_profile(&workbook.sheets[0], runtime.imported_output_profile()).unwrap(),
+        xlsx(runtime, metadata),
+    )
+}
+
+fn assert_imported_header_promotion(source: &SourceWorkbook) {
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text; 2]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut runtime, imported) =
+        import_workbook_working_size(source, &selection, OCCURRENCE).unwrap();
+    let original = imported.metadata;
+    assert!(!original.sheets[0].has_header);
+    let before = promotion_exports(&runtime, &original);
+    let collection = imported.opened.bootstrap.default_collection;
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::PromoteFirstRowToHeaders {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection,
+        })
+        .unwrap()
+    else {
+        panic!("expected header promotion publication")
+    };
+    let promoted = publication.import_metadata.unwrap();
+    assert!(promoted.sheets[0].has_header);
+    assert!(
+        runtime
+            .export_workbook(runtime.current_revision(), &original)
+            .is_err()
+    );
+    let after = promotion_exports(&runtime, &promoted);
+    assert_eq!(after.0, b"Item,Price\r\nTea,120\r\nCoffee,180\r\n");
+    let decoded = import_xlsx(&after.1).unwrap();
+    assert!(decoded.sheets[0].has_header);
+    assert_eq!(decoded.sheets[0].columns[0].name, "Item");
+    assert_eq!(decoded.sheets[0].columns[1].name, "Price");
+    assert_eq!(decoded.sheets[0].rows.len(), 2);
+    for (row, (item, price)) in decoded.sheets[0]
+        .rows
+        .iter()
+        .zip([("Tea", "120"), ("Coffee", "180")])
+    {
+        assert_eq!(row[0].value, SourceValue::Text { value: item.into() });
+        assert_eq!(
+            row[1].value,
+            SourceValue::Text {
+                value: price.into()
+            }
+        );
+    }
+    let revision = runtime.current_revision().to_owned();
+    let undone = runtime.history_edit(&revision, false).unwrap();
+    assert_eq!(undone.import_metadata.as_ref(), Some(&original));
+    assert_eq!(
+        promotion_exports(&runtime, undone.import_metadata.as_ref().unwrap()),
+        before
+    );
+    let revision = runtime.current_revision().to_owned();
+    let redone = runtime.history_edit(&revision, true).unwrap();
+    assert_eq!(redone.import_metadata.as_ref(), Some(&promoted));
+    assert_eq!(
+        promotion_exports(&runtime, redone.import_metadata.as_ref().unwrap()),
+        after
+    );
+}
+
+#[test]
+fn headerless_csv_promotion_exports_headers_and_restores_mapping_with_history() {
+    assert_imported_header_promotion(&headerless_csv());
+}
+
+#[test]
+fn headerless_xlsx_promotion_exports_headers_and_restores_mapping_with_history() {
+    let encoded = export_xlsx(&headerless_csv()).unwrap();
+    let source = import_xlsx_with(
+        &encoded,
+        &ImportOptions {
+            header: false,
+            ..ImportOptions::default()
+        },
+    )
+    .unwrap();
+    assert_imported_header_promotion(&source);
 }
 
 #[derive(Debug, PartialEq)]

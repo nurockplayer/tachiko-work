@@ -142,7 +142,7 @@ impl DesignerRuntime {
         forward.push(SemanticCommand::RemoveEntity {
             entity: row_id.clone(),
         });
-        let mut publication = self.record_edit(expected, forward, inverse)?;
+        let mut publication = self.record_imported_table_edit(expected, forward, inverse)?;
         publication.header_fallbacks = fallbacks;
         Ok(publication)
     }
