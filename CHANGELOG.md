@@ -9,6 +9,10 @@ All notable changes to Tachiko Work are documented in this file.
   blank and duplicate labels receive reported deterministic generated names.
   Promotion is one Undo/Redo step and survives v3 and portable `.ro` reopen
   (#924, #668 PR4).
+- `write_cell_at` accepts distant stored positions without a request change.
+  Intervening rows and generated Auto columns have empty optional cells;
+  the write and all created structure Undo/Redo together and survive v3/portable
+  `.ro` reopen. Working-size row/field limits refuse atomically (#923, #668 PR3).
 
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;

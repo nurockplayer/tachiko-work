@@ -286,19 +286,13 @@ fn blank_workbook_v3_and_portable_reopen_preserve_schema_labels_and_cells() {
 }
 
 #[test]
-fn blank_workbook_distant_zero_stale_and_formula_writes_refuse_without_publication() {
+fn blank_workbook_zero_stale_and_formula_writes_refuse_without_publication() {
     let mut runtime = filled();
     write(&mut runtime, 3, 1, "Coffee");
     let before = runtime.session.document().clone();
     let revision = runtime.current_revision().to_owned();
     let history = runtime.undo.len();
-    for (row, column, input) in [
-        (40, 2, "1"),
-        (1, 4, "1"),
-        (0, 1, "1"),
-        (1, 0, "1"),
-        (4, 3, "=1+1"),
-    ] {
+    for (row, column, input) in [(0, 1, "1"), (1, 0, "1"), (4, 3, "=1+1")] {
         let error = runtime
             .write_cell_at(
                 &revision,
@@ -311,9 +305,6 @@ fn blank_workbook_distant_zero_stale_and_formula_writes_refuse_without_publicati
                 },
             )
             .unwrap_err();
-        if row == 40 {
-            assert!(error.to_string().contains("distant writes are unsupported"));
-        }
         if input.starts_with('=') {
             assert!(error.to_string().contains("Auto formulas are unsupported"));
         }
@@ -396,5 +387,234 @@ fn blank_workbook_written_cells_and_headerless_state_survive_delta_and_merge() {
             .schemas
             .values()
             .all(|schema| schema.headerless)
+    );
+}
+
+fn distant() -> DesignerRuntime {
+    let mut runtime = filled();
+    write(&mut runtime, 3, 1, "Coffee");
+    write(&mut runtime, 40, 6, "923");
+    runtime
+}
+
+#[test]
+fn distant_write_creates_sparse_rows_and_generated_columns() {
+    let mut runtime = distant();
+    let revision = runtime.current_revision().to_owned();
+    let table = runtime
+        .query_table_window(&revision, "sheet", &TableView::default(), 0, 40, true)
+        .unwrap();
+    assert_eq!(table.total_rows, 40);
+    assert_eq!(table.columns.len(), 6);
+    for (column, letter) in table.columns.iter().zip('A'..='F') {
+        assert_eq!(column.display_name, format!("Column {letter}"));
+        assert_eq!(column.field_type, "auto");
+    }
+    assert_eq!(table.rows[39].position, Some(40));
+    assert_eq!(
+        table.rows[39]
+            .fields
+            .iter()
+            .find(|field| field.target.field == table.columns[5].id)
+            .unwrap()
+            .stored,
+        Some(StoredValueProjection::Number { value: 923.0 })
+    );
+    let column_ids = table
+        .columns
+        .iter()
+        .map(|column| column.id.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        table.rows[3..39]
+            .iter()
+            .all(|row| row.fields.is_empty() && row.blank_fields == column_ids)
+    );
+    assert!(table.rows[..3].iter().all(|row| {
+        column_ids[2..]
+            .iter()
+            .all(|id| row.blank_fields.contains(id))
+    }));
+    assert_eq!(
+        runtime
+            .session
+            .document()
+            .entities
+            .values()
+            .map(|entity| entity.fields.len())
+            .sum::<usize>(),
+        6
+    );
+}
+
+#[test]
+fn distant_write_undo_redo_restores_the_entire_structural_edit() {
+    let mut runtime = filled();
+    let before = runtime.session.document().clone();
+    let presentation = runtime.presentation.clone();
+    let history = runtime.undo.len();
+    write(&mut runtime, 40, 6, "$923.00");
+    let after = runtime.session.document().clone();
+    let after_presentation = runtime.presentation.clone();
+    assert_eq!(runtime.undo.len(), history + 1);
+    let revision = runtime.current_revision().to_owned();
+    runtime.history_edit(&revision, false).unwrap();
+    assert_eq!(runtime.session.document(), &before);
+    assert_eq!(runtime.presentation, presentation);
+    let revision = runtime.current_revision().to_owned();
+    runtime.history_edit(&revision, true).unwrap();
+    assert_eq!(runtime.session.document(), &after);
+    assert_eq!(runtime.presentation, after_presentation);
+}
+
+#[test]
+fn distant_write_v3_and_portable_reopen_preserve_positions() {
+    let mut runtime = distant();
+    let document = runtime.session.document().clone();
+    let revision = runtime.current_revision().to_owned();
+    let before = runtime
+        .query_table_window(&revision, "sheet", &TableView::default(), 0, 40, true)
+        .unwrap();
+    let v3 = runtime.export_project_v3(&revision).unwrap();
+    let portable = runtime.export_portable_ro(&revision).unwrap();
+    for (portable, bytes) in [(false, v3.bytes), (true, portable.bytes)] {
+        let mut reopened = None;
+        let occurrence = "00000000-0000-4000-8000-000000000923";
+        if portable {
+            open_portable_ro_working_size(&mut reopened, &bytes, occurrence).unwrap();
+        } else {
+            open_project_working_size(&mut reopened, &bytes, occurrence).unwrap();
+        }
+        let mut reopened = reopened.unwrap();
+        assert_eq!(reopened.session.document(), &document);
+        let revision = reopened.current_revision().to_owned();
+        let after = reopened
+            .query_table_window(&revision, "sheet", &TableView::default(), 0, 40, true)
+            .unwrap();
+        assert_eq!(after.rows, before.rows);
+        assert_eq!(after.columns, before.columns);
+    }
+}
+
+#[test]
+fn distant_write_capacity_refusals_are_typed_and_atomic() {
+    let mut runtime = filled();
+    let before = runtime.session.document().clone();
+    let presentation = runtime.presentation.clone();
+    let revision = runtime.current_revision().to_owned();
+    let history = runtime.undo.len();
+    let serial = runtime.row_serial;
+    for (row, column, limit, maximum, attempted) in [
+        (10_001, 6, crate::CapacityLimit::TableRows, 10_000, 10_001),
+        (40, 33, crate::CapacityLimit::TableFields, 32, 33),
+        (
+            usize::MAX,
+            1,
+            crate::CapacityLimit::TableRows,
+            10_000,
+            usize::MAX,
+        ),
+    ] {
+        let error = runtime
+            .write_cell_at(
+                &revision,
+                "sheet",
+                row,
+                column,
+                &ScalarEditInput::Auto {
+                    input: "923".into(),
+                    date_order: None,
+                },
+            )
+            .unwrap_err();
+        let crate::DesignerError::CapacityExceeded(capacity) = error else {
+            panic!("typed capacity refusal expected")
+        };
+        assert_eq!(
+            (capacity.limit, capacity.maximum, capacity.attempted),
+            (limit, maximum, attempted)
+        );
+        assert_eq!(capacity.collection.as_deref(), Some("sheet"));
+        assert_eq!(runtime.session.document(), &before);
+        assert_eq!(runtime.presentation, presentation);
+        assert_eq!(runtime.current_revision(), revision);
+        assert_eq!(runtime.undo.len(), history);
+        assert!(runtime.redo.is_empty());
+        assert_eq!(runtime.row_serial, serial);
+    }
+    write(&mut runtime, 10_000, 32, "923");
+    let revision = runtime.current_revision().to_owned();
+    let edge = runtime
+        .query_table_window(&revision, "sheet", &TableView::default(), 9_999, 1, true)
+        .unwrap();
+    assert_eq!(edge.total_rows, 10_000);
+    assert_eq!(edge.columns[31].display_name, "Column AF");
+    assert_eq!(edge.rows[0].position, Some(10_000));
+    assert_eq!(
+        edge.rows[0]
+            .fields
+            .iter()
+            .find(|field| field.target.field == edge.columns[31].id)
+            .unwrap()
+            .stored,
+        Some(StoredValueProjection::Number { value: 923.0 })
+    );
+}
+
+#[test]
+fn distant_write_preserves_declared_type_admission_and_adjacent_writes() {
+    let mut runtime = DesignerRuntime::new_working_size_table(
+        "00000000-0000-4000-8000-000000000923",
+        "Numbers",
+        &[crate::NewTableColumnInput {
+            name: "Amount".into(),
+            field_type: "number".into(),
+            required: true,
+        }],
+    )
+    .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let revision = runtime.current_revision().to_owned();
+    let before = runtime.session.document().clone();
+    assert!(
+        runtime
+            .write_cell_at(
+                &revision,
+                &collection,
+                40,
+                1,
+                &ScalarEditInput::Number {
+                    input: "invalid".into()
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(runtime.session.document(), &before);
+    assert_eq!(runtime.current_revision(), revision);
+    for row in [1, 2, 40] {
+        let revision = runtime.current_revision().to_owned();
+        runtime
+            .write_cell_at(
+                &revision,
+                &collection,
+                row,
+                1,
+                &ScalarEditInput::Number { input: "7".into() },
+            )
+            .unwrap();
+    }
+    let revision = runtime.current_revision().to_owned();
+    let table = runtime
+        .query_table_window(&revision, &collection, &TableView::default(), 0, 40, true)
+        .unwrap();
+    assert_eq!(table.columns[0].field_type, "number");
+    assert_eq!(
+        table.rows[39].fields[0].stored,
+        Some(StoredValueProjection::Number { value: 7.0 })
+    );
+    assert!(
+        table.rows[2..39]
+            .iter()
+            .all(|row| row.fields[0].stored == Some(StoredValueProjection::Number { value: 0.0 }))
     );
 }
