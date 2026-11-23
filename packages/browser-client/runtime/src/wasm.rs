@@ -204,6 +204,24 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
     })
 }
 
+// Called only after authoritative XLSX admission, with referenced XML sizes.
+// Keep an 8 MiB margin below the raw-ABI 256 MiB budget. The allocator can
+// reuse existing free blocks; any additional growth is bounded by this request
+// plus allocator/page rounding, rather than by compressed or padded source size.
+pub(crate) fn reserve_xlsx_heap(xml_bytes: usize) {
+    if xml_bytes < 64 * 1024 {
+        return;
+    }
+    let current = core::arch::wasm32::memory_size::<0>() * 64 * 1024;
+    let headroom = xml_bytes
+        .saturating_mul(32)
+        .min((248 * 1024 * 1024usize).saturating_sub(current));
+    let mut buffer = Vec::<u8>::new();
+    if buffer.try_reserve_exact(headroom).is_ok() {
+        drop(std::hint::black_box(buffer));
+    }
+}
+
 /// Fully admit and install one project candidate from the project arena.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_open() {

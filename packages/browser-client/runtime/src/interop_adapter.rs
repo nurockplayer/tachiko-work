@@ -4265,14 +4265,26 @@ pub(crate) fn import_xlsx_profile(
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let mut workbook = SourceWorkbook { sheets, ledger };
     cap_ledger(&mut workbook.ledger);
-    if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
+    let workbook = if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
         // Validate isolated Number-feasibility hypotheses without changing
         // the typed values the user sees and explicitly selects.
         validate_capacity_source_inspection(&workbook)?;
-        return Ok(workbook);
+        workbook
+    } else {
+        validate_import_geometry_profile(&workbook, working)?;
+        finish_source_admission(workbook, working)
+    };
+    #[cfg(target_arch = "wasm32")]
+    if !workbook.ledger.iter().any(|finding| finding.blocking) {
+        let xml_bytes = worksheet_paths
+            .keys()
+            .map(|path| parts[path].len())
+            .sum::<usize>()
+            + parts.get("xl/sharedStrings.xml").map_or(0, Vec::len);
+        drop(parts);
+        crate::wasm::reserve_xlsx_heap(xml_bytes);
     }
-    validate_import_geometry_profile(&workbook, working)?;
-    Ok(finish_source_admission(workbook, working))
+    Ok(workbook)
 }
 
 /// Leading title rows are skipped only when a complete header follows them.
