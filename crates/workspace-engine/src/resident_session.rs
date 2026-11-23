@@ -1725,12 +1725,13 @@ fn collect_schema_projection_changes(
         {
             changes.address_index_changed = true;
         }
-        // The column order (R4a) is schema presentation too.
+        // Column order and header state also change schema presentation.
         if before_schema.map(|schema| {
             (
                 &schema.id,
                 &schema.key,
                 &schema.display_name,
+                schema.headerless,
                 &schema.field_order,
             )
         }) != after_schema.map(|schema| {
@@ -1738,6 +1739,7 @@ fn collect_schema_projection_changes(
                 &schema.id,
                 &schema.key,
                 &schema.display_name,
+                schema.headerless,
                 &schema.field_order,
             )
         }) {

@@ -231,8 +231,9 @@ fn promotion_retains_field_ids_and_bound_direct_and_same_row_formulas() {
     let mut runtime = typed();
     let before = runtime.session.document().clone();
     let first = runtime.collection_specs["sheet"].entities[0].clone();
+    let schema_id = runtime.collection_specs["sheet"].summary.id.clone();
     let publication = promote(&mut runtime);
-    assert!(!publication.schemas.is_empty());
+    assert_eq!(publication.schemas, vec![schema_id]);
     let after = runtime.session.document();
     for (id, entity) in &before.entities {
         if *id != first {
