@@ -4,6 +4,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Generate unique column display names for positional writes after column
+  deletion, preserving surviving names and using deterministic suffixes (#919).
 - Promote the first stored data row of a headerless table with
   `promote_first_row_to_headers`. Headings retain field identities and types;
   blank and duplicate labels receive reported deterministic generated names.

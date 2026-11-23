@@ -68,7 +68,13 @@ fn header_promotion_bridge_consumes_row_and_reports_blank_and_duplicate_fallback
         "occurrence_id":std::str::from_utf8(OCCURRENCE).unwrap()}),
     );
     let mut revision = "resident/0".to_owned();
-    for (column, input) in [(1, ""), (2, "Column A"), (3, " Item "), (4, "Item")] {
+    for (column, input) in [
+        (1, ""),
+        (2, "Column A"),
+        (3, " Item "),
+        (4, "Item"),
+        (5, "Column A (2)"),
+    ] {
         let publication = ok(
             &mut host,
             &json!({"type":"write_cell_at",
@@ -102,13 +108,14 @@ fn header_promotion_bridge_consumes_row_and_reports_blank_and_duplicate_fallback
     let mut remaining = before["rows"][1].clone();
     remaining["position"] = json!(1);
     assert_eq!(after["rows"][0], remaining);
-    assert_eq!(after["columns"][0]["display_name"], "Column A (2)");
+    assert_eq!(after["columns"][0]["display_name"], "Column A (3)");
+    assert_eq!(after["columns"][4]["display_name"], "Column A (2)");
     assert_eq!(after["columns"][2]["display_name"], "Item");
     assert_eq!(after["columns"][3]["display_name"], "Column D");
     assert_eq!(
         publication["header_fallbacks"],
         json!([
-            {"field":after["columns"][0]["id"], "name":"Column A (2)", "reason":"blank"},
+            {"field":after["columns"][0]["id"], "name":"Column A (3)", "reason":"blank"},
             {"field":after["columns"][3]["id"], "name":"Column D", "reason":"duplicate"}
         ])
     );

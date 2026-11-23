@@ -41,14 +41,7 @@ fn header_names(
             (!seen.insert(name.to_owned())).then_some(HeaderFallbackReason::Duplicate)
         };
         names.push(if reason.is_some() {
-            let base = blank_workbook::column_label(index + 1);
-            let mut generated = base.clone();
-            let mut suffix = 2;
-            while !occupied.insert(generated.clone()) {
-                generated = format!("{base} ({suffix})");
-                suffix += 1;
-            }
-            generated
+            blank_workbook::column_label(index + 1, &mut occupied)
         } else {
             name.to_owned()
         });

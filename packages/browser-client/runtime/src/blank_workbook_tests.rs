@@ -52,6 +52,77 @@ fn filled() -> DesignerRuntime {
 }
 
 #[test]
+fn delete_then_expand_preserves_surviving_names_and_generates_unique_labels() {
+    for (count, deleted, row, column, names) in [
+        (2, 0, 1, 2, vec!["Column B", "Column B (2)"]),
+        (2, 1, 1, 2, vec!["Column A", "Column B"]),
+        (
+            3,
+            0,
+            40,
+            6,
+            vec![
+                "Column B",
+                "Column C",
+                "Column C (2)",
+                "Column D",
+                "Column E",
+                "Column F",
+            ],
+        ),
+        (
+            3,
+            1,
+            40,
+            6,
+            vec![
+                "Column A",
+                "Column C",
+                "Column C (2)",
+                "Column D",
+                "Column E",
+                "Column F",
+            ],
+        ),
+        (
+            3,
+            2,
+            40,
+            6,
+            vec![
+                "Column A", "Column B", "Column C", "Column D", "Column E", "Column F",
+            ],
+        ),
+    ] {
+        let mut runtime = blank();
+        write(&mut runtime, 1, count, "survivor");
+        let before = window(&mut runtime);
+        runtime
+            .remove_column(&before.revision, "sheet", &before.columns[deleted].id)
+            .unwrap();
+        let retained = window(&mut runtime).columns;
+        write(&mut runtime, row, column, "919");
+        let after = window(&mut runtime);
+        assert_eq!(&after.columns[..retained.len()], retained.as_slice());
+        assert_eq!(
+            after
+                .columns
+                .iter()
+                .map(|c| c.display_name.as_str())
+                .collect::<Vec<_>>(),
+            names
+        );
+        assert_eq!(after.total_rows, row);
+        let written = &runtime.session.document().entities
+            [&runtime.collection_specs["sheet"].entities[row - 1]];
+        assert_eq!(
+            written.fields[after.columns[column - 1].id.as_str()],
+            crate::Value::Number(919.0.try_into().unwrap())
+        );
+    }
+}
+
+#[test]
 fn blank_workbook_clear_unallocated_cells_is_no_change_and_write_still_undoes() {
     let mut runtime = blank();
     let blank_document = runtime.session.document().clone();
