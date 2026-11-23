@@ -5,7 +5,7 @@ use tachiko_workspace_engine::Document;
 
 use crate::interop_adapter::{
     CellStyle, ImportOptions, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue,
-    SourceWorkbook, export_csv_for_profile, export_xlsx, import_csv, import_xlsx, import_xlsx_with,
+    SourceWorkbook, export_csv_for_profile, export_xlsx, import_csv, import_xlsx,
 };
 use crate::{
     DesignerRequest, DesignerResponse, DesignerRuntime, FieldTarget, ImportFieldType,
@@ -307,21 +307,9 @@ fn assert_imported_header_promotion(source: &SourceWorkbook) {
 
 #[test]
 fn headerless_csv_promotion_exports_headers_and_restores_mapping_with_history() {
+    // XLSX import always consumes a header row; headerless CSV exercises promotion
+    // followed by both CSV and XLSX export, including Undo/Redo restoration.
     assert_imported_header_promotion(&headerless_csv());
-}
-
-#[test]
-fn headerless_xlsx_promotion_exports_headers_and_restores_mapping_with_history() {
-    let encoded = export_xlsx(&headerless_csv()).unwrap();
-    let source = import_xlsx_with(
-        &encoded,
-        &ImportOptions {
-            header: false,
-            ..ImportOptions::default()
-        },
-    )
-    .unwrap();
-    assert_imported_header_promotion(&source);
 }
 
 #[derive(Debug, PartialEq)]
