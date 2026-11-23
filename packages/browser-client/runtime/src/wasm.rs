@@ -208,6 +208,7 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
 // Keep an 8 MiB margin below the raw-ABI 256 MiB budget. The allocator can
 // reuse existing free blocks; any additional growth is bounded by this request
 // plus allocator/page rounding, rather than by compressed or padded source size.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn reserve_xlsx_heap(xml_bytes: usize) {
     if xml_bytes < 64 * 1024 {
         return;
