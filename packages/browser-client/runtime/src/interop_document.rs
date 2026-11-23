@@ -5276,7 +5276,11 @@ impl ExportCell {
 
     /// The absolute, sheet-qualified address of a stable identity.
     fn absolute(&self) -> String {
-        format!("'{}'!${}${}", self.sheet, self.column, self.row)
+        if self.sheet.is_empty() {
+            format!("${}${}", self.column, self.row)
+        } else {
+            format!("'{}'!${}${}", self.sheet, self.column, self.row)
+        }
     }
 
     /// The relative, unqualified address of the owner's own row, so a

@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Translate and render headerless A1 formulas with row 1 as the first data row.
+  Add `render_a1_formula` and atomic `paste_cells_at`: positional block paste
+  allocates sparse rows and generated Auto columns like `write_cell_at`, with
+  one publication and Undo/Redo step (#936; Part of #668).
+
 - Reduce XLSX open serialization passes and temporary source buffers, and reuse
   the WASM spreadsheet reply arena without changing payloads or byte limits
   (Part of #678 5e; MVP item 7). Compact private XML attributes and small child

@@ -298,14 +298,22 @@ The ordinary worker/WASM/host request is `translate_a1_formula`; its fields
 use snake_case, and its success response is `a1_translation`.
 
 TypeScript geometry uses `headerRow` and sheet `collectionId`; the worker maps
-these to wire `header_row` and `collection_id`. Wire geometry supplies `header_row` (one-based A1 header row), ordered `rows` (entity
+these to wire `header_row` and `collection_id`. Wire geometry supplies `header_row` (one-based A1 header row, or zero for a headerless table with data starting at A1), ordered `rows` (entity
 ids for consecutive visible data rows), ordered `columns` (field ids from A),
 and optional `sheets: {name: {collection_id, header_row, rows, columns}}`.
 Columns must cover the collection exactly, without duplicate or unknown ids.
 Rows may be filtered or reordered, but must be distinct members of the named
 collection. The owner and target must be in the current geometry. Sheet names
 resolve case-insensitively and must be nonempty and unambiguous. Header offsets
-must be positive and representable.
+must be representable; zero is accepted only for a headerless schema.
+
+`renderA1Formula({expectedRevision, collectionId, rowEntityId, targetFieldId,
+geometry})` (wire `render_a1_formula`) renders the stored formula using the same
+geometry and returns `a1_translation` with A1 text in `source` and empty `notes`.
+It is read-only and revision-pinned. Same-row references render relatively;
+fixed identities render with absolute rows and columns. Whole-column aggregates
+render over the supplied complete data rows, starting at row 1 when `header_row`
+is zero. References outside the geometry refuse with `out_of_bounds`.
 
 A same-row reference with a relative row becomes `[.field]`. A fixed row or
 other row becomes `[entity.field]`. Relative references becoming fixed identities

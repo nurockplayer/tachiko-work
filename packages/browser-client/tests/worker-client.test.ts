@@ -347,6 +347,33 @@ describe("duplicate collection column names", () => {
 });
 
 describe("A1 translation transport", () => {
+  it("sends headerless reverse geometry and positional block paste without existing identities", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: unknown[] = [];
+    const rendered = {revision: "resident/0", source: "$A$1", notes: []};
+    const published = {base_revision: "resident/0", resulting_revision: "resident/1"};
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
+      postMessage: (message: {id: number; kind: string; request: {type: string}}) => {
+        requests.push(message.request);
+        const response = message.request.type === "render_a1_formula"
+          ? {type: "a1_translation", payload: rendered}
+          : {type: "published", payload: published};
+        receive?.({data: {id: message.id, status: "ok", response}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    await expect(client.renderA1Formula({expectedRevision: "resident/0", collectionId: "sheet", rowEntityId: "r2", targetFieldId: "total",
+      geometry: {headerRow: 0, rows: ["r1", "r2"], columns: ["amount", "total"]}})).resolves.toEqual(rendered);
+    await expect(client.pasteCellsAt("resident/0", "sheet", 1, 1, [["00123", "2"]])).resolves.toEqual(published);
+    expect(requests).toEqual([
+      {type: "render_a1_formula", expected_revision: "resident/0", collection_id: "sheet", row_entity_id: "r2", target_field_id: "total",
+        geometry: {header_row: 0, rows: ["r1", "r2"], columns: ["amount", "total"]}},
+      {type: "paste_cells_at", expected_revision: "resident/0", collection: "sheet", row: 1, column: 1, rows: [["00123", "2"]]},
+    ]);
+  });
+
   it("round-trips same-row translation and the partial-range refusal", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;

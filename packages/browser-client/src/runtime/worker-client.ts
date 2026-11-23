@@ -1,4 +1,4 @@
-import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
+import type { A1Translation, RenderA1FormulaInput, TranslateA1FormulaInput } from "./protocol.ts";
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWindowProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import { isCapacityFailure } from "./protocol.ts";
@@ -10,6 +10,7 @@ import type {
   FormulaCopy,
   TrackerCommand,
   ScalarEditInput,
+  PasteCellInput,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -200,6 +201,17 @@ export class WorkerDesignerClient implements DesignerClient {
       }}));
   }
 
+  async renderA1Formula(input: RenderA1FormulaInput): Promise<A1Translation> {
+    return expectResponse("a1_translation", await this.#command({type: "render_a1_formula",
+      expected_revision: input.expectedRevision, collection_id: input.collectionId,
+      row_entity_id: input.rowEntityId, target_field_id: input.targetFieldId,
+      geometry: {
+        header_row: input.geometry.headerRow, rows: input.geometry.rows, columns: input.geometry.columns,
+        ...(input.geometry.sheets === undefined ? {} : {sheets: Object.fromEntries(Object.entries(input.geometry.sheets).map(([name, sheet]) =>
+          [name, {collection_id: sheet.collectionId, header_row: sheet.headerRow, rows: sheet.rows, columns: sheet.columns}]))}),
+      }}));
+  }
+
   async previewCleanup(expectedRevision: string, operation: CleanupOperation): Promise<CleanupPreview> {
     return expectResponse("cleanup_preview", await this.#command({type: "preview_cleanup", expected_revision: expectedRevision, operation}));
   }
@@ -227,6 +239,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async writeCellAt(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection> {
     return this.trackerCommand({type: "write_cell_at", expected_revision: expectedRevision, collection, row, column, input});
+  }
+
+  async pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "paste_cells_at", expected_revision: expectedRevision, collection, row, column, rows});
   }
 
   async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {

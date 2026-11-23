@@ -18,6 +18,62 @@ fn exchange(host: &mut DesignerHost, request: &Value) -> Value {
 }
 
 #[test]
+fn positional_block_paste_uses_the_same_wasm_and_native_host_boundary() {
+    tachiko_designer_project_close();
+    let mut host = DesignerHost::default();
+    let created = exchange(
+        &mut host,
+        &json!({
+            "type":"new_blank_workbook", "occurrence_id":"00000000-0000-4000-8000-000000000936",
+            "profile":"working_size",
+        }),
+    );
+    assert_eq!(created["status"], "ok", "{created}");
+    let collection = created["response"]["payload"]["bootstrap"]["default_collection"].clone();
+    for (revision, row, column) in [("resident/0", 1, 1), ("resident/1", 40, 3)] {
+        let reply = exchange(
+            &mut host,
+            &json!({
+                "type":"paste_cells_at", "expected_revision":revision, "collection":collection,
+                "row":row, "column":column, "rows":[["00123", "2"], ["3", "4"]],
+            }),
+        );
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert_eq!(reply["response"]["type"], "published");
+        assert_eq!(reply["response"]["payload"]["base_revision"], revision);
+    }
+    let refused = exchange(
+        &mut host,
+        &json!({
+            "type":"paste_cells_at", "expected_revision":"resident/2", "collection":collection,
+            "row":1, "column":1, "rows":[["5", "6"], ["7", "=A1"]],
+        }),
+    );
+    assert_eq!(refused["status"], "error", "{refused}");
+    let table = exchange(
+        &mut host,
+        &json!({
+            "type":"query_table_window", "expected_revision":"resident/2", "collection":collection,
+            "start":0, "count":1,
+        }),
+    );
+    assert_eq!(table["status"], "ok", "{table}");
+    assert_eq!(table["response"]["payload"]["total_rows"], 41);
+    assert_eq!(
+        table["response"]["payload"]["columns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(
+        table["response"]["payload"]["rows"][0]["fields"][0]["stored"],
+        json!({"kind":"text", "value":"00123"})
+    );
+    tachiko_designer_project_close();
+}
+
+#[test]
 fn blank_workbook_wasm_and_native_host_requests_preserve_the_atomic_journey() {
     tachiko_designer_project_close();
     let mut host = DesignerHost::default();

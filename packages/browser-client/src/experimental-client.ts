@@ -1,4 +1,4 @@
-import type { A1Translation, TranslateA1FormulaInput } from "./runtime/protocol.ts";
+import type { A1Translation, RenderA1FormulaInput, TranslateA1FormulaInput } from "./runtime/protocol.ts";
 import {
   projectTransferFromEntries,
   projectTransferFromFiles,
@@ -22,6 +22,7 @@ import type {
   CellStyleChange,
   FieldTarget,
   PublicationProjection,
+  PasteCellInput,
   CapacityProjection,
   ProjectInspectionProjection,
 } from "./runtime/protocol.ts";
@@ -42,6 +43,8 @@ const MAX_PROJECT_TRANSFER_BYTES = 64 * 1024 * 1024;
 export interface ExperimentalDesignerClient extends DesignerClient {
   inspectCurrentProject(): Promise<ProjectInspectionProjection>;
   translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation>;
+  renderA1Formula(input: RenderA1FormulaInput): Promise<A1Translation>;
+  pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection>;
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Classify raw input in one Auto scalar cell. */
   editAuto(expectedRevision: string, target: FieldTarget, input: string, dateOrder?: "month_first" | "day_first"): Promise<PublicationProjection>;
@@ -211,4 +214,4 @@ export type {
   TableProjection,
 } from "./runtime/protocol.ts";
 
-export type { A1Geometry, A1SheetGeometry, A1Translation, A1TranslationNote, A1RefusalCode, TranslateA1FormulaInput } from "./runtime/protocol.ts";
+export type { A1Geometry, A1SheetGeometry, A1Translation, A1TranslationNote, A1RefusalCode, RenderA1FormulaInput, TranslateA1FormulaInput } from "./runtime/protocol.ts";

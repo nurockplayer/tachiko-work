@@ -83,6 +83,108 @@ fn fixture() -> DesignerRuntime {
         .unwrap()
 }
 
+#[test]
+fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
+    for (headerless, header_row) in [(true, 0), (false, 1)] {
+        for (text, source, display) in [
+            (
+                format!("A{}", header_row + 1),
+                "[r1.qty]",
+                format!("$A${}", header_row + 1),
+            ),
+            (
+                format!("A{}", header_row + 2),
+                "[.qty]",
+                format!("A{}", header_row + 2),
+            ),
+            (
+                format!("SUM(A{}:A{})", header_row + 1, header_row + 3),
+                "[items.qty:total]",
+                format!("SUM($A${}:$A${})", header_row + 1, header_row + 3),
+            ),
+        ] {
+            let mut document = fixture_document();
+            document.schemas.get_mut("Items").unwrap().headerless = headerless;
+            let mut runtime = Some(
+                DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000936")
+                    .unwrap(),
+            );
+            let mut translation = request(&text);
+            translation["geometry"]["header_row"] = header_row.into();
+            translation["geometry"]["columns"] =
+                serde_json::json!(["qty", "name", "price", "total"]);
+            let translated = call(&mut runtime, &translation);
+            assert_eq!(translated["status"], "ok", "{translated}");
+            assert_eq!(translated["response"]["payload"]["source"], source);
+            let updated = call(
+                &mut runtime,
+                &serde_json::json!({
+                    "type":"formula_update", "expected_revision":"resident/0",
+                    "target":{"entity":"r2", "field":"total"}, "source":source,
+                }),
+            );
+            assert_eq!(updated["status"], "ok", "{updated}");
+            let revision = updated["response"]["payload"]["resulting_revision"].clone();
+            let render = serde_json::json!({
+                "type":"render_a1_formula", "expected_revision":revision,
+                "collection_id":"Items", "row_entity_id":"r2", "target_field_id":"total",
+                "geometry":translation["geometry"],
+            });
+            let rendered = call(&mut runtime, &render);
+            assert_eq!(rendered["status"], "ok", "{rendered}");
+            assert_eq!(rendered["response"]["payload"]["source"], display);
+            assert_eq!(rendered["response"]["payload"]["revision"], revision);
+            translation["expected_revision"] = revision.clone();
+            translation["text"] = display.into();
+            let rebound = call(&mut runtime, &translation);
+            assert_eq!(rebound["status"], "ok", "{rebound}");
+            assert_eq!(rebound["response"]["payload"]["source"], source);
+            let mut stale = render;
+            stale["expected_revision"] = "resident/0".into();
+            refused(&mut runtime, &stale, "stale_revision");
+            let mut outside = translation;
+            outside["type"] = "render_a1_formula".into();
+            outside.as_object_mut().unwrap().remove("text");
+            outside["geometry"]["rows"] = serde_json::json!(["r2", "r3"]);
+            if source != "[.qty]" {
+                refused(&mut runtime, &outside, "out_of_bounds");
+            }
+        }
+    }
+}
+
+#[test]
+fn headerless_cross_sheet_a1_starts_at_row_one() {
+    let mut document = fixture_document();
+    document.schemas.get_mut("Items").unwrap().headerless = true;
+    document.schemas.get_mut("Other").unwrap().headerless = true;
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000936").unwrap(),
+    );
+    let mut input = request("Other!A1");
+    input["geometry"]["header_row"] = 0.into();
+    input["geometry"]["sheets"] = serde_json::json!({"Other":{
+        "collection_id":"Other", "header_row":0, "rows":["o1"], "columns":["x"],
+    }});
+    let translated = call(&mut runtime, &input);
+    assert_eq!(translated["status"], "ok", "{translated}");
+    assert_eq!(translated["response"]["payload"]["source"], "[o1.x]");
+    let updated = call(
+        &mut runtime,
+        &serde_json::json!({
+            "type":"formula_update", "expected_revision":"resident/0",
+            "target":{"entity":"r2", "field":"total"}, "source":"[o1.x]",
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    input["type"] = "render_a1_formula".into();
+    input["expected_revision"] = updated["response"]["payload"]["resulting_revision"].clone();
+    input.as_object_mut().unwrap().remove("text");
+    let rendered = call(&mut runtime, &input);
+    assert_eq!(rendered["status"], "ok", "{rendered}");
+    assert_eq!(rendered["response"]["payload"]["source"], "'Other'!$A$1");
+}
+
 fn request(text: &str) -> Json {
     let mut request: Json = serde_json::from_str(r#"{"type":"translate_a1_formula","expected_revision":"resident/0","collection_id":"Items","row_entity_id":"r2","target_field_id":"total","text":"","geometry":{"header_row":1,"rows":["r1","r2","r3"],"columns":["name","qty","price","total"]}}"#).unwrap();
     request["text"] = text.into();

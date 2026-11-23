@@ -614,6 +614,7 @@ export type CellStyleChange =
 export type TrackerCommand =
   | { type: "promote_first_row_to_headers"; expected_revision: string; collection: string }
   | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
+  | { type: "paste_cells_at"; expected_revision: string; collection: string; row: number; column: number; rows: PasteCellInput[][] }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
@@ -661,13 +662,14 @@ export type FormulaCopy = {
   relative_columns: boolean;
 };
 
-/** Explicit, revision-pinned A1 geometry. Field and entity ids are stable identities. */
+/** Explicit, revision-pinned A1 geometry. headerRow is 0 for headerless row-1 data; otherwise the 1-based header row. Field and entity ids are stable identities. */
 export type A1SheetGeometry = {collectionId: string; headerRow: number; rows: string[]; columns: string[]};
 export type A1Geometry = Omit<A1SheetGeometry, "collectionId"> & {sheets?: Record<string, A1SheetGeometry>};
 export type TranslateA1FormulaInput = {
   expectedRevision: string; collectionId: string; rowEntityId: string; targetFieldId: string;
   text: string; geometry: A1Geometry;
 };
+export type RenderA1FormulaInput = Omit<TranslateA1FormulaInput, "text">;
 export type A1TranslationNote = "relative_copy_semantics_changed" | "range_tracks_collection";
 export type A1RefusalCode = "unknown_sheet" | "out_of_bounds" | "header_reference" | "unsupported_range"
   | "unsupported_criterion" | "unsupported_function" | "unsupported_operator" | "formula_syntax"
@@ -675,6 +677,7 @@ export type A1RefusalCode = "unknown_sheet" | "out_of_bounds" | "header_referenc
 export type A1Translation = {revision: string; source: string; notes: A1TranslationNote[]};
 
 export type DesignerRequest =
+  | {type: "render_a1_formula"; expected_revision: string; collection_id: string; row_entity_id: string; target_field_id: string; geometry: {header_row: number; rows: string[]; columns: string[]; sheets?: Record<string, {collection_id: string; header_row: number; rows: string[]; columns: string[]}>}}
   | {type: "translate_a1_formula"; expected_revision: string; collection_id: string; row_entity_id: string; target_field_id: string; text: string; geometry: {header_row: number; rows: string[]; columns: string[]; sheets?: Record<string, {collection_id: string; header_row: number; rows: string[]; columns: string[]}>}}
   | {type: "preview_cleanup"; expected_revision: string; operation: CleanupOperation}
   | {type: "commit_cleanup"; expected_revision: string; preview_id: string}
