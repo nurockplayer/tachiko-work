@@ -50,6 +50,17 @@ await client.closeProject();
 await client.close();
 ```
 
+`writeCellAt(expectedRevision, collection, row, column, input)` uses 1-based
+stored positions and accepts distant cells, including row 40 / column 6 in a
+3-row / 2-column table. It creates intervening rows and optional Auto columns
+(`Column A`, …, `Column AF`), leaving optional cells empty. Required declared
+columns keep their existing row defaults and input validation. The entire write
+is one publication and one Undo step; Redo and v3/portable `.ro` save/reopen
+preserve its values and positions. A working-size write beyond 10,000 rows or
+32 columns returns the existing typed `capacity_exceeded` refusal, with no
+publication or created structure. The request and persisted data shapes are
+unchanged. Auto formula input remains unsupported.
+
 Number columns may carry a durable display format. Formats affect presentation
 only; stored values and calculated results remain numeric. Replace a format or
 pass `null` to clear it, using the current table revision:

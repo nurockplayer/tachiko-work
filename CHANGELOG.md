@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- `write_cell_at` accepts distant stored positions without a request change.
+  Intervening rows and generated Auto columns have empty optional cells;
+  the write and all created structure Undo/Redo together and survive v3/portable
+  `.ro` reopen. Working-size row/field limits refuse atomically (#923, #668 PR3).
+
 - Reuse the last inspected XLSX's decoded source for an identical import in
   native and browser hosts. Match bytes, import options and capacity profile;
   release the single retained source on import, the next inspect or close (#678 5d).
