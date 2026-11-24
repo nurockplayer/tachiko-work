@@ -351,7 +351,7 @@ fn imported_same_row_relative_references_stay_same_row() {
         ("B2*C2", "([.column_2] * [.column_3])", "(B2*C2)"),
         (
             "$B$2*C2",
-            "([sheet_1_row_1.column_2] * [.column_3])",
+            "([sheet_1_row_1.$column_2] * [.column_3])",
             "('Data'!$B$2*C2)",
         ),
         ("Data!B2", "[.column_2]", "B2"),
