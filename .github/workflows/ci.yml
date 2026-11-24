@@ -543,6 +543,8 @@ jobs:
             --example capacity_profile_boundaries -- all 2>&1 | tee "${evidence}/rectangle/profile-boundaries.log"
           python3 acceptance/bounded-text-capacity/oracle.py generate "${evidence}/rectangle/legacy-fixtures" 2>&1 | tee "${evidence}/rectangle/legacy-fixtures.log"
           PYTHONDONTWRITEBYTECODE=1 python3 acceptance/bounded-text-capacity/resource_fixtures.py "${evidence}/rectangle/legacy-fixtures"
+          node acceptance/bounded-text-capacity/reservation-ceiling.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
+            "${evidence}/rectangle/legacy-fixtures/reservation-ceiling.xlsx"
           node acceptance/bounded-text-capacity/boundaries.mjs "${evidence}/rectangle/kit/designer_runtime.wasm" \
             "${evidence}/rectangle/legacy-fixtures" "${evidence}/rectangle/legacy-boundaries.json"
 

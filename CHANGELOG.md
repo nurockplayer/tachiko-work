@@ -4,6 +4,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Cover the WASM XLSX reservation ceiling and 256 MiB inspect/import budget in
+  the browser carrier capacity boundary job (#933).
+
 - Add `set_cell_style_range` for compact formatting requests over stored rows
   and selected fields, with one Undo/Redo step for the whole range (#922).
 
