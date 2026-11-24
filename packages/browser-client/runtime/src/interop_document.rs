@@ -7,6 +7,7 @@ use super::{
 };
 use crate::capacity::SessionProfile;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use tachiko_formula_engine::{
     CanonicalAuthoringProjectionError, ExpressionComplexityError, FormulaBindError,
     bind_expression_with_index, parse_expression, project_expression_with_index,
@@ -1050,26 +1051,42 @@ pub fn import_workbook_working_size(
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
-    import_workbook_working_size_candidate(workbook, selection, occurrence_id)
+    import_workbook_working_size_candidate(Cow::Borrowed(workbook), selection, occurrence_id)
+}
+
+pub(crate) fn import_workbook_working_size_candidate(
+    workbook: Cow<'_, SourceWorkbook>,
+    selection: &ImportSelection,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
+    build_working_size_candidate(workbook, selection, occurrence_id)
         .map_err(import_capacity_refusal)
 }
 
-fn import_workbook_working_size_candidate(
-    workbook: &SourceWorkbook,
+fn build_working_size_candidate(
+    workbook: Cow<'_, SourceWorkbook>,
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
     let (mut runtime, mut metadata, mut ledger, export_maps) = import_workbook_document(
-        workbook,
+        &workbook,
         selection,
         occurrence_id,
         DesignerRuntime::from_document_working_size,
         true,
     )?;
-    normalize_import_date_styles(workbook, &mut metadata, runtime.profile);
+    normalize_import_date_styles(&workbook, &mut metadata, runtime.profile);
     validate_import_metadata_for_profile(runtime.session.document(), &metadata, runtime.profile)?;
-    runtime =
-        promote_import_presentation(runtime, workbook, &mut metadata, &mut ledger, occurrence_id)?;
+    runtime = promote_import_presentation(
+        runtime,
+        &workbook,
+        &mut metadata,
+        &mut ledger,
+        occurrence_id,
+    )?;
+    // The host owns the decoded source. Release it before allocating the
+    // exportability proof's rebuilt workbook.
+    drop(workbook);
     for sheet in &mut metadata.sheets {
         for (index, column) in sheet.columns.iter_mut().enumerate() {
             let mut dropped = BTreeSet::new();
@@ -1212,7 +1229,7 @@ fn import_workbook_document(
     for (sheet_index, row, column, source) in formulas {
         let target = metadata_target(&metadata, sheet_index, row, column)?;
         let translated = translate_a1(
-            &source,
+            source,
             &metadata,
             &workbook.sheets,
             &numeric_columns,
@@ -1223,7 +1240,7 @@ fn import_workbook_document(
         let (source, references) = match translated {
             Ok(translated) => translated,
             Err(error)
-                if contains_lookup_call(&source)
+                if contains_lookup_call(source)
                     || matches!(
                         error,
                         DesignerError::A1Translation {
@@ -1248,7 +1265,7 @@ fn import_workbook_document(
                     &sheet.rows[row][column],
                     &location,
                     &mut ledger,
-                    if contains_lookup_call(&source) {
+                    if contains_lookup_call(source) {
                         LOOKUP_IMPORT_REASON
                     } else {
                         IMPORT_TYPE_REASON
@@ -1278,26 +1295,27 @@ fn import_workbook_document(
         .map_err(|error| tracker_error(&format!("workbook addresses do not resolve: {error}")))?;
     for next in import_formula_order(&pending, &document)? {
         let (source, _, (sheet_index, row, column)) = pending
-            .get(&next)
+            .remove(&next)
             .ok_or_else(|| tracker_error("pending import formula is unavailable"))?;
-        let sheet = &workbook.sheets[*sheet_index];
+        let sheet = &workbook.sheets[sheet_index];
         let location = format!(
             "{}!{}{}",
             sheet.name,
-            super::interop_adapter::column_name(*column),
+            super::interop_adapter::column_name(column),
             sheet.layout.rows_above_header as usize + usize::from(sheet.has_header) + row + 1
         );
         bind_import_formula(
             &mut document,
             &index,
             &next,
-            source,
-            &sheet.rows[*row][*column],
+            &source,
+            &sheet.rows[row][column],
             &location,
             &export_maps,
             &mut ledger,
         )?;
     }
+    drop(index);
     let runtime = admit(document, occurrence_id)?;
     Ok((runtime, metadata, ledger, export_maps))
 }
@@ -1854,16 +1872,16 @@ fn validate_selection(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // One sheet builder shares one bounded import transaction.
-fn build_import_sheet(
+fn build_import_sheet<'src>(
     index: usize,
-    source: &SourceSheet,
+    source: &'src SourceSheet,
     selection: &ImportSelection,
     headerless: bool,
     text_capacity: bool,
     ids: &mut ImportIds<'_>,
     document: &mut Document,
     metadata: &mut InteropMetadata,
-    formulas: &mut Vec<(usize, usize, usize, String)>,
+    formulas: &mut Vec<(usize, usize, usize, &'src str)>,
     ledger: &mut Vec<FidelityFinding>,
 ) -> Result<(), DesignerError> {
     let schema_id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
@@ -1879,8 +1897,8 @@ fn build_import_sheet(
         schema_id: schema_id.to_string(),
         name: source.name.clone(),
         has_header: source.has_header,
-        columns: Vec::new(),
-        rows: Vec::new(),
+        columns: Vec::with_capacity(source.columns.len() + selection.extra_columns[index].len()),
+        rows: Vec::with_capacity(source.rows.len()),
     };
     let columns = source
         .columns
@@ -1950,7 +1968,7 @@ fn build_import_sheet(
                         "source formulas require explicit Number column selection",
                     ));
                 }
-                formulas.push((index, row_index, column, formula.clone()));
+                formulas.push((index, row_index, column, formula.as_str()));
                 Some(Value::Number(Number::new(0.0).expect("zero is finite")))
             } else {
                 let value = source_value(&cell.value)?;
@@ -4478,19 +4496,16 @@ impl DesignerRuntime {
                 .iter()
                 .map(|column| &schema.fields[column.field_id.as_str()])
                 .collect();
-            let mut rows = Vec::new();
+            let mut rows = Vec::with_capacity(sheet.rows.len());
             for row in &sheet.rows {
-                let Some(entity) = document
-                    .entities
-                    .get(&EntityId::from(row.entity_id.clone()))
-                else {
+                let Some(entity) = document.entities.get(row.entity_id.as_str()) else {
                     continue;
                 };
-                let mut cells = Vec::new();
-                for (column, definition) in sheet.columns.iter().enumerate() {
-                    let target = FieldRef::new(entity.id.clone(), definition.field_id.clone());
-                    let value = entity.fields.get(&target.field);
+                let mut cells = Vec::with_capacity(fields.len());
+                for (column, field) in fields.iter().enumerate() {
+                    let value = entity.fields.get(&field.id);
                     let (value, formula) = if let Some(Value::Formula(expression)) = value {
+                        let target = FieldRef::new(entity.id.clone(), field.id.clone());
                         let projection =
                             self.query_fields(expected_revision, &[field_target(&target)])?;
                         let number = projection.fields[0].calculated.as_ref().and_then(super::CalculationProjection::number).ok_or_else(|| tracker_error("formula export requires a complete authoritative Number result"))?;
@@ -4520,7 +4535,6 @@ impl DesignerRuntime {
                     let style = if values_only {
                         CellStyle::default()
                     } else {
-                        let field = fields[column];
                         crate::interop_date_format::cell_style(
                             &self.presentation,
                             &schema.id,

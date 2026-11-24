@@ -10619,6 +10619,12 @@ impl std::io::Write for SizedReplyWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.actual = self.actual.saturating_add(bytes.len());
         if self.actual <= self.maximum {
+            let capacity = self.bytes.capacity();
+            if self.actual > capacity && capacity > self.maximum / 2 {
+                // Growing a large preview by doubling would allocate past
+                // the wire limit and retain that excess in the WASM arena.
+                self.bytes.reserve_exact(self.maximum - self.bytes.len());
+            }
             self.bytes.extend_from_slice(bytes);
         }
         Ok(bytes.len())

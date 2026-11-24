@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reduce XLSX inspect and import allocations by borrowing XML text and
+  attributes, releasing the decoded source before rebuilding the export proof,
+  and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).
+
 - Add `set_cell_style_range` for compact formatting requests over stored rows
   and selected fields, with one Undo/Redo step for the whole range (#922).
 

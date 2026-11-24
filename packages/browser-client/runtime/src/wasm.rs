@@ -23,7 +23,7 @@ use crate::{
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
-    import_workbook_working_size,
+    import_workbook_working_size_candidate,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -521,7 +521,7 @@ fn spreadsheet_operation(
                 Some(workbook) => *workbook,
                 None => import_source(project, format, &csv_options, profile.is_some())?,
             };
-            import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
+            import_spreadsheet(workbook, &selection, &occurrence_id, install, profile)
         }
         SpreadsheetOperation::InspectProject { metadata, profile } => {
             inspect_imported_project_spreadsheet(project, &metadata, profile)
@@ -577,7 +577,7 @@ fn spreadsheet_operation(
 }
 
 fn import_spreadsheet(
-    workbook: &SourceWorkbook,
+    workbook: SourceWorkbook,
     selection: &ImportSelection,
     occurrence_id: &str,
     install: bool,
@@ -585,7 +585,7 @@ fn import_spreadsheet(
 ) -> Result<SpreadsheetResult, DesignerError> {
     match profile {
         None => {
-            let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
+            let (candidate, imported) = import_workbook(&workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,
@@ -595,8 +595,11 @@ fn import_spreadsheet(
             })
         }
         Some(DesignerProfile::WorkingSize) => {
-            let (candidate, imported) =
-                import_workbook_working_size(workbook, selection, occurrence_id)?;
+            let (candidate, imported) = import_workbook_working_size_candidate(
+                std::borrow::Cow::Owned(workbook),
+                selection,
+                occurrence_id,
+            )?;
             Ok(SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,
