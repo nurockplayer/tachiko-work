@@ -9,7 +9,7 @@ mod positional_insert_tests;
 mod translate_a1;
 pub use translate_a1::{
     A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
-    TranslateA1FormulaInput,
+    RenderA1FormulaInput, TranslateA1FormulaInput,
 };
 
 mod capacity;
@@ -309,6 +309,13 @@ pub enum DesignerRequest {
         column: usize,
         input: ScalarEditInput,
     },
+    PasteCellsAt {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        column: usize,
+        rows: Vec<Vec<PasteCellInput>>,
+    },
     NewTable {
         occurrence_id: String,
         name: String,
@@ -566,6 +573,10 @@ pub enum DesignerRequest {
     TranslateA1Formula {
         #[serde(flatten)]
         input: TranslateA1FormulaInput,
+    },
+    RenderA1Formula {
+        #[serde(flatten)]
+        input: RenderA1FormulaInput,
     },
     PreviewCleanup {
         expected_revision: String,
@@ -4033,6 +4044,15 @@ impl DesignerRuntime {
             } => self
                 .write_cell_at(&expected_revision, &collection, row, column, &input)
                 .map(DesignerResponse::Published),
+            DesignerRequest::PasteCellsAt {
+                expected_revision,
+                collection,
+                row,
+                column,
+                rows,
+            } => self
+                .paste_cells_at(&expected_revision, &collection, row, column, &rows)
+                .map(DesignerResponse::Published),
             DesignerRequest::NewTable {
                 occurrence_id,
                 name,
@@ -4446,6 +4466,9 @@ impl DesignerRuntime {
             )?)),
             DesignerRequest::TranslateA1Formula { input } => Ok(DesignerResponse::A1Translation(
                 self.translate_a1_formula(&input)?,
+            )),
+            DesignerRequest::RenderA1Formula { input } => Ok(DesignerResponse::A1Translation(
+                self.render_a1_formula(&input)?,
             )),
             DesignerRequest::PreviewCleanup {
                 expected_revision,

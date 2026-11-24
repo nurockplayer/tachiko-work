@@ -172,6 +172,8 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
   entry: "experimental-client.js",
   capabilities: [
     "translateA1Formula",
+    "renderA1Formula",
+    "pasteCellsAt",
     "createExperimentalDesignerClient",
     "projectTransferFromFiles",
     "projectTransferFromEntries",

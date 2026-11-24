@@ -19,6 +19,24 @@ also retains direct runtime, source identity, manifest, notices, no-clobber,
 and strict consumer canaries. Its emitted `designer_runtime.wasm` filename and
 Rust crate ABI identity remain compatibility bytes.
 
+## Headerless geometry and positional paste
+
+Use `headerRow: 0` (`header_row: 0` on the wire) for a headerless table whose
+first data row is A1. `translateA1Formula` binds grid text to semantic references;
+`renderA1Formula` renders a stored formula against the same revision-pinned
+geometry, returning A1 text in the existing `a1_translation.source` response.
+Headered geometry keeps its existing positive header offset. Auto formula
+admission and partial/future-row ranges retain their existing restrictions.
+
+`pasteCellsAt(expectedRevision, collection, row, column, rows)` sends
+`{type: "paste_cells_at", expected_revision, collection, row, column, rows}`.
+Row and column are 1-based stored positions. A nonempty rectangular block uses
+the existing string or tagged `PasteCellInput` values and creates missing Auto
+columns and sparse rows like `writeCellAt`, including on a blank workbook.
+Structure, classified values and implied displays publish in one revision and
+Undo/Redo together. Invalid input and capacity/lifecycle refusals leave the
+document and history unchanged. Existing `paste_cells` calls are unchanged.
+
 ## Explicit v3 project transfers
 
 The experimental client offers `exportProjectV3(expectedRevision)` to explicitly

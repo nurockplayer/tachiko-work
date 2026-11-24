@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use tachiko_formula_engine::{bind_expression, parse_expression, project_expression};
 use tachiko_workspace_engine::patch_lifecycle::{ProposalId, SemanticRevision, TrustedInstant};
-use tachiko_workspace_engine::{Document, FieldRef, FieldType};
+use tachiko_workspace_engine::{ColumnRef, Document, FieldRef, FieldType, Value};
 
 use crate::interop_adapter::SummaryAggregate;
 use crate::interop_document::{
-    A1Geometry, FormulaReferences, excel_extremum, parse_a1_address, row_is_absolute,
-    translate_a1_with,
+    A1Geometry, ExportCell, ExportColumn, FormulaReferences, column_letters, criterion_type,
+    excel_extremum, export_expression, parse_a1_address, row_is_absolute, translate_a1_with,
 };
 use crate::{
     DesignerError, DesignerRuntime, FormulaUpdateRequest, constraint_failure, designer_lifecycle,
@@ -20,6 +20,7 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct A1SheetGeometry {
     pub collection_id: String,
+    /// 1-based header position; zero means row 1 is data in a headerless table.
     pub header_row: usize,
     pub rows: Vec<String>,
     pub columns: Vec<String>,
@@ -43,6 +44,16 @@ pub struct TranslateA1FormulaInput {
     pub row_entity_id: String,
     pub target_field_id: String,
     pub text: String,
+    pub geometry: A1GeometryInput,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderA1FormulaInput {
+    pub expected_revision: String,
+    pub collection_id: String,
+    pub row_entity_id: String,
+    pub target_field_id: String,
     pub geometry: A1GeometryInput,
 }
 
@@ -132,7 +143,7 @@ fn validate_sheet(sheet: &A1SheetGeometry, document: &Document) -> Result<(), De
         .schemas
         .get(sheet.collection_id.as_str())
         .ok_or_else(invalid)?;
-    if sheet.header_row == 0
+    if (sheet.header_row == 0 && !schema.headerless)
         || sheet.header_row.checked_add(sheet.rows.len()).is_none()
         || sheet.columns.len() != schema.fields.len()
         || sheet.columns.iter().collect::<BTreeSet<_>>().len() != sheet.columns.len()
@@ -219,7 +230,7 @@ impl GridGeometry<'_> {
         if column != last_column
             || grid.rows.is_empty()
             || !whole
-            || !(first_row == grid.header_row || first_row == grid.header_row - 1)
+            || !(first_row == grid.header_row || Some(first_row) == grid.header_row.checked_sub(1))
             || last_row != grid.header_row + grid.rows.len() - 1
         {
             return Err(invalid());
@@ -374,6 +385,113 @@ impl A1Geometry for GridGeometry<'_> {
 }
 
 impl DesignerRuntime {
+    /// Render a stored formula against the caller's revision-pinned grid geometry.
+    ///
+    /// # Errors
+    /// Returns a refusal for stale or invalid geometry, a non-formula target,
+    /// or a stored reference outside the supplied grid.
+    #[allow(clippy::too_many_lines)] // Keep the revision-pinned reverse mapping together.
+    pub fn render_a1_formula(
+        &self,
+        input: &RenderA1FormulaInput,
+    ) -> Result<A1Translation, DesignerError> {
+        if self.current_revision() != input.expected_revision {
+            return Err(refusal(A1RefusalCode::StaleRevision));
+        }
+        let document = self.session.document();
+        let current = A1SheetGeometry {
+            collection_id: input.collection_id.clone(),
+            header_row: input.geometry.header_row,
+            rows: input.geometry.rows.clone(),
+            columns: input.geometry.columns.clone(),
+        };
+        validate_sheet(&current, document)?;
+        if !current.rows.contains(&input.row_entity_id)
+            || !current.columns.contains(&input.target_field_id)
+        {
+            return Err(refusal(A1RefusalCode::InvalidGeometry));
+        }
+        let target = FieldRef::new(input.row_entity_id.clone(), input.target_field_id.clone());
+        let Some(Value::Formula(expression)) =
+            document.entities[&target.entity].fields.get(&target.field)
+        else {
+            return Err(refusal(A1RefusalCode::FormulaSyntax));
+        };
+        let mut addresses = BTreeMap::new();
+        let mut columns = BTreeMap::new();
+        let mut names = BTreeSet::new();
+        for (name, grid) in std::iter::once(("", &current)).chain(
+            input
+                .geometry
+                .sheets
+                .iter()
+                .map(|(name, grid)| (name.as_str(), grid)),
+        ) {
+            if !names.insert(name.to_lowercase()) {
+                return Err(refusal(A1RefusalCode::InvalidGeometry));
+            }
+            validate_sheet(grid, document)?;
+            let schema = &document.schemas[grid.collection_id.as_str()];
+            let whole = document
+                .entities
+                .values()
+                .filter(|entity| entity.schema == schema.id)
+                .count()
+                == grid.rows.len();
+            let quoted = name.replace('\'', "''");
+            let prefix = if name.is_empty() {
+                String::new()
+            } else {
+                format!("'{quoted}'!")
+            };
+            for (column, field_id) in grid.columns.iter().enumerate() {
+                let field = &schema.fields[field_id.as_str()];
+                let letters = column_letters(column);
+                let range = if grid.rows.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "{prefix}${letters}${}:${letters}${}",
+                        grid.header_row + 1,
+                        grid.header_row + grid.rows.len()
+                    )
+                };
+                if whole {
+                    columns
+                        .entry(ColumnRef::new(grid.collection_id.clone(), field_id.clone()))
+                        .or_insert_with(|| {
+                            ExportColumn::new(range, Some(field.field_type.clone()))
+                        });
+                }
+                for (row, entity) in grid.rows.iter().enumerate() {
+                    addresses
+                        .entry(FieldRef::new(entity.clone(), field_id.clone()))
+                        .or_insert_with(|| {
+                            ExportCell::new(
+                                quoted.clone(),
+                                letters.clone(),
+                                grid.header_row + row + 1,
+                                criterion_type(
+                                    Some(&field.field_type),
+                                    document.entities[entity.as_str()]
+                                        .fields
+                                        .get(field_id.as_str()),
+                                ),
+                                !field.required,
+                            )
+                        });
+                }
+            }
+        }
+        let source = export_expression(expression, &target, &addresses, &columns)
+            .map_err(|_| refusal(A1RefusalCode::OutOfBounds))?;
+        Ok(A1Translation {
+            revision: self.current_revision().to_owned(),
+            source,
+            notes: Vec::new(),
+        })
+    }
+
     /// Translate explicit grid coordinates without changing the resident occurrence.
     ///
     /// # Errors

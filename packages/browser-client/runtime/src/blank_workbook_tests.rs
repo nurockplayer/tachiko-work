@@ -51,6 +51,159 @@ fn filled() -> DesignerRuntime {
     runtime
 }
 
+fn paste(
+    runtime: &mut DesignerRuntime,
+    row: usize,
+    column: usize,
+    rows: &[Vec<&str>],
+) -> crate::PublicationProjection {
+    let expected_revision = runtime.current_revision().to_owned();
+    let DesignerResponse::Published(publication) = runtime
+        .handle(DesignerRequest::PasteCellsAt {
+            expected_revision,
+            collection: "sheet".into(),
+            row,
+            column,
+            rows: rows
+                .iter()
+                .map(|row| row.iter().map(|text| (*text).into()).collect())
+                .collect(),
+        })
+        .unwrap()
+    else {
+        panic!("published expected")
+    };
+    publication
+}
+
+#[test]
+fn positional_block_paste_into_blank_a1_is_one_revision_and_one_undo() {
+    let mut runtime = blank();
+    let before = runtime.session.document().clone();
+    let publication = paste(
+        &mut runtime,
+        1,
+        1,
+        &[vec!["Item", "Price"], vec!["00123", "$12.50"]],
+    );
+    assert_eq!(publication.base_revision, "resident/0");
+    assert_eq!(publication.resulting_revision, "resident/1");
+    assert_eq!(runtime.undo.len(), 1);
+    let after = runtime.session.document().clone();
+    let table = window(&mut runtime);
+    assert_eq!(table.total_rows, 2);
+    assert_eq!(table.columns.len(), 2);
+    assert_eq!(table.columns[0].display_name, "Column A");
+    let spec = &runtime.collection_specs["sheet"];
+    assert_eq!(
+        after.entities[&spec.entities[1]].fields[&spec.columns[0].id],
+        crate::Value::Text("00123".into())
+    );
+    assert_eq!(
+        after.entities[&spec.entities[1]].fields[&spec.columns[1].id],
+        crate::Value::Number(12.5.try_into().unwrap())
+    );
+    let presentation = runtime.presentation.clone();
+    runtime.history_edit("resident/1", false).unwrap();
+    assert_eq!(runtime.session.document(), &before);
+    assert!(runtime.presentation.cells.is_empty());
+    let revision = runtime.current_revision().to_owned();
+    runtime.history_edit(&revision, true).unwrap();
+    assert_eq!(runtime.session.document(), &after);
+    assert_eq!(runtime.presentation, presentation);
+}
+
+#[test]
+fn positional_block_paste_overwrites_and_extends_both_axes_or_skips_to_distant_rows() {
+    for (row, column) in [(1, 1), (40, 3)] {
+        let mut runtime = blank();
+        write(&mut runtime, 1, 1, "original");
+        let before = runtime.session.document().clone();
+        let first_field = runtime.collection_specs["sheet"].columns[0].id.clone();
+        let first_entity = runtime.collection_specs["sheet"].entities[0].clone();
+        let publication = paste(
+            &mut runtime,
+            row,
+            column,
+            &[vec!["10", "20"], vec!["30", "40"]],
+        );
+        assert_eq!(publication.base_revision, "resident/1");
+        assert_eq!(publication.resulting_revision, "resident/2");
+        assert_eq!(runtime.undo.len(), 2);
+        let spec = &runtime.collection_specs["sheet"];
+        assert_eq!(spec.entities.len(), row + 1);
+        assert_eq!(spec.columns.len(), column + 1);
+        assert_eq!(spec.entities[0], first_entity);
+        assert_eq!(spec.columns[0].id, first_field);
+        for (r, c, number) in [(0, 0, 10.0), (0, 1, 20.0), (1, 0, 30.0), (1, 1, 40.0)] {
+            assert_eq!(
+                runtime.session.document().entities[&spec.entities[row - 1 + r]].fields
+                    [&spec.columns[column - 1 + c].id],
+                crate::Value::Number(number.try_into().unwrap())
+            );
+        }
+        if row > 1 {
+            assert_eq!(
+                runtime.session.document().entities[&first_entity].fields[&first_field],
+                crate::Value::Text("original".into())
+            );
+            for id in &spec.entities[1..row - 1] {
+                assert!(runtime.session.document().entities[id].fields.is_empty());
+            }
+        }
+        let after = runtime.session.document().clone();
+        runtime.history_edit("resident/2", false).unwrap();
+        assert_eq!(runtime.session.document(), &before);
+        let revision = runtime.current_revision().to_owned();
+        runtime.history_edit(&revision, true).unwrap();
+        assert_eq!(runtime.session.document(), &after);
+    }
+}
+
+#[test]
+fn positional_block_paste_refuses_shape_capacity_stale_and_bad_last_cell_atomically() {
+    let mut runtime = blank();
+    write(&mut runtime, 1, 1, "original");
+    for (row, column, expected, rows) in [
+        (10_000, 1, "resident/1", vec![vec!["1"], vec!["2"]]),
+        (1, 32, "resident/1", vec![vec!["1", "2"]]),
+        (
+            1,
+            1,
+            "resident/1",
+            vec![vec!["1", "$2.00"], vec!["3", "=A1"]],
+        ),
+        (1, 1, "resident/1", vec![vec!["1"], vec!["2", "3"]]),
+        (0, 1, "resident/1", vec![vec!["1"]]),
+        (1, 1, "resident/0", vec![vec!["1"]]),
+    ] {
+        let before = runtime.session.document().clone();
+        let presentation = runtime.presentation.clone();
+        let serial = runtime.row_serial;
+        let error = runtime
+            .handle(DesignerRequest::PasteCellsAt {
+                expected_revision: expected.into(),
+                collection: "sheet".into(),
+                row,
+                column,
+                rows: rows
+                    .iter()
+                    .map(|r| r.iter().map(|text| (*text).into()).collect())
+                    .collect(),
+            })
+            .unwrap_err();
+        if row == 10_000 || column == 32 {
+            assert_eq!(error.generic_failure().0, "capacity_exceeded");
+        }
+        assert_eq!(runtime.current_revision(), "resident/1");
+        assert_eq!(runtime.session.document(), &before);
+        assert_eq!(runtime.presentation, presentation);
+        assert_eq!(runtime.row_serial, serial);
+        assert_eq!(runtime.undo.len(), 1);
+        assert!(runtime.redo.is_empty());
+    }
+}
+
 #[test]
 fn delete_then_expand_preserves_surviving_names_and_generates_unique_labels() {
     for (count, deleted, row, column, names) in [

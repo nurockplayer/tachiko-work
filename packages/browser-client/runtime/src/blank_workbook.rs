@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     DesignerError, DesignerResponse, DesignerRuntime, FieldDefinition, FieldKey, FieldRef,
-    FieldType, IdGenerator, NewTableIds, PublicationProjection, RowIds, ScalarEditInput, SchemaId,
-    SemanticCommand, SemanticIdKind, appended_field_id, auto_input, cell_edit_commands,
-    native_table_row, parse_column_initializer, table_error,
+    FieldType, IdGenerator, NewTableIds, PasteCellInput, PublicationProjection, RowIds,
+    ScalarEditInput, SchemaId, SemanticCommand, SemanticIdKind, appended_field_id, auto_input,
+    cell_edit_commands, native_table_row, parse_column_initializer, pasted_column_input,
+    table_error,
 };
 
 pub(super) fn candidate(
@@ -53,6 +54,160 @@ pub(super) fn column_label(mut index: usize, occupied: &mut BTreeSet<String>) ->
 }
 
 impl DesignerRuntime {
+    /// Resolve a positional block once, then publish its structure and values together.
+    #[allow(clippy::too_many_lines)] // One atomic allocation and input publication.
+    pub(super) fn paste_cells_at(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        row: usize,
+        column: usize,
+        rows: &[Vec<PasteCellInput>],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let spec = self.collection_spec(collection)?.clone();
+        if row == 0 || column == 0 || !spec.native_table_rows {
+            return Err(table_error(
+                "positional paste requires 1-based positions in a native scalar table",
+            ));
+        }
+        if rows.is_empty() || rows[0].is_empty() || rows.iter().any(|r| r.len() != rows[0].len()) {
+            return Err(table_error("paste must be a nonempty rectangular range"));
+        }
+        let last_row = row.saturating_add(rows.len() - 1);
+        let last_column = column.saturating_add(rows[0].len() - 1);
+        let limits = crate::capacity::limits_for_profile(self.profile);
+        for (limit, maximum, observed) in [
+            (crate::CapacityLimit::TableRows, limits.table_rows, last_row),
+            (
+                crate::CapacityLimit::TableFields,
+                limits.table_fields,
+                last_column,
+            ),
+        ] {
+            crate::capacity::check_limit(limit, maximum, observed, Some(collection))?;
+        }
+        if self.row_serial > usize::MAX - self.row_identity_reserve() {
+            return Err(table_error("row identity allocation is exhausted"));
+        }
+        let snapshot = self.session.export_snapshot();
+        let document = snapshot.document();
+        let schema_id = SchemaId::from(spec.summary.id.clone());
+        let schema = &document.schemas[&schema_id];
+        let added = added_columns(
+            schema,
+            spec.columns.len(),
+            last_column,
+            self.proposal_serial,
+            &self.row_namespace,
+        )?;
+        let fields = spec
+            .columns
+            .iter()
+            .map(|c| &schema.fields[&c.id])
+            .chain(added.iter())
+            .collect::<Vec<_>>();
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
+        let mut added_values = BTreeMap::new();
+        let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
+        let mut allocated = BTreeSet::new();
+        let mut new_rows = (spec.entities.len()..last_row)
+            .map(|_| native_table_row(document, &spec, &mut row_ids, &mut allocated))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut displays = Vec::new();
+        for (r, cells) in rows.iter().enumerate() {
+            let position = row - 1 + r;
+            let existing = spec.entities.get(position);
+            let entity_id = existing
+                .cloned()
+                .unwrap_or_else(|| new_rows[position - spec.entities.len()].id.clone());
+            for (c, cell) in cells.iter().enumerate() {
+                let definition = fields[column - 1 + c];
+                let input = match cell {
+                    PasteCellInput::Text(text) => {
+                        pasted_column_input(&definition.field_type, text)?
+                    }
+                    PasteCellInput::Typed(input) => input.clone(),
+                };
+                let value = if definition.field_type == FieldType::Auto {
+                    auto_input::value(&input)?
+                } else if matches!(input, ScalarEditInput::Clear) {
+                    None
+                } else {
+                    Some(parse_column_initializer(&definition.field_type, &input)?)
+                };
+                let target = FieldRef::new(entity_id.clone(), definition.id.clone());
+                auto_input::collect_display(&definition.field_type, &target, &input, &mut displays);
+                if existing.is_some() {
+                    if schema.fields.contains_key(&definition.id) {
+                        let before = document.entities[&entity_id].fields.get(&definition.id);
+                        if before != value.as_ref() {
+                            let (command, undo) =
+                                cell_edit_commands(&target, before, value.as_ref());
+                            forward.push(command);
+                            inverse.extend(undo);
+                        }
+                    } else if let Some(value) = value {
+                        // New-field initializers belong to schema mutation scope,
+                        // not SetFieldValue against a field absent from the base.
+                        added_values
+                            .entry(definition.id.clone())
+                            .or_insert_with(BTreeMap::new)
+                            .insert(entity_id.clone(), value);
+                    }
+                } else {
+                    let entity = &mut new_rows[position - spec.entities.len()];
+                    if let Some(value) = value {
+                        entity.fields.insert(definition.id.clone(), value);
+                    } else {
+                        entity.fields.remove(&definition.id);
+                    }
+                }
+            }
+        }
+        let mut column_forward = Vec::new();
+        let mut column_inverse = Vec::new();
+        if !added.is_empty() {
+            column_inverse.push(SemanticCommand::SetSchemaFieldOrder {
+                schema: schema_id.clone(),
+                order: schema.field_order.clone(),
+            });
+        }
+        for field in &added {
+            let values = added_values.remove(&field.id).unwrap_or_default();
+            let (append, remove) =
+                column_commands(&schema_id, std::slice::from_ref(field), &field.id, &values);
+            column_forward.extend(append);
+            column_inverse.extend(remove);
+        }
+        column_forward.append(&mut forward);
+        column_inverse.append(&mut inverse);
+        forward = column_forward;
+        inverse = column_inverse;
+        if !new_rows.is_empty() {
+            let (ranks, restore) = tachiko_workspace_engine::row_order::plan_insertion(
+                document,
+                &schema_id,
+                &mut new_rows,
+                spec.entities.len(),
+                true,
+            );
+            forward.extend(ranks);
+            inverse.extend(restore);
+        }
+        for entity in new_rows {
+            inverse.push(SemanticCommand::RemoveEntity {
+                entity: entity.id.clone(),
+            });
+            forward.push(SemanticCommand::AppendEntity { entity });
+        }
+        inverse.reverse();
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
+        self.row_serial = row_ids.serial();
+        Ok(publication)
+    }
+
     pub(super) fn write_cell_at(
         &mut self,
         expected: &str,
