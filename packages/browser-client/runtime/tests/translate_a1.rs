@@ -358,7 +358,7 @@ fn headerless_cross_sheet_a1_starts_at_row_one() {
     input.as_object_mut().unwrap().remove("text");
     let rendered = call(&mut runtime, &input);
     assert_eq!(rendered["status"], "ok", "{rendered}");
-    assert_eq!(rendered["response"]["payload"]["source"], "'Other'!A$1");
+    assert_eq!(rendered["response"]["payload"]["source"], "'Other'!$A$1");
 }
 
 fn request(text: &str) -> Json {

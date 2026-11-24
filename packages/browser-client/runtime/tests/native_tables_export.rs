@@ -2041,16 +2041,21 @@ fn native_xlsx_relative_and_absolute_references_export_side_by_side() {
 #[test]
 fn native_xlsx_preserves_column_anchors() {
     let mut document = same_row_formula_document();
-    document.entities.get_mut("calc-r000").unwrap().fields.insert(
-        "total".into(),
-        Value::Formula(Expression::Add {
-            left: Box::new(Expression::AnchoredSameRowReference("a".into())),
-            right: Box::new(Expression::AnchoredReference(FieldRef::new(
-                "calc-r000",
-                "a",
-            ))),
-        }),
-    );
+    document
+        .entities
+        .get_mut("calc-r000")
+        .unwrap()
+        .fields
+        .insert(
+            "total".into(),
+            Value::Formula(Expression::Add {
+                left: Box::new(Expression::AnchoredSameRowReference("a".into())),
+                right: Box::new(Expression::AnchoredReference(FieldRef::new(
+                    "calc-r000",
+                    "a",
+                ))),
+            }),
+        );
     let mut host = host_for(document);
     let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
     assert_eq!(reply["status"], "ok", "{reply}");

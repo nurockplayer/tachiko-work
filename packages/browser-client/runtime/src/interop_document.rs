@@ -1262,7 +1262,10 @@ fn import_workbook_document(
     }
     let mut referenced = BTreeMap::<EntityId, BTreeSet<FieldId>>::new();
     for (target, (_, references, _)) in &pending {
-        referenced.entry(target.entity.clone()).or_default().insert(target.field.clone());
+        referenced
+            .entry(target.entity.clone())
+            .or_default()
+            .insert(target.field.clone());
         for reference in &references.cells {
             referenced
                 .entry(reference.entity.clone())
@@ -2211,7 +2214,8 @@ fn export_a1_maps(
                             entity.fields.get(definition.field_id.as_str()),
                         ),
                         field.is_some_and(|field| !field.required),
-                    ).with_collection(&sheet.schema_id),
+                    )
+                    .with_collection(&sheet.schema_id),
                 );
             }
         }
@@ -5406,7 +5410,9 @@ fn export_in(
             .get(reference)
             .map(|cell| {
                 let mut cell = cell.clone();
-                let owner_cell = addresses.get(owner).expect("formula owner is outside the export mapping");
+                let owner_cell = addresses
+                    .get(owner)
+                    .expect("formula owner is outside the export mapping");
                 cell.legacy_relative_column = cell.collection == owner_cell.collection;
                 cell.absolute()
             })

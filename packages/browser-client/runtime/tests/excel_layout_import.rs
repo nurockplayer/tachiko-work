@@ -370,7 +370,7 @@ fn imported_other_row_and_other_sheet_references_stay_fixed() {
         imported_amount_formula("B3", Vec::new()),
         (
             "[sheet_1_row_2.column_2]".to_owned(),
-            "'Data'!$B$3".to_owned()
+            "'Data'!B$3".to_owned()
         )
     );
     assert_eq!(

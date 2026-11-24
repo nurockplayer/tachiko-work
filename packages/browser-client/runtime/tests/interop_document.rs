@@ -626,30 +626,84 @@ fn imported_workbook_xlsx_preserves_column_anchors() {
         source.sheets[1].rows[0][0] = source_cell(SourceValue::Number { value: 30.0 }, None);
         let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
         let sheet = &imported.metadata.sheets[0];
-        let target = FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[2].field_id.clone() };
-        let destination = FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[3].field_id.clone() };
-        let DesignerResponse::Published(published) = runtime.handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/0".into(), target: target.clone(), source: source_formula.into(),
-        }).unwrap() else { panic!("updating a formula publishes") };
-        let exported = runtime.export_workbook(&published.resulting_revision, &imported.metadata).unwrap();
+        let target = FieldTarget {
+            entity: sheet.rows[0].entity_id.clone(),
+            field: sheet.columns[2].field_id.clone(),
+        };
+        let destination = FieldTarget {
+            entity: sheet.rows[0].entity_id.clone(),
+            field: sheet.columns[3].field_id.clone(),
+        };
+        let DesignerResponse::Published(published) = runtime
+            .handle(DesignerRequest::FormulaUpdate {
+                expected_revision: "resident/0".into(),
+                target: target.clone(),
+                source: source_formula.into(),
+            })
+            .unwrap()
+        else {
+            panic!("updating a formula publishes")
+        };
+        let exported = runtime
+            .export_workbook(&published.resulting_revision, &imported.metadata)
+            .unwrap();
         let reopened = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
-        assert_eq!(reopened.sheets[0].rows[0][2].formula.as_deref(), Some(xlsx_formula), "{source_formula}");
-        let DesignerResponse::Published(before) = runtime.handle(DesignerRequest::CopyFormula {
-            expected_revision: published.resulting_revision, source: target, destinations: vec![destination],
-            fixed_references: vec![], relative_rows: false, relative_columns: true,
-        }).unwrap() else { panic!("copying a formula publishes") };
-        let before = runtime.export_workbook(&before.resulting_revision, &imported.metadata).unwrap();
+        assert_eq!(
+            reopened.sheets[0].rows[0][2].formula.as_deref(),
+            Some(xlsx_formula),
+            "{source_formula}"
+        );
+        let DesignerResponse::Published(before) = runtime
+            .handle(DesignerRequest::CopyFormula {
+                expected_revision: published.resulting_revision,
+                source: target,
+                destinations: vec![destination],
+                fixed_references: vec![],
+                relative_rows: false,
+                relative_columns: true,
+            })
+            .unwrap()
+        else {
+            panic!("copying a formula publishes")
+        };
+        let before = runtime
+            .export_workbook(&before.resulting_revision, &imported.metadata)
+            .unwrap();
         let (mut runtime, imported) = import_workbook(&reopened, &selection, OCCURRENCE).unwrap();
         let sheet = &imported.metadata.sheets[0];
-        let DesignerResponse::Published(copied) = runtime.handle(DesignerRequest::CopyFormula {
-            expected_revision: "resident/0".into(),
-            source: FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[2].field_id.clone() },
-            destinations: vec![FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[3].field_id.clone() }],
-            fixed_references: vec![], relative_rows: false, relative_columns: true,
-        }).unwrap() else { panic!("copying a formula publishes") };
-        let after = runtime.export_workbook(&copied.resulting_revision, &imported.metadata).unwrap();
-        assert_eq!(before.sheets[0].rows[0][3].formula, after.sheets[0].rows[0][3].formula, "{source_formula}");
-        assert_eq!(after.sheets[0].rows[0][3].value, SourceValue::Number { value: copied_value }, "{source_formula}");
+        let DesignerResponse::Published(copied) = runtime
+            .handle(DesignerRequest::CopyFormula {
+                expected_revision: "resident/0".into(),
+                source: FieldTarget {
+                    entity: sheet.rows[0].entity_id.clone(),
+                    field: sheet.columns[2].field_id.clone(),
+                },
+                destinations: vec![FieldTarget {
+                    entity: sheet.rows[0].entity_id.clone(),
+                    field: sheet.columns[3].field_id.clone(),
+                }],
+                fixed_references: vec![],
+                relative_rows: false,
+                relative_columns: true,
+            })
+            .unwrap()
+        else {
+            panic!("copying a formula publishes")
+        };
+        let after = runtime
+            .export_workbook(&copied.resulting_revision, &imported.metadata)
+            .unwrap();
+        assert_eq!(
+            before.sheets[0].rows[0][3].formula, after.sheets[0].rows[0][3].formula,
+            "{source_formula}"
+        );
+        assert_eq!(
+            after.sheets[0].rows[0][3].value,
+            SourceValue::Number {
+                value: copied_value
+            },
+            "{source_formula}"
+        );
     }
 }
 
@@ -1641,7 +1695,7 @@ fn conditional_formula_runtime_exports_excel_functions_and_comparisons() {
     assert_eq!(
         exported.sheets[0].rows[0][2].formula.as_deref(),
         Some(
-            "IF(AND(('Data'!$A$2>7),OR(('Data'!$A$2<20),('Data'!$A$2=10)),NOT(ISBLANK('Data'!$A$2))),ROUND(('Data'!$A$2*0.5),0),0)"
+            "IF(AND(('Data'!A$2>7),OR(('Data'!A$2<20),('Data'!A$2=10)),NOT(ISBLANK('Data'!A$2))),ROUND(('Data'!A$2*0.5),0),0)"
         )
     );
     let xlsx = tachiko_designer_runtime::interop_adapter::export_xlsx(&exported)
