@@ -1,6 +1,6 @@
 # ADR-0040: Bounded native-table field evolution
 
-**Status:** Accepted; amended by [ADR-0045](ADR-0045-optional-native-text-and-number-fields.md) for optional native Text/Number fields only.
+**Status:** Accepted; amended by [ADR-0045](ADR-0045-optional-native-text-and-number-fields.md) for optional native scalar fields, and by [ADR-0047](ADR-0047-auto-columns-tagged-results-and-cell-failures.md) for optional Auto scalar fields.
 
 **Decision issue:** #392
 
@@ -36,10 +36,17 @@ atomic candidate transition:
    is required. The candidate supplies one explicit direct stored value of that
    exact scalar type for the field in every entity already in the schema. A
    Formula or Reference value is not an initializer.
-2. **Remove unreferenced scalar field** removes one existing `Text`, `Number`,
-   `Boolean`, or `Date` `FieldId` and its stored values. It is permitted only
+2. **Remove unreferenced scalar field** removes one existing `Auto`, `Text`,
+   `Number`, `Boolean`, or `Date` `FieldId` and its stored values. It is permitted only
    when no surviving formula, reference, or other Accepted durable semantic
    definition depends on that `FieldId`.
+
+ADR-0045 extends addition to optional native scalar fields. ADR-0047 adds
+`Auto` to optional addition and scalar removal: Auto is always optional, has
+constraint `none`, and any supplied initializer is a direct Number, Text,
+Boolean or Date. Omitted initializers stay absent. Auto formulas and retyping
+are outside the #887 scalar slice. The required-field operation above never
+admits Auto.
 
 Surviving schema, field, entity, relationship, and formula identities remain
 unchanged. Presentation order is a projection and is never semantic identity.

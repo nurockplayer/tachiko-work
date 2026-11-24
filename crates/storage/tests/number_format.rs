@@ -12,6 +12,7 @@ fn document() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "s".into(),

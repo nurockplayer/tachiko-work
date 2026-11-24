@@ -859,6 +859,7 @@ fn text_field(id: &str) -> FieldDefinition {
 
 fn generated_schema(key: &str) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from(key),
         key: SchemaKey::from(key),
@@ -1455,6 +1456,7 @@ fn linear_document(rows: usize) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("row"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("row"),
                 key: SchemaKey::from("row"),
@@ -1746,6 +1748,7 @@ fn fixed_number(value: f64) -> Value {
 
 fn fixed_schema(key: &str, fields: &[(&str, FieldType)]) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from(key),
         key: SchemaKey::from(key),

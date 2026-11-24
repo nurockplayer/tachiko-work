@@ -11,6 +11,7 @@ fn fixture() -> Document {
         d.schemas.insert(
             id.into(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: id.into(),
                 key: id.into(),

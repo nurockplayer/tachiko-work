@@ -34,8 +34,10 @@ pub use tachiko_merge_engine::{
 use tachiko_merge_engine::{
     MergeOutcome, MergeOutcomeV2, UnmaterializedStoredFact, merge, merge_v2,
 };
-pub use tachiko_semantic_core::AddressIndex;
 pub use tachiko_semantic_core::instrumentation;
+pub use tachiko_semantic_core::{
+    AddressIndex, ClassifiedDateDisplay, ClassifiedInput, DateOrder, classify_input,
+};
 use tachiko_semantic_core::{
     AddressIndexError, KeyedGroupedSumDefinitionError, is_valid_identifier,
     validate_complete_formula_constraints, validate_document_core, validate_entity_field_core,
@@ -653,8 +655,14 @@ pub enum WorkspaceError {
     UnsupportedNumberFormatMerge,
     #[error("the selected merge contract does not support durable field order")]
     UnsupportedFieldOrderMerge,
+    #[error("frozen v1 merge does not support headerless schema; use merge_documents_v2")]
+    UnsupportedHeaderlessMerge,
     #[error("frozen v1 merge does not support row rank; use merge_documents_v2")]
     UnsupportedRowRankMerge,
+    #[error("frozen v1 merge does not support Auto fields; use merge_documents_v2")]
+    UnsupportedAutoFieldMerge,
+    #[error("the frozen runtime export cannot represent headerless schema")]
+    UnsupportedHeaderlessRepresentation,
     #[error("the frozen runtime export cannot represent row rank")]
     UnsupportedRowRankRepresentation,
     #[error("the field order for schema {schema} must name every field exactly once")]
@@ -1358,7 +1366,9 @@ pub fn merge_documents(
         }
         MergeOutcome::UnsupportedNumberFormat => Err(WorkspaceError::UnsupportedNumberFormatMerge),
         MergeOutcome::UnsupportedFieldOrder => Err(WorkspaceError::UnsupportedFieldOrderMerge),
+        MergeOutcome::UnsupportedHeaderless => Err(WorkspaceError::UnsupportedHeaderlessMerge),
         MergeOutcome::UnsupportedRowRank => Err(WorkspaceError::UnsupportedRowRankMerge),
+        MergeOutcome::UnsupportedAutoField => Err(WorkspaceError::UnsupportedAutoFieldMerge),
         MergeOutcome::UnsupportedDisplayName => {
             Err(WorkspaceError::UnsupportedDisplayNameRepresentation)
         }
@@ -1453,6 +1463,9 @@ fn require_merge_keyed_definitions(
 ///
 /// Returns a semantic lookup or calculation failure.
 pub fn runtime_export(document: &Document) -> Result<RuntimeExport, WorkspaceError> {
+    if document.has_headerless_schemas() {
+        return Err(WorkspaceError::UnsupportedHeaderlessRepresentation);
+    }
     if document.has_row_ranks() {
         return Err(WorkspaceError::UnsupportedRowRankRepresentation);
     }
@@ -2351,6 +2364,13 @@ pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &Fie
         ) | (SemanticValueKind::Text, FieldType::Text)
             | (SemanticValueKind::Boolean, FieldType::Boolean)
             | (SemanticValueKind::Reference, FieldType::Reference { .. })
+            | (
+                SemanticValueKind::Number
+                    | SemanticValueKind::Text
+                    | SemanticValueKind::Boolean
+                    | SemanticValueKind::Date,
+                FieldType::Auto
+            )
     )
 }
 
@@ -3605,6 +3625,20 @@ fn parse_scalar(
         expected,
     };
     match field_type {
+        FieldType::Auto => match tachiko_semantic_core::classify_input(input, None) {
+            tachiko_semantic_core::ClassifiedInput::Number { value, .. } => {
+                Ok(Value::Number(value))
+            }
+            tachiko_semantic_core::ClassifiedInput::Text(value) => Ok(Value::Text(value)),
+            tachiko_semantic_core::ClassifiedInput::Boolean(value) => Ok(Value::Boolean(value)),
+            tachiko_semantic_core::ClassifiedInput::Date { value, .. } => Ok(Value::Date(value)),
+            tachiko_semantic_core::ClassifiedInput::Blank => {
+                Err(invalid("Auto scalar; use unset for blank"))
+            }
+            tachiko_semantic_core::ClassifiedInput::FormulaSource(_) => {
+                Err(invalid("Auto formulas are unsupported"))
+            }
+        },
         FieldType::Number => input
             .parse::<f64>()
             .map_err(|_| invalid("number"))
@@ -3829,6 +3863,7 @@ fn game_balance_schemas(
         schemas.insert(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),

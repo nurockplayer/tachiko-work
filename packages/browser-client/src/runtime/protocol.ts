@@ -1,4 +1,4 @@
-import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation } from "./interop-protocol.ts";
+import type { CleanupOperation, CleanupPreview, FidelityFinding, ImportedProjection, ImportedWindowProjection, InteropMetadata, SourceWorkbook, SpreadsheetExport, SpreadsheetOperation, SourceStyle } from "./interop-protocol.ts";
 
 export type FieldTarget = {
   entity: string;
@@ -9,6 +9,8 @@ export type CollectionSummary = {
   id: string;
   key: string;
   display_name: string;
+  headerless: boolean;
+  data_start_row: number;
   entity_count: number;
 };
 
@@ -94,7 +96,7 @@ export type FieldProjection = {
   formula: { source: string } | null;
   calculated: CalculationProjection | null;
   diagnostics: DiagnosticProjection[];
-  editable_scalar: "number" | "text" | "boolean" | "date" | null;
+  editable_scalar: "auto" | "number" | "text" | "boolean" | "date" | null;
   /** Sheet's display text for a Number or Date cell, present only when the window asked for it. */
   display?: string;
 };
@@ -161,6 +163,8 @@ export type TableRowProjection = {
   /** fields contains present values only; blank_fields lists absent IDs in column order (omission means []). */
   blank_fields?: string[];
   fields: FieldProjection[];
+  /** Resolved styles in column order, as in imported rows. Omission means defaults. */
+  styles?: SourceStyle[];
 };
 
 export type TableProjection = {
@@ -395,7 +399,10 @@ export type FieldExplanationProjection = {
 
 export type SchemaFieldTarget = { schema: string; field: string };
 
+export type HeaderFallbackProjection = {field: string; name: string; reason: "blank" | "duplicate"};
+
 export type PublicationProjection = {
+  header_fallbacks?: HeaderFallbackProjection[];
   base_revision: string;
   resulting_revision: string;
   /** Stable schema presentation targets, including tables with no rows. */
@@ -598,7 +605,16 @@ export function isFormulaFailure(failure: FailureProjection): failure is Formula
   return FORMULA_FAILURE_CODES.includes(failure.code);
 }
 
+export type CellStyleChange =
+  | { kind: "bold" | "italic"; value: boolean }
+  | { kind: "toggle_bold" | "toggle_italic" }
+  | { kind: "fill"; color: string | null }
+  | { kind: "border"; target: "top" | "right" | "bottom" | "left" | "outline" | "all"; value: boolean };
+
 export type TrackerCommand =
+  | { type: "promote_first_row_to_headers"; expected_revision: string; collection: string }
+  | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
+  | { type: "paste_cells_at"; expected_revision: string; collection: string; row: number; column: number; rows: PasteCellInput[][] }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
@@ -614,6 +630,8 @@ export type TrackerCommand =
   | { type: "set_column_date_format"; expected_revision: string; collection: string; field: string; date_format: DateFormat | null }
   | { type: "set_column_alignment"; expected_revision: string; collection: string; field: string; alignment: CellAlignment | null }
   | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
+  | { type: "set_cell_style"; expected_revision: string; collection: string; entities: string[]; fields: string[]; changes: CellStyleChange[] }
+  | { type: "set_cell_style_range"; expected_revision: string; collection: string; row: number; row_count: number; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
@@ -621,7 +639,10 @@ export type TrackerCommand =
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
   | { type: "undo" | "redo"; expected_revision: string };
 
+export type AutoDateOrder = "month_first" | "day_first";
+
 export type ScalarEditInput =
+  | { kind: "auto"; input: string; date_order?: AutoDateOrder }
   | { kind: "clear" }
   | { kind: "number"; input: string }
   | { kind: "text"; value: string }
@@ -642,13 +663,14 @@ export type FormulaCopy = {
   relative_columns: boolean;
 };
 
-/** Explicit, revision-pinned A1 geometry. Field and entity ids are stable identities. */
+/** Explicit, revision-pinned A1 geometry. headerRow is 0 for headerless row-1 data; otherwise the 1-based header row. Field and entity ids are stable identities. */
 export type A1SheetGeometry = {collectionId: string; headerRow: number; rows: string[]; columns: string[]};
 export type A1Geometry = Omit<A1SheetGeometry, "collectionId"> & {sheets?: Record<string, A1SheetGeometry>};
 export type TranslateA1FormulaInput = {
   expectedRevision: string; collectionId: string; rowEntityId: string; targetFieldId: string;
   text: string; geometry: A1Geometry;
 };
+export type RenderA1FormulaInput = Omit<TranslateA1FormulaInput, "text">;
 export type A1TranslationNote = "relative_copy_semantics_changed" | "range_tracks_collection";
 export type A1RefusalCode = "unknown_sheet" | "out_of_bounds" | "header_reference" | "unsupported_range"
   | "unsupported_criterion" | "unsupported_function" | "unsupported_operator" | "formula_syntax"
@@ -656,6 +678,7 @@ export type A1RefusalCode = "unknown_sheet" | "out_of_bounds" | "header_referenc
 export type A1Translation = {revision: string; source: string; notes: A1TranslationNote[]};
 
 export type DesignerRequest =
+  | {type: "render_a1_formula"; expected_revision: string; collection_id: string; row_entity_id: string; target_field_id: string; geometry: {header_row: number; rows: string[]; columns: string[]; sheets?: Record<string, {collection_id: string; header_row: number; rows: string[]; columns: string[]}>}}
   | {type: "translate_a1_formula"; expected_revision: string; collection_id: string; row_entity_id: string; target_field_id: string; text: string; geometry: {header_row: number; rows: string[]; columns: string[]; sheets?: Record<string, {collection_id: string; header_row: number; rows: string[]; columns: string[]}>}}
   | {type: "preview_cleanup"; expected_revision: string; operation: CleanupOperation}
   | {type: "commit_cleanup"; expected_revision: string; preview_id: string}
@@ -663,6 +686,7 @@ export type DesignerRequest =
   | (FormulaCopy & { type: "copy_formula"; expected_revision: string })
   | { type: "new_tracker"; occurrence_id: string; profile?: "working_size" }
   | { type: "new_budget"; occurrence_id: string; profile?: "working_size" }
+  | { type: "new_blank_workbook"; occurrence_id: string; profile: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "delete_table"; expected_revision: string; collection: string }
@@ -812,10 +836,10 @@ export type WorkerRequest =
       profile?: "working_size";
     }
   | { id: number; kind: "inspect_project"; bytes: ArrayBuffer; profile?: "working_size" }
-  | { id: number; kind: "export_project"; expected_revision: string }
-  | { id: number; kind: "export_project_v3"; expected_revision: string }
+  | { id: number; kind: "export_project"; expected_revision: string; metadata?: InteropMetadata }
+  | { id: number; kind: "export_project_v3"; expected_revision: string; metadata?: InteropMetadata }
   | { id: number; kind: "export_canonical_tree"; expected_revision: string }
-  | { id: number; kind: "export_portable_ro"; expected_revision: string }
+  | { id: number; kind: "export_portable_ro"; expected_revision: string; metadata?: InteropMetadata }
   | { id: number; kind: "verify_portable_ro"; bytes: ArrayBuffer }
   | { id: number; kind: "open_portable_ro"; occurrence_id: string; bytes: ArrayBuffer; profile?: "working_size" }
   | { id: number; kind: "observe_occurrence" }

@@ -38,6 +38,7 @@ fn document(rows: usize) -> Document {
         document.schemas.insert(
             schema.into(),
             Schema {
+                headerless: false,
                 id: schema.into(),
                 key: schema.into(),
                 display_name: None,

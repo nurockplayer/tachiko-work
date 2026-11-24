@@ -340,6 +340,29 @@ as JSON) are allowed; requests are limited to 64 KiB. Refusals use
 
 ## Optional native columns
 
+`promoteFirstRowToHeaders(expectedRevision, collection)` sends
+`{type:"promote_first_row_to_headers", expected_revision, collection}`. It
+promotes the first row in stored order of a headerless collection, independently
+of the host's current sort/filter, and returns `published`. The row leaves the
+data, `headerless` becomes false and `data_start_row` becomes 2. Re-query the
+window and columns after publication. Field IDs, keys, declared types (including
+Auto), surviving values and bound column references remain unchanged; this
+command does not infer or retype columns.
+
+Headings use the cell's displayed scalar text and ADR-0043's frozen whitespace
+trim and spelling rules. Empty Text and missing values are blank headings.
+The first occurrence of each exact trimmed name keeps its spelling. Blank or
+later duplicate headings receive their positional `Column A`, `Column B`, …
+label, with ` (2)`, ` (3)`, … appended when needed. All real heading names are
+reserved before allocation. The reply's optional
+`header_fallbacks: {field, name, reason:"blank"|"duplicate"}[]` reports every
+generated heading in column order. Other invalid name spellings use the
+existing naming refusal. A headed table refuses with `table_already_has_headers`;
+an empty headerless table refuses with `no_header_row`. Refusals publish nothing.
+One Undo restores the complete original headerless schema and first row;
+Redo reapplies promotion. Both v3 and portable `.ro` preserve the promoted state
+using the existing persisted representation (#924, #668 PR4).
+
 Under [ADR-0045](../decisions/ADR-0045-optional-native-text-and-number-fields.md),
 `newTable(name, columns)` accepts `required?: boolean` per column. Omission
 defaults to `true`; any scalar column (Text, Number, Date or Yes/No) may be
@@ -385,6 +408,35 @@ When strengthening is refused for blank values, the failure code is
 `required_values_missing`; its single diagnostic identifies the column and
 reports the authoritative blank count. The message says how many rows have no
 value in the column.
+
+## Auto scalar columns
+
+Create an Auto field with `{name: "Value", field_type: "auto", required: false}`
+through `newTable`, `newTableWorkingSize`, or `add_column`. Auto is always
+optional and unconstrained; strengthening it to required is refused. Windows
+project `field_type: "auto"` and `editable_scalar: "auto"`, including blanks.
+Each present cell uses the existing tagged `stored` union.
+
+```ts
+await client.editAuto(revision, {entity: rowId, field: valueFieldId}, "00123");
+await client.editAuto(nextRevision, {entity: rowId, field: valueFieldId},
+  "22/11/2026", "day_first");
+```
+
+The wire input is `{kind: "auto", input: string, date_order?: "month_first" |
+"day_first"}`. Work runs its existing classifier: `42` is Number, `00123` is
+exact Text, ISO dates are Date, `TRUE` is Boolean, and other text stays exact.
+Full-width, grouped, currency and percent input follow that same classifier;
+implied formats are per-cell presentation and survive portable `.ro` save/reopen
+and the same Undo/Redo action as the value. Raw paste into Auto uses the
+classifier without a date order; typed paste cells may supply `date_order`.
+Raw empty input clears; explicit `{kind: "text", value: ""}` stores empty Text.
+
+Auto formulas, including raw input starting with `=`, return an explicit
+unsupported refusal without publishing or storing Text. Auto retyping and
+aggregates remain separate slices. `exportPortableRo` and v3 exports preserve
+Auto; frozen legacy project/direct-ro and v1 delta/conflict writers refuse it.
+The v2 evidence contracts preserve Auto fields and their tagged values.
 
 ## Changing a column's type
 
@@ -776,3 +828,69 @@ It does not download a CA, modify the system trust store, or inherit TLS-disable
 switches. Missing or invalid paths refuse before package execution. Unset or
 `0` keeps CA overrides excluded; any other opt-in value refuses. Only use this
 option for a CA file whose existing trust and provenance have been verified.
+
+## Cell styles (#815, #889)
+
+`setCellStyle(expectedRevision, collection, entities, fields, changes)` applies
+`entities × fields` atomically, including blank cells. Use stable record and
+field IDs in selection order. The equivalent `trackerCommand` request is:
+
+```ts
+{
+  type: "set_cell_style",
+  expected_revision: revision,
+  collection,
+  entities: selectedRecordIds,
+  fields: selectedFieldIds,
+  changes: [
+    {kind: "toggle_bold"},
+    {kind: "italic", value: true},
+    {kind: "fill", color: "#FFFF00"},
+    {kind: "border", target: "outline", value: true},
+  ],
+}
+```
+
+`CellStyleChange` also accepts `{kind: "bold", value: boolean}`,
+`{kind: "toggle_italic"}` and `{kind: "fill", color: null}`. False removes bold
+or italic; null clears fill, including a column-inherited fill, while preserving
+other records' current appearance. Changes run in array order. A toggle clears
+its attribute when every selected cell has it, otherwise it sets the whole
+selection. Colours use ADR-0049's canonical `#RRGGBB` spelling with uppercase hex.
+
+Borders use `{kind: "border", target, value}`. Targets are `"top"`, `"right"`,
+`"bottom"`, `"left"`, `"outline"` and `"all"`; true draws thin borders and false
+clears them. A side target applies that side to every selected cell; all applies
+all four sides. Outline changes only the selection's outer edges, using the
+supplied entity and field array order (first entity = top, first field = left).
+A single-cell outline draws all four sides. Other sides and attributes remain
+as they were, including column-inherited borders. For a fresh outline that also
+clears existing interior borders, send all/false followed by outline/true in the
+same changes array.
+
+One call makes one presentation-only revision and one Undo/Redo step. It changes
+no values, formulas or calculations. Publication sets `many: true`; re-query the
+visible window. Table/window rows expose optional `styles` in column order,
+using the same style shape as imported rows (`bold`, optional `italic`, `fill`,
+`wrap`, `border`, optional `border_sides`, `alignment`, `number_format`).
+`border_sides` lists drawn `"top"`, `"right"`, `"bottom"`, `"left"` sides in that
+canonical order; `border` remains true when any side is drawn. For older source
+metadata, true without sides means a full box. Fill in this projection keeps the
+imported shape's hex spelling without `#`. Omitted `styles` means default styles;
+omitted `italic` means false. Styles belong to record/field identities, follow a
+view sort and persist in v3 project trees and portable `.ro` files.
+
+Failures leave revision, presentation and history unchanged. Codes include
+`invalid_style_color`, `read_only_table` for a collection outside the kit's row
+authoring/imported-table profiles, `missing_collection`, `unknown_entity`,
+`unknown_view_field`, `stale_revision`, `no_change`, `capacity_exceeded` and
+`style_capacity_exceeded` (palette limit). The runtime has no separate table-lock
+setting; this command uses its existing authoring profiles and publication
+authority.
+
+XLSX exports of native tables and imported workbooks resolve edited bold,
+italic, fill and exact border sides from the same presentation store, including
+blank styled cells. Import retains italic and individual border sides in the
+same projection. Existing export profile and capacity limits still apply.
+Sheet owns toolbar controls, shortcuts and selection; the kit owns style state
+and toggle semantics.

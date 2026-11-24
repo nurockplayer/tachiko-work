@@ -34,6 +34,7 @@ pub fn document() -> Document {
         FieldType::Date,
     ];
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),

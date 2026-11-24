@@ -104,6 +104,7 @@ fn schema_document(
     document.schemas.insert(
         schema.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: schema.clone(),
             key: SchemaKey::from("rows"),
@@ -1375,6 +1376,7 @@ fn two_collection_runtime() -> DesignerRuntime {
     document.schemas.insert(
         other.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: other.clone(),
             key: SchemaKey::from("other"),

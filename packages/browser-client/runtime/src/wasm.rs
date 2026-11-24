@@ -4,6 +4,8 @@ use std::cell::{Cell, RefCell};
 
 use serde::Deserialize;
 
+use crate::source_reuse::{InspectedSource, SourceIdentity};
+
 use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
@@ -13,7 +15,7 @@ use crate::interop_adapter::{
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
-    ProjectExportProjection, encode_reply, ensure_wire_reply_size, inspect_project,
+    ProjectExportProjection, encode_reply, encode_sized_reply, inspect_project,
     inspect_project_working_size, open_local_document, open_local_document_working_size,
     open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
     process_wire_request, request_too_large_reply, verify_portable_ro, wire_request_limit,
@@ -100,6 +102,7 @@ enum MetadataControlKind {
 }
 
 struct SpreadsheetResult {
+    inspected_source: Option<SourceIdentity>,
     profile: SessionProfile,
     response: DesignerResponse,
     candidate: Option<DesignerRuntime>,
@@ -109,6 +112,7 @@ struct SpreadsheetResult {
 impl SpreadsheetResult {
     fn read_only(response: DesignerResponse) -> Self {
         Self {
+            inspected_source: None,
             profile: SessionProfile::Ordinary,
             response,
             candidate: None,
@@ -122,6 +126,7 @@ thread_local! {
     static RESPONSE: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static PROJECT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static RUNTIME: RefCell<Option<DesignerRuntime>> = const { RefCell::new(None) };
+    static RETAINED_SOURCE: RefCell<Option<InspectedSource>> = const { RefCell::new(None) };
     static REQUEST_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
     static PROJECT_TOO_LARGE: Cell<bool> = const { Cell::new(false) };
 }
@@ -197,6 +202,25 @@ pub extern "C" fn tachiko_designer_project_reserve(length: u32) -> u32 {
         project.resize(length as usize, 0);
         project.as_mut_ptr() as usize as u32
     })
+}
+
+// Called only after authoritative XLSX admission, with referenced XML sizes.
+// Keep an 8 MiB margin below the raw-ABI 256 MiB budget. The allocator can
+// reuse existing free blocks; any additional growth is bounded by this request
+// plus allocator/page rounding, rather than by compressed or padded source size.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn reserve_xlsx_heap(xml_bytes: usize) {
+    if xml_bytes < 64 * 1024 {
+        return;
+    }
+    let current = core::arch::wasm32::memory_size::<0>() * 64 * 1024;
+    let headroom = xml_bytes
+        .saturating_mul(32)
+        .min((248 * 1024 * 1024usize).saturating_sub(current));
+    let mut buffer = Vec::<u8>::new();
+    if buffer.try_reserve_exact(headroom).is_ok() {
+        drop(std::hint::black_box(buffer));
+    }
 }
 
 /// Fully admit and install one project candidate from the project arena.
@@ -339,35 +363,44 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
             return;
         }
         let result = if project_too_large || project.len() > MAX_PROJECT_TRANSFER_BYTES {
+            RETAINED_SOURCE.with(|retained| *retained.borrow_mut() = None);
             Err(DesignerError::ProjectTransferTooLarge {
                 actual: MAX_PROJECT_TRANSFER_BYTES.saturating_add(1),
                 maximum: MAX_PROJECT_TRANSFER_BYTES,
             })
         } else {
-            serde_json::from_slice::<SpreadsheetOperation>(&request)
-                .map_err(|error| DesignerError::InvalidProjectTransfer {
-                    message: format!("Invalid spreadsheet operation: {error}"),
-                })
-                .and_then(|operation| spreadsheet_operation(runtime.as_ref(), operation, &project))
+            decode_spreadsheet_operation(runtime.as_ref(), &request, &project)
         };
         let reply = match result {
             Ok(result) => {
                 let reply = DesignerWireReply::Ok {
                     response: result.response,
                 };
-                if let Err(error) = ensure_wire_reply_size(&reply, result.profile) {
-                    DesignerWireReply::Error {
+                // The response arena owns its allocation across spreadsheet calls;
+                // an inspect must not allocate another preview-sized output buffer.
+                let buffer = RESPONSE.with(|response| std::mem::take(&mut *response.borrow_mut()));
+                let encoded = match encode_sized_reply(&reply, result.profile, buffer) {
+                    Err(error) => encode_reply(&DesignerWireReply::Error {
                         error: error.failure_projection(current_revision(runtime.as_ref())),
+                    }),
+                    Ok(encoded) => {
+                        if let Some(candidate) = result.candidate {
+                            *runtime = Some(candidate);
+                        }
+                        if let Some(bytes) = result.export {
+                            PROJECT.with(|slot| *slot.borrow_mut() = bytes);
+                        }
+                        if let Some(identity) = result.inspected_source {
+                            RETAINED_SOURCE.with(|retained| {
+                                *retained.borrow_mut() =
+                                    Some(InspectedSource::from_preview(identity, reply));
+                            });
+                        }
+                        encoded
                     }
-                } else {
-                    if let Some(candidate) = result.candidate {
-                        *runtime = Some(candidate);
-                    }
-                    if let Some(bytes) = result.export {
-                        PROJECT.with(|slot| *slot.borrow_mut() = bytes);
-                    }
-                    reply
-                }
+                };
+                RESPONSE.with(|response| *response.borrow_mut() = encoded);
+                return;
             }
             Err(error) => DesignerWireReply::Error {
                 error: error.failure_projection(current_revision(runtime.as_ref())),
@@ -375,6 +408,22 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
         };
         set_response(&reply);
     });
+}
+
+fn decode_spreadsheet_operation(
+    runtime: Option<&DesignerRuntime>,
+    request: &[u8],
+    project: &[u8],
+) -> Result<SpreadsheetResult, DesignerError> {
+    serde_json::from_slice::<SpreadsheetOperation>(request)
+        .map_err(|error| DesignerError::InvalidProjectTransfer {
+            message: format!("Invalid spreadsheet operation: {error}"),
+        })
+        .and_then(|operation| {
+            RETAINED_SOURCE.with(|retained| {
+                spreadsheet_operation(runtime, operation, project, &mut retained.borrow_mut())
+            })
+        })
 }
 
 fn import_source(
@@ -426,6 +475,7 @@ fn spreadsheet_operation(
     runtime: Option<&DesignerRuntime>,
     operation: SpreadsheetOperation,
     project: &[u8],
+    retained: &mut Option<InspectedSource>,
 ) -> Result<SpreadsheetResult, DesignerError> {
     match operation {
         SpreadsheetOperation::Inspect {
@@ -433,6 +483,7 @@ fn spreadsheet_operation(
             csv_options,
             profile,
         } => {
+            *retained = None;
             let working = profile.is_some();
             let workbook = import_source(project, format, &csv_options, working)?;
             let profile = if working {
@@ -445,6 +496,9 @@ fn spreadsheet_operation(
             let mut result =
                 SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
             result.profile = profile;
+            if matches!(format, SpreadsheetFormat::Xlsx) {
+                result.inspected_source = Some(SourceIdentity::new(project, csv_options, working));
+            }
             Ok(result)
         }
         SpreadsheetOperation::Import {
@@ -455,7 +509,18 @@ fn spreadsheet_operation(
             install,
             profile,
         } => {
-            let workbook = import_source(project, format, &csv_options, profile.is_some())?;
+            let workbook = retained.take().and_then(|source| {
+                source.consume(
+                    project,
+                    &csv_options,
+                    profile.is_some(),
+                    matches!(format, SpreadsheetFormat::Xlsx),
+                )
+            });
+            let workbook = match workbook {
+                Some(workbook) => *workbook,
+                None => import_source(project, format, &csv_options, profile.is_some())?,
+            };
             import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
         }
         SpreadsheetOperation::InspectProject { metadata, profile } => {
@@ -522,6 +587,7 @@ fn import_spreadsheet(
         None => {
             let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::Imported(Box::new(imported)),
                 candidate: install.then_some(candidate),
@@ -532,6 +598,7 @@ fn import_spreadsheet(
             let (candidate, imported) =
                 import_workbook_working_size(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::ImportedWindow(Box::new(imported)),
                 candidate: install.then_some(candidate),
@@ -577,6 +644,7 @@ fn open_imported_project_spreadsheet(
             let (candidate, opened) =
                 crate::admit_imported_project(project, occurrence_id, metadata)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::Opened(Box::new(opened)),
                 candidate: Some(candidate),
@@ -587,6 +655,7 @@ fn open_imported_project_spreadsheet(
             let (candidate, opened) =
                 crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
             Ok(SpreadsheetResult {
+                inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::OpenedWindow(Box::new(opened)),
                 candidate: Some(candidate),
@@ -612,6 +681,7 @@ fn export_native_tables_spreadsheet(
         matches!(format, SpreadsheetFormat::Csv),
     )?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response,
         candidate: None,
@@ -679,6 +749,7 @@ fn export_native_tracker_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -757,6 +828,7 @@ fn export_native_budget_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -849,6 +921,7 @@ fn export_spreadsheet(
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
     Ok(SpreadsheetResult {
+        inspected_source: None,
         profile: runtime.profile,
         response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
             revision: revision.to_owned(),
@@ -1013,72 +1086,37 @@ fn process_portable_ro_candidate(working_size: bool) {
 
 /// Encode the exact expected resident revision into the project arena.
 ///
-/// The caller writes the UTF-8 expected revision into the normal request
-/// arena first. Successful export replaces the project arena with an opaque
+/// The caller writes a UTF-8 revision or JSON `{expected_revision, metadata?}`
+/// into the request arena first. Successful export replaces the project arena with an opaque
 /// canonical project bundle.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_export() {
-    RUNTIME.with(|runtime| {
-        let runtime = runtime.borrow();
-        let reply = if let Some(runtime) = runtime.as_ref() {
-            REQUEST.with(|request| {
-                let request = request.borrow();
-                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
-                    return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
-                        .expect("bounded refusal is JSON");
-                }
-                match std::str::from_utf8(&request) {
-                    Ok(expected_revision) => match runtime.export_project(expected_revision) {
-                        Ok(export) => {
-                            let byte_length = export.bytes.len();
-                            PROJECT.with(|project| *project.borrow_mut() = export.bytes);
-                            DesignerWireReply::Ok {
-                                response: DesignerResponse::ProjectExported(
-                                    ProjectExportProjection {
-                                        revision: export.revision,
-                                        byte_length,
-                                        import_metadata: export.import_metadata,
-                                    },
-                                ),
-                            }
-                        }
-                        Err(error) => DesignerWireReply::Error {
-                            error: error.failure_projection(runtime.current_revision()),
-                        },
-                    },
-                    Err(_) => DesignerWireReply::Error {
-                        error: DesignerError::InvalidProjectTransfer {
-                            message: "expected revision is not UTF-8".to_owned(),
-                        }
-                        .failure_projection(runtime.current_revision()),
-                    },
-                }
-            })
-        } else {
-            DesignerWireReply::Error {
-                error: crate::FailureProjection {
-                    span: None,
-                    code: "no_project_open".to_owned(),
-                    message: "No Designer project is open.".to_owned(),
-                    current_revision: "unavailable".to_owned(),
-                    diagnostics: Vec::new(),
-                    name_failures: Vec::new(),
-                    constraint_failure: None,
-                    row_count: None,
-                    capacity: None,
-                },
-            }
-        };
-        set_response(&reply);
-    });
+    export_project_bytes(
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_project_with_metadata,
+            )
+        },
+        DesignerResponse::ProjectExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
+    );
 }
 
 /// Export the explicitly selected opaque canonical v3 project.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_export_v3() {
     export_project_bytes(
-        DesignerRuntime::export_project_v3,
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_project_v3_with_metadata,
+            )
+        },
         DesignerResponse::ProjectExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
     );
 }
 
@@ -1089,6 +1127,7 @@ pub extern "C" fn tachiko_designer_canonical_tree_export() {
     export_project_bytes(
         DesignerRuntime::export_canonical_tree,
         DesignerResponse::CanonicalTreeExported,
+        MAX_WIRE_REQUEST_BYTES,
     );
 }
 
@@ -1097,8 +1136,15 @@ pub extern "C" fn tachiko_designer_canonical_tree_export() {
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_portable_ro_export() {
     export_project_bytes(
-        DesignerRuntime::export_portable_ro,
+        |runtime, request| {
+            crate::export_with_host_metadata(
+                runtime,
+                request,
+                DesignerRuntime::export_portable_ro_with_metadata,
+            )
+        },
         DesignerResponse::PortableRoExported,
+        MAX_SPREADSHEET_METADATA_REQUEST_BYTES,
     );
 }
 
@@ -1132,6 +1178,7 @@ pub extern "C" fn tachiko_designer_occurrence_observe() {
 fn export_project_bytes<E>(
     export: fn(&DesignerRuntime, &str) -> Result<E, DesignerError>,
     response: fn(ProjectExportProjection) -> DesignerResponse,
+    request_limit: usize,
 ) where
     E: IntoProjectExport,
 {
@@ -1140,7 +1187,17 @@ fn export_project_bytes<E>(
         let reply = if let Some(runtime) = runtime.as_ref() {
             REQUEST.with(|request| {
                 let request = request.borrow();
-                if REQUEST_TOO_LARGE.replace(false) || request.len() > MAX_WIRE_REQUEST_BYTES {
+                let request_limit = if request
+                    .iter()
+                    .copied()
+                    .find(|byte| !byte.is_ascii_whitespace())
+                    == Some(b'{')
+                {
+                    request_limit
+                } else {
+                    MAX_WIRE_REQUEST_BYTES
+                };
+                if REQUEST_TOO_LARGE.replace(false) || request.len() > request_limit {
                     return serde_json::from_slice(&request_too_large_reply(Some(runtime)))
                         .expect("bounded refusal is JSON");
                 }
@@ -1218,6 +1275,7 @@ pub extern "C" fn tachiko_designer_project_release() {
 /// Destroy the current occurrence and release transient project bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn tachiko_designer_project_close() {
+    RETAINED_SOURCE.with(|retained| *retained.borrow_mut() = None);
     RUNTIME.with(|runtime| *runtime.borrow_mut() = None);
     tachiko_designer_project_release();
 }
@@ -1327,6 +1385,13 @@ mod native_tables_parity_tests {
         tachiko_designer_project_close();
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod auto_field_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod blank_workbook_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod header_promotion_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod import_profile_tests;
@@ -1467,6 +1532,54 @@ mod row_rank_parity_tests {
     }
 
     #[test]
+    fn wasm_copy_shifts_same_row_columns() {
+        tachiko_designer_project_close();
+        let mut document = ranked_document();
+        let schema = document.schemas.get_mut("rows").unwrap();
+        let mut extra = schema.fields["calc"].clone();
+        extra.id = "z".into();
+        extra.key = "z".into();
+        schema.fields.insert("z".into(), extra);
+        schema.field_order = Some(vec![
+            "amount".into(),
+            "calc".into(),
+            "z".into(),
+            "label".into(),
+        ]);
+        for entity in document.entities.values_mut() {
+            entity.fields.insert(
+                "z".into(),
+                tachiko_semantic_core::Value::Number(
+                    tachiko_semantic_core::Number::new(0.0).unwrap(),
+                ),
+            );
+        }
+        document.entities.get_mut("e03").unwrap().fields.insert(
+            "calc".into(),
+            tachiko_semantic_core::Value::Formula(
+                tachiko_semantic_core::Expression::SameRowReference("amount".into()),
+            ),
+        );
+        let tree = tachiko_storage::encode_roproj_v3(&document).unwrap();
+        let bundle = crate::encode_project_bundle(
+            tree.files().iter().map(|file| (file.path(), file.bytes())),
+        )
+        .unwrap();
+        REQUEST.with(|slot| *slot.borrow_mut() = OCCURRENCE.to_vec());
+        PROJECT.with(|slot| *slot.borrow_mut() = bundle);
+        tachiko_designer_project_open();
+        response();
+        request(
+            &json!({"type":"copy_formula", "expected_revision":"resident/0", "source":{"entity":"e03","field":"calc"}, "destinations":[{"entity":"e03","field":"z"}], "fixed_references":[], "relative_rows":false, "relative_columns":true}),
+        );
+        request(
+            &json!({"type":"query_fields", "expected_revision":"resident/1", "fields":[{"entity":"e03","field":"z"}]}),
+        );
+        assert!(response().to_string().contains("[.calc]"));
+        tachiko_designer_project_close();
+    }
+
+    #[test]
     fn ranked_wasm_and_native_keep_positions_edits_save_and_export_bytes() {
         tachiko_designer_project_close();
         let tree = tachiko_storage::encode_roproj_v3(&ranked_document()).unwrap();
@@ -1590,3 +1703,6 @@ mod ranked_import_ingress_tests {
         tachiko_designer_project_close();
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cell_style_parity_tests;

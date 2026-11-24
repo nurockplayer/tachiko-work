@@ -13,6 +13,7 @@ fn field(entity: &str) -> FieldRef {
 
 fn schema(id: &str) -> Schema {
     Schema {
+        headerless: false,
         id: SchemaId::from(id),
         key: SchemaKey::from(id),
         display_name: None,

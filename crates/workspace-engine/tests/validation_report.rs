@@ -15,6 +15,7 @@ fn document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("schema"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "schema".into(),
                 key: SchemaKey::from("schema"),
@@ -182,6 +183,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
         (
             SchemaId::from("schema-a"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "schema-b".into(),
                 key: "schema-a".into(),
@@ -192,6 +194,7 @@ fn swapped_schema_ids_preserve_both_directional_mismatches() {
         (
             SchemaId::from("schema-b"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: "schema-a".into(),
                 key: "schema-b".into(),

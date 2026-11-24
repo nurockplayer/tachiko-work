@@ -970,6 +970,7 @@ fn wq_document(shape: WqShape) -> Document {
     let mut document = Document::empty("working-size-qualification", "Working Size Qualification");
     let schema_id = SchemaId::from("grid");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("grid"),
@@ -1478,6 +1479,7 @@ fn wb_blank_document() -> Document {
     let mut document = Document::empty("working-size-bulk", "Working Size Bulk");
     let schema_id = SchemaId::from("grid");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("grid"),

@@ -19,6 +19,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 SchemaId::from("character"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("character"),
                     key: SchemaKey::from("character"),
@@ -29,6 +30,7 @@ fn balance_document(damage: f64) -> Document {
             (
                 SchemaId::from("weapon"),
                 Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from("weapon"),
                     key: SchemaKey::from("weapon"),

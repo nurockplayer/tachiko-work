@@ -375,6 +375,11 @@ pub enum SemanticCommand {
         field: FieldId,
         key: FieldKey,
     },
+    /// Change the existing canonical header state without changing identities.
+    SetSchemaHeaderless {
+        schema: SchemaId,
+        headerless: bool,
+    },
     /// Set or clear only the durable name of a continuing stable schema.
     SetSchemaDisplayName {
         schema: SchemaId,
@@ -520,6 +525,7 @@ fn command_payload_approx_bytes(command: &SemanticCommand) -> usize {
         SemanticCommand::RenameSchemaField { schema, field, key } => {
             schema.as_str().len() + field.as_str().len() + key.as_str().len()
         }
+        SemanticCommand::SetSchemaHeaderless { schema, .. } => schema.as_str().len(),
         SemanticCommand::SetSchemaDisplayName {
             schema,
             display_name,
@@ -3648,6 +3654,7 @@ impl PatchLifecycle {
                     SemanticCommand::AppendSchemaField { .. }
                     | SemanticCommand::RemoveSchemaField { .. }
                     | SemanticCommand::RenameSchemaField { .. }
+                    | SemanticCommand::SetSchemaHeaderless { .. }
                     | SemanticCommand::SetSchemaDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldDisplayName { .. }
                     | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -3970,7 +3977,11 @@ impl PatchLifecycle {
     ) -> Result<(), WorkspaceError> {
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::TypeMismatch {
                 field: FieldRef::new("schema", field.id.clone()),
@@ -4019,7 +4030,10 @@ impl PatchLifecycle {
         for (entity, value) in values {
             if !matches!(
                 (value, &field.field_type),
-                (Value::Text(_), FieldType::Text)
+                (
+                    Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Date(_),
+                    FieldType::Auto
+                ) | (Value::Text(_), FieldType::Text)
                     | (Value::Number(_), FieldType::Number)
                     | (Value::Boolean(_), FieldType::Boolean)
                     | (Value::Date(_), FieldType::Date)
@@ -4091,7 +4105,11 @@ impl PatchLifecycle {
         }
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::MissingField {
                 field: FieldRef::new("schema", field.id.clone()),
@@ -4249,7 +4267,11 @@ impl PatchLifecycle {
             })?;
         if !matches!(
             field.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(WorkspaceError::MissingField {
                 field: FieldRef::new("schema", field_id.clone()),
@@ -4473,6 +4495,19 @@ impl PatchLifecycle {
                 SemanticCommand::RenameSchemaField { schema, field, key } => {
                     self.plan_rename_schema_field(&mut candidate, schema, field, key, &mut writes)?;
                 }
+                SemanticCommand::SetSchemaHeaderless { schema, headerless } => {
+                    let definition = candidate.schemas.get_mut(schema).ok_or_else(|| {
+                        WorkspaceError::MissingSchema {
+                            schema: schema.clone(),
+                        }
+                    })?;
+                    definition.headerless = *headerless;
+                    writes.insert(AssociatedWriteRequirement {
+                        family: OperationFamily::SchemaFieldMutation,
+                        mutation_class: MutationClass::Schema,
+                        scope: self.schema_scope(schema),
+                    });
+                }
                 SemanticCommand::SetSchemaDisplayName {
                     schema,
                     display_name,
@@ -4531,7 +4566,11 @@ impl PatchLifecycle {
                     })?;
                     if !matches!(
                         definition.field_type,
-                        FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                        FieldType::Auto
+                            | FieldType::Text
+                            | FieldType::Number
+                            | FieldType::Boolean
+                            | FieldType::Date
                     ) || !has_native_scalar_shape(&candidate, record)
                     {
                         return Err(WorkspaceError::TypeMismatch {
@@ -4578,7 +4617,7 @@ impl PatchLifecycle {
                             schema: schema.clone(),
                             field: field.clone(),
                         })?;
-                    if definition.field_type != FieldType::Number {
+                    if !matches!(definition.field_type, FieldType::Number | FieldType::Auto) {
                         return Err(WorkspaceError::InvalidNumberFormat {
                             source: super::NumberFormatError::NonNumberField,
                         });
@@ -5626,6 +5665,7 @@ impl PatchBodyIndex {
                 }
                 SemanticCommand::SetEntityRank { .. }
                 | SemanticCommand::SetFieldConstraint { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetFieldNumberFormat { .. }
@@ -5738,6 +5778,7 @@ impl<'a> DisclosureDerivation<'a> {
             SemanticCommand::AppendSchemaField { .. }
             | SemanticCommand::RemoveSchemaField { .. }
             | SemanticCommand::RenameSchemaField { .. }
+            | SemanticCommand::SetSchemaHeaderless { .. }
             | SemanticCommand::SetSchemaDisplayName { .. }
             | SemanticCommand::SetSchemaFieldDisplayName { .. }
             | SemanticCommand::SetFieldNumberFormat { .. }
@@ -6265,7 +6306,11 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         })
         && document
@@ -6281,7 +6326,13 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                         entity.fields.get(id).map_or(!field.required, |value| {
                             matches!(
                                 (&field.field_type, value),
-                                (FieldType::Text, Value::Text(_))
+                                (
+                                    FieldType::Auto,
+                                    Value::Number(_)
+                                        | Value::Text(_)
+                                        | Value::Boolean(_)
+                                        | Value::Date(_)
+                                ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_))
@@ -6385,6 +6436,18 @@ fn reject_legacy_field_orders(
     candidate: &Document,
     body: &SemanticPatchBody,
 ) -> Result<(), PatchLifecycleError> {
+    if base.has_auto_fields() || candidate.has_auto_fields() {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedAutoField)),
+        });
+    }
+    if base.has_headerless_schemas() || candidate.has_headerless_schemas() {
+        return Err(PatchLifecycleError::CommandRejected {
+            source: Box::new(WorkspaceError::Diff(
+                super::DiffError::UnsupportedHeaderless,
+            )),
+        });
+    }
     if base.has_row_ranks() || candidate.has_row_ranks() {
         return Err(PatchLifecycleError::CommandRejected {
             source: Box::new(WorkspaceError::Diff(super::DiffError::UnsupportedRowRank)),
@@ -6557,6 +6620,7 @@ fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) ->
 }
 
 fn project_formula_schema(schema: &mut Schema) {
+    schema.headerless = false;
     schema.display_name = None;
     schema.field_order = None;
     for field in schema.fields.values_mut() {
@@ -6858,7 +6922,8 @@ fn admit_command_names(body: &SemanticPatchBody) -> Result<(), WorkspaceError> {
                     },
                 );
             }
-            SemanticCommand::SetEntityRank { .. }
+            SemanticCommand::SetSchemaHeaderless { .. }
+            | SemanticCommand::SetEntityRank { .. }
             | SemanticCommand::RemoveCollection { .. }
             | SemanticCommand::AppendEntity { .. }
             | SemanticCommand::RemoveEntity { .. }
@@ -6970,6 +7035,7 @@ mod tests {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
+                    headerless: false,
                     field_order: None,
                     id: SchemaId::from(schema_id),
                     key: SchemaKey::from(schema_id),
@@ -7075,6 +7141,7 @@ mod tests {
         document.schemas.insert(
             orders.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: orders.clone(),
                 key: SchemaKey::from("orders"),
@@ -7112,6 +7179,7 @@ mod tests {
         document.schemas.insert(
             products.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: products.clone(),
                 key: SchemaKey::from("products"),
@@ -7989,6 +8057,7 @@ mod tests {
         // Vec<Entity> in AppendCollection.
         let one_entity = SemanticCommand::AppendCollection {
             schema: Schema {
+                headerless: false,
                 id: SchemaId::from("s"),
                 key: SchemaKey::from("s"),
                 display_name: None,
@@ -7999,6 +8068,7 @@ mod tests {
         };
         let two_entities = SemanticCommand::AppendCollection {
             schema: Schema {
+                headerless: false,
                 id: SchemaId::from("s"),
                 key: SchemaKey::from("s"),
                 display_name: None,

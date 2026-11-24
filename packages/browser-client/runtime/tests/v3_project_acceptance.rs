@@ -411,6 +411,7 @@ fn fixture_document(
         },
     ];
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: SchemaKey::from("sheet_1"),
@@ -525,6 +526,8 @@ fn assert_opened_fixture(opened: &OpenedProjection, expected: &Document) {
         key: "sheet_1".into(),
         display_name: "sheet_1".into(),
         entity_count: 2,
+        headerless: false,
+        data_start_row: 2,
     };
     assert_eq!(opened.bootstrap.title, "Imported workbook");
     assert_eq!(opened.bootstrap.default_collection, "sheet_1");
@@ -1181,6 +1184,8 @@ fn independent_opened_projection(
         key: "sheet_1".to_owned(),
         display_name: "sheet_1".to_owned(),
         entity_count: 2,
+        headerless: false,
+        data_start_row: 2,
     };
     let columns = [
         ("column_1", "text"),
@@ -1229,6 +1234,7 @@ fn independent_opened_projection(
         .into_iter()
         .map(|(row_id, row_key, values)| RowProjection {
             blank_fields: Vec::new(),
+            styles: Vec::new(),
             id: row_id.to_owned(),
             key: row_key.to_owned(),
             position: None,
@@ -2222,6 +2228,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         let schema_id = SchemaId::from(new_schema_id);
         let field_id = FieldId::from(new_field_id);
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from("reset"),
@@ -2254,7 +2261,9 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 id: new_schema_id.into(),
                 key: "reset".into(),
                 display_name: "reset".into(),
-                entity_count: 0
+                entity_count: 0,
+                headerless: false,
+                data_start_row: 2,
             }],
             keyed_grouped_sum_definition_ids: vec![],
         }
@@ -2269,7 +2278,9 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 id: new_schema_id.into(),
                 key: "reset".into(),
                 display_name: "reset".into(),
-                entity_count: 0
+                entity_count: 0,
+                headerless: false,
+                data_start_row: 2,
             },
             columns: vec![ColumnProjection {
                 required: true,

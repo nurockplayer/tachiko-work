@@ -231,6 +231,8 @@ struct DocumentIdentityV3 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SchemaV3 {
+    #[serde(default, deserialize_with = "headerless_true")]
+    headerless: bool,
     id: String,
     key: String,
     #[serde(default, deserialize_with = "optional_name")]
@@ -282,6 +284,7 @@ enum ConstraintV3 {
 }
 
 enum FieldTypeV3 {
+    Auto,
     Number,
     Text,
     Boolean,
@@ -303,6 +306,10 @@ impl<'de> Deserialize<'de> for FieldTypeV3 {
         };
 
         match field_type.as_str() {
+            "auto" => {
+                reject_unknown_field_type_members::<D>(&object, &["type"])?;
+                Ok(Self::Auto)
+            }
             "number" => {
                 reject_unknown_field_type_members::<D>(&object, &["type"])?;
                 Ok(Self::Number)
@@ -332,7 +339,7 @@ impl<'de> Deserialize<'de> for FieldTypeV3 {
             }
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["number", "text", "boolean", "date", "reference"],
+                &["auto", "number", "text", "boolean", "date", "reference"],
             )),
         }
     }
@@ -983,6 +990,14 @@ fn schemas_into_semantic(
     Ok(semantic)
 }
 
+fn headerless_true<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    if bool::deserialize(deserializer)? {
+        Ok(true)
+    } else {
+        Err(serde::de::Error::custom("headerless false must be omitted"))
+    }
+}
+
 impl SchemaV3 {
     fn into_semantic(self) -> Result<Schema, FormatError> {
         let mut fields = BTreeMap::new();
@@ -1000,6 +1015,7 @@ impl SchemaV3 {
         }
         let field_order = field_order_from_wire(self.field_order, &fields)?;
         Ok(Schema {
+            headerless: self.headerless,
             field_order,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
@@ -1105,6 +1121,7 @@ fn validate_text_literals(values: &[String], require_order: bool) -> Result<(), 
 impl FieldTypeV3 {
     fn into_semantic(self) -> Result<FieldType, FormatError> {
         Ok(match self {
+            Self::Auto => FieldType::Auto,
             Self::Number => FieldType::Number,
             Self::Text => FieldType::Text,
             Self::Boolean => FieldType::Boolean,
@@ -1531,6 +1548,7 @@ impl SchemaV3 {
             id: schema.id.to_string(),
             key: schema.key.to_string(),
             display_name: schema.display_name.clone(),
+            headerless: schema.headerless,
             field_order: schema
                 .field_order
                 .as_ref()
@@ -1576,6 +1594,7 @@ impl ConstraintV3 {
 impl FieldTypeV3 {
     fn from_semantic(field_type: &FieldType) -> Self {
         match field_type {
+            FieldType::Auto => Self::Auto,
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,
@@ -1938,6 +1957,10 @@ fn write_schema(output: &mut String, schema: &SchemaV3, indent: usize) -> Result
     if let Some(name) = &schema.display_name {
         pretty_member_string(output, indent + 1, "display_name", name, true)?;
     }
+    if schema.headerless {
+        pretty_member_prefix(output, indent + 1, "headerless")?;
+        output.push_str("true,\n");
+    }
     if let Some(order) = &schema.field_order {
         pretty_member_prefix(output, indent + 1, "field_order")?;
         output.push('[');
@@ -2016,6 +2039,7 @@ fn write_field_type(
 ) -> Result<(), FormatError> {
     output.push_str("{\n");
     match field_type {
+        FieldTypeV3::Auto => pretty_member_string(output, indent + 1, "type", "auto", false)?,
         FieldTypeV3::Number => pretty_member_string(output, indent + 1, "type", "number", false)?,
         FieldTypeV3::Text => pretty_member_string(output, indent + 1, "type", "text", false)?,
         FieldTypeV3::Boolean => pretty_member_string(output, indent + 1, "type", "boolean", false)?,

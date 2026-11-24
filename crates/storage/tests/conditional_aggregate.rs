@@ -44,6 +44,7 @@ fn document(expression: Expression) -> Document {
     document.schemas.insert(
         "plan".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "plan".into(),
             key: "plan".into(),
@@ -59,6 +60,7 @@ fn document(expression: Expression) -> Document {
     document.schemas.insert(
         "summary".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "summary".into(),
             key: "summary".into(),

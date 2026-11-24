@@ -28,6 +28,7 @@ fn document() -> Document {
     document.schemas.insert(
         "schema".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "schema".into(),
             key: "items".into(),
@@ -281,6 +282,7 @@ fn schema_delete_modify_conflict_carries_constraint_and_suppresses_descendants()
         assert_eq!(
             fact,
             &Fact::Present(MergeValue::SchemaSubject(SchemaSubjectV2 {
+                headerless: false,
                 display_name: None,
                 key: "items".into(),
                 fields: BTreeMap::from([("amount".into(), field_subject(source))]),

@@ -209,6 +209,11 @@ fn schema_bytes(schema: &Schema) -> u64 {
         schema.display_name.as_ref().map_or(0, |name| {
             pretty_string(indent + 1, "display_name", name, true)
         }),
+        if schema.headerless {
+            pretty_prefix(indent + 1, "headerless") + 6
+        } else {
+            0
+        },
         schema.field_order.as_ref().map_or(0, |order| {
             total([
                 pretty_prefix(indent + 1, "field_order"),
@@ -292,6 +297,7 @@ fn field_type_bytes(field_type: &FieldType, indent: u64) -> u64 {
     total([
         2, // "{\n"
         match field_type {
+            FieldType::Auto => pretty_string(indent + 1, "type", "auto", false),
             FieldType::Number => pretty_string(indent + 1, "type", "number", false),
             FieldType::Text => pretty_string(indent + 1, "type", "text", false),
             FieldType::Boolean => pretty_string(indent + 1, "type", "boolean", false),
@@ -915,6 +921,7 @@ mod iferror_tests {
         document.schemas.insert(
             "schema".into(),
             Schema {
+                headerless: false,
                 id: "schema".into(),
                 key: "schema".into(),
                 display_name: None,

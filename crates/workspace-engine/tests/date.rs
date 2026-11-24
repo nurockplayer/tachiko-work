@@ -20,6 +20,7 @@ fn date_document(value: &str) -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("event"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("event"),
                 key: "event".into(),

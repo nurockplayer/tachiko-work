@@ -25,6 +25,7 @@ const SECOND: &str = "00000000-0000-4000-8000-000000000163";
 fn native_document(rows: usize) -> Document {
     let mut document = Document::empty("d", "capacity");
     let schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("s"),
         key: SchemaKey::from("grid"),
@@ -423,7 +424,11 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // default false blank flags and empty blank-field lists stay omitted.
         // The column-total footer adds `,"column_totals":{}` (19 bytes): this
         // fixture declares only Text columns, so it has no Number total.
-        assert_eq!(expected_bytes.len(), 73_213 + 22 + 3 * 19 + 3 * 16 + 19);
+        // The collection summaries add `,"headerless":false` (2 x 19 bytes).
+        assert_eq!(
+            expected_bytes.len(),
+            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19
+        );
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
 
@@ -467,6 +472,8 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             key: schema.key.to_string(),
             display_name: schema.key.to_string(),
             entity_count: entities.len(),
+            headerless: false,
+            data_start_row: 2,
         },
         columns: schema
             .fields
@@ -491,6 +498,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .into_iter()
             .map(|entity| RowProjection {
                 blank_fields: Vec::new(),
+                styles: Vec::new(),
                 id: entity.id.to_string(),
                 key: entity.key.to_string(),
                 position: None,

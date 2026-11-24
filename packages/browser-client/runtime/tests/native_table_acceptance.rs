@@ -468,6 +468,7 @@ fn keyed_sum_document() -> Document {
         ),
     ] {
         let schema = Schema {
+            headerless: false,
             id: name.into(),
             key: name.into(),
             display_name: None,

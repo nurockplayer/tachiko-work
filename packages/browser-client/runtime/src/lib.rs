@@ -9,7 +9,7 @@ mod positional_insert_tests;
 mod translate_a1;
 pub use translate_a1::{
     A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
-    TranslateA1FormulaInput,
+    RenderA1FormulaInput, TranslateA1FormulaInput,
 };
 
 mod capacity;
@@ -21,6 +21,12 @@ pub use capacity::{
 };
 #[cfg(test)]
 mod authored_input_tests;
+#[cfg(test)]
+mod auto_field_tests;
+mod auto_input;
+mod blank_workbook;
+#[cfg(test)]
+mod blank_workbook_tests;
 #[cfg(test)]
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -36,6 +42,9 @@ mod field_order_tests;
 mod formula_blank_tests;
 #[cfg(test)]
 mod formula_new_row_tests;
+mod header_promotion;
+#[cfg(test)]
+mod header_promotion_tests;
 #[cfg(test)]
 mod number_format_tests;
 #[cfg(test)]
@@ -65,7 +74,7 @@ use tachiko_storage::{
     decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 use tachiko_workspace_engine::validate;
 use tachiko_workspace_engine::{
     CalculationFailure, CellAlignment, CellStyle, ColumnRef, ConditionalAggregate, Date,
@@ -97,6 +106,7 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 
+mod cell_style;
 mod imported_lifecycle;
 #[cfg(test)]
 mod imported_lifecycle_tests;
@@ -107,6 +117,12 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+mod source_reuse;
+pub use cell_style::{CellBorderTarget, CellStyleChange};
+#[cfg(test)]
+mod cell_border_tests;
+#[cfg(test)]
+mod cell_style_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod presentation_commands_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -123,10 +139,14 @@ pub use interop_document::{
 
 // Exercise the browser bridge logic in native unit tests without dereferencing
 // its WASM-only pointer offsets. Production compilation remains WASM-only.
+#[cfg(all(test, not(target_arch = "wasm32"), feature = "capacity-bench"))]
+mod capacity_809_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_bench;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_fixtures;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capacity_stage5_bench;
 #[cfg(all(target_arch = "wasm32", feature = "capacity-bench"))]
 compile_error!(
     "the capacity-bench feature is native test-only; it must not be enabled for WASM builds"
@@ -274,6 +294,28 @@ pub enum DesignerRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<DesignerProfile>,
     },
+    NewBlankWorkbook {
+        occurrence_id: String,
+        profile: DesignerProfile,
+    },
+    PromoteFirstRowToHeaders {
+        expected_revision: String,
+        collection: String,
+    },
+    WriteCellAt {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        column: usize,
+        input: ScalarEditInput,
+    },
+    PasteCellsAt {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        column: usize,
+        rows: Vec<Vec<PasteCellInput>>,
+    },
     NewTable {
         occurrence_id: String,
         name: String,
@@ -326,6 +368,21 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         wrap: Option<bool>,
+    },
+    SetCellStyle {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+        fields: Vec<String>,
+        changes: Vec<CellStyleChange>,
+    },
+    SetCellStyleRange {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        row_count: usize,
+        fields: Vec<String>,
+        changes: Vec<CellStyleChange>,
     },
     SetColumnWidth {
         expected_revision: String,
@@ -525,6 +582,10 @@ pub enum DesignerRequest {
         #[serde(flatten)]
         input: TranslateA1FormulaInput,
     },
+    RenderA1Formula {
+        #[serde(flatten)]
+        input: RenderA1FormulaInput,
+    },
     PreviewCleanup {
         expected_revision: String,
         operation: CleanupOperation,
@@ -632,6 +693,8 @@ pub struct BootstrapProjection {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CollectionSummary {
+    pub headerless: bool,
+    pub data_start_row: usize,
     pub id: String,
     pub key: String,
     pub display_name: String,
@@ -1114,6 +1177,8 @@ fn document_requires_v2_evidence(document: &Document) -> bool {
         || document.has_date_formats()
         || document.has_field_orders()
         || document.has_row_ranks()
+        || document.has_auto_fields()
+        || document.has_headerless_schemas()
 }
 
 /// Turn a constrained-value validation failure into the private typed refusal
@@ -1356,6 +1421,9 @@ pub struct RowProjection {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blank_fields: Vec<String>,
     pub fields: Vec<FieldProjection>,
+    /// Resolved stored styles in column order, shared with imported rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<interop_adapter::CellStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1397,21 +1465,42 @@ pub struct FieldDependencyProjection {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScalarKind {
+    Auto,
     Number,
     Text,
     Boolean,
     Date,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoDateOrder {
+    MonthFirst,
+    DayFirst,
+}
+
 /// Private typed input for one directly stored scalar edit.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ScalarEditInput {
+    Auto {
+        input: String,
+        #[serde(default)]
+        date_order: Option<AutoDateOrder>,
+    },
     Clear,
-    Number { input: String },
-    Text { value: String },
-    Boolean { value: bool },
-    Date { value: String },
+    Number {
+        input: String,
+    },
+    Text {
+        value: String,
+    },
+    Boolean {
+        value: bool,
+    },
+    Date {
+        value: String,
+    },
 }
 
 /// One named entity initializer; optional columns may omit any or all entities.
@@ -1761,6 +1850,23 @@ pub struct PublicationProjection {
     /// Next client-held import mapping after a worksheet lifecycle edit or history step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_metadata: Option<InteropMetadata>,
+    /// Generated labels used for blank or duplicate header cells, in column order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_fallbacks: Vec<HeaderFallbackProjection>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HeaderFallbackProjection {
+    pub field: String,
+    pub name: String,
+    pub reason: HeaderFallbackReason,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeaderFallbackReason {
+    Blank,
+    Duplicate,
 }
 
 /// The reply's "re-query instead" marker: no target list, no changed cells.
@@ -1819,6 +1925,7 @@ impl From<&ResidentProjectionInvalidation> for PublicationProjection {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         }
     }
 }
@@ -1844,6 +1951,39 @@ pub struct ProjectExportProjection {
     pub byte_length: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_metadata: Option<InteropMetadata>,
+}
+
+/// JSON form of a project-export request; raw revision requests remain supported.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectExportRequest {
+    expected_revision: String,
+    metadata: Option<InteropMetadata>,
+}
+
+fn export_with_host_metadata(
+    runtime: &DesignerRuntime,
+    request: &str,
+    export: fn(
+        &DesignerRuntime,
+        &str,
+        Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError>,
+) -> Result<ProjectExport, DesignerError> {
+    if request.trim_start().starts_with('{') {
+        let request: ProjectExportRequest = serde_json::from_str(request).map_err(|error| {
+            DesignerError::InvalidProjectTransfer {
+                message: format!("Invalid project export request: {error}"),
+            }
+        })?;
+        export(
+            runtime,
+            &request.expected_revision,
+            request.metadata.as_ref(),
+        )
+    } else {
+        export(runtime, request, None)
+    }
 }
 
 /// An app-private transfer record containing every exact canonical v1 file.
@@ -1908,6 +2048,12 @@ pub enum DesignerError {
     InvalidOccurrenceIdentity,
     #[error("collection '{collection}' is not available in this Designer slice")]
     MissingCollection { collection: String },
+    #[error("the table already has headers")]
+    TableAlreadyHasHeaders,
+    #[error("the table has no data row to promote")]
+    NoHeaderRow,
+    #[error("a first-row formula has a failed or unavailable calculation")]
+    HeaderFormulaUnavailable,
     #[error("collection '{collection}' exceeds the bounded table profile")]
     CollectionTooLarge { collection: String },
     #[error(
@@ -1977,6 +2123,12 @@ pub enum DesignerError {
     },
     #[error("this project cannot be saved as an earlier format: {message}")]
     LegacyExportUnsupported { message: String },
+    #[error("fill must be '#' followed by six uppercase hexadecimal digits")]
+    InvalidStyleColor,
+    #[error("collection '{collection}' is read-only for cell styles")]
+    ReadOnlyStyleTable { collection: String },
+    #[error("cell style capacity exceeded: {message}")]
+    StyleCapacityExceeded { message: String },
     #[error("column width must be between 1 and 65280")]
     InvalidColumnWidth,
     #[error("date format requires a Date column")]
@@ -2057,6 +2209,9 @@ impl DesignerError {
     fn generic_failure(&self) -> (&'static str, Option<String>, Vec<DiagnosticProjection>) {
         let (code, diagnostics) = match self {
             Self::A1Translation { code, .. } => (code.as_str(), Vec::new()),
+            Self::TableAlreadyHasHeaders => ("table_already_has_headers", Vec::new()),
+            Self::NoHeaderRow => ("no_header_row", Vec::new()),
+            Self::HeaderFormulaUnavailable => ("header_formula_unavailable", Vec::new()),
             Self::CapacityExceeded(_) | Self::ImportCapacityExceeded { .. } => {
                 ("capacity_exceeded", Vec::new())
             }
@@ -2140,6 +2295,9 @@ impl DesignerError {
                 subject,
             } => formula_dependency_failure(*dependent_cells, subject),
             Self::FieldConstraintViolation { reason, .. } => (reason.code(), Vec::new()),
+            Self::InvalidStyleColor => ("invalid_style_color", Vec::new()),
+            Self::ReadOnlyStyleTable { .. } => ("read_only_table", Vec::new()),
+            Self::StyleCapacityExceeded { .. } => ("style_capacity_exceeded", Vec::new()),
             Self::InvalidColumnWidth => ("invalid_column_width", Vec::new()),
             Self::InvalidNumberFormat { .. } | Self::InvalidDateFormat => {
                 ("invalid_number_format", Vec::new())
@@ -2461,10 +2619,18 @@ type ColumnPresentationFacts = (SchemaId, FieldId, Option<CellStyle>, Option<u32
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug))]
 enum HistoryAction {
+    InputCommands {
+        commands: Vec<SemanticCommand>,
+        styles: Vec<auto_input::CellDisplay>,
+    },
     Commands(Vec<SemanticCommand>),
     TableCommands {
         commands: Vec<SemanticCommand>,
         default_collection: String,
+    },
+    CellPresentation {
+        store: PresentationStore,
+        bytes: usize,
     },
     ColumnPresentation {
         schema: SchemaId,
@@ -2485,6 +2651,16 @@ enum HistoryAction {
 impl HistoryAction {
     fn approx_bytes(&self) -> usize {
         match self {
+            Self::InputCommands { commands, styles } => {
+                commands
+                    .iter()
+                    .map(SemanticCommand::approx_bytes)
+                    .sum::<usize>()
+                    + styles
+                        .iter()
+                        .map(auto_input::CellDisplay::approx_bytes)
+                        .sum::<usize>()
+            }
             Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
             Self::TableCommands {
                 commands,
@@ -2496,6 +2672,7 @@ impl HistoryAction {
                     .sum::<usize>()
                     + default_collection.len()
             }
+            Self::CellPresentation { bytes, .. } => *bytes,
             Self::ColumnPresentation { schema, field, .. } => {
                 schema.as_str().len() + field.as_str().len() + 128
             }
@@ -2602,7 +2779,7 @@ impl ViewKind {
             FieldType::Text => Some(Self::Text),
             FieldType::Boolean => Some(Self::Boolean),
             FieldType::Date => Some(Self::Date),
-            FieldType::Reference { .. } => None,
+            FieldType::Auto | FieldType::Reference { .. } => None,
         }
     }
 }
@@ -2660,6 +2837,8 @@ enum ViewPredicate {
         format: Option<NumberFormat>,
         date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
+        /// An Auto cell's implied display overrides the column's formats.
+        auto: bool,
         /// Trimmed and lowercased once at plan time.
         value: String,
     },
@@ -2668,6 +2847,7 @@ enum ViewPredicate {
         format: Option<NumberFormat>,
         date_format: Option<tachiko_workspace_engine::DateFormat>,
         required: bool,
+        auto: bool,
         values: Vec<String>,
     },
 }
@@ -2886,6 +3066,7 @@ fn plan_filter(
             format: column.number_format.clone(),
             date_format: column.date_format,
             required: column.required,
+            auto: column.field_type == FieldType::Auto,
             value: value.trim().to_lowercase(),
         },
         ViewFilter::DisplayIn { values, .. } => ViewPredicate::DisplayIn {
@@ -2893,6 +3074,7 @@ fn plan_filter(
             format: column.number_format.clone(),
             date_format: column.date_format,
             required: column.required,
+            auto: column.field_type == FieldType::Auto,
             values: values.clone(),
         },
     })
@@ -2929,7 +3111,12 @@ fn view_literal(
     }
 }
 
-fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> bool {
+/// `style` gives the display record of the row's cell at an ordinal.
+fn predicate_matches<'a>(
+    predicate: &ViewPredicate,
+    cells: &[Option<ViewValue>],
+    style: impl Fn(usize) -> Option<&'a CellStyle>,
+) -> bool {
     match predicate {
         ViewPredicate::TextEquals { ordinal, value } => matches!(
             cells.get(*ordinal),
@@ -2961,12 +3148,18 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
             format,
             date_format,
             required,
+            auto,
             value,
         } => {
-            let text = display_text::cell_text(
-                cells.get(*ordinal).and_then(Option::as_ref),
+            let (format, date_format) = auto_input::layered_formats(
+                auto.then(|| style(*ordinal)).flatten(),
                 format.as_ref(),
                 date_format.as_ref(),
+            );
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format,
+                date_format,
                 *required,
             );
             text.trim().to_lowercase().contains(value.as_str())
@@ -2976,12 +3169,18 @@ fn predicate_matches(predicate: &ViewPredicate, cells: &[Option<ViewValue>]) -> 
             format,
             date_format,
             required,
+            auto,
             values,
         } => {
-            let text = display_text::cell_text(
-                cells.get(*ordinal).and_then(Option::as_ref),
+            let (format, date_format) = auto_input::layered_formats(
+                auto.then(|| style(*ordinal)).flatten(),
                 format.as_ref(),
                 date_format.as_ref(),
+            );
+            let text = display_text::cell_text(
+                cells.get(*ordinal).and_then(Option::as_ref),
+                format,
+                date_format,
                 *required,
             );
             values.contains(&text)
@@ -3433,6 +3632,11 @@ impl DesignerRuntime {
         presentation: PresentationStore,
     ) -> Result<String, DesignerError> {
         self.check_revision(expected_revision)?;
+        self.preflight_presentation(
+            self.session.document(),
+            &presentation,
+            self.imported.as_ref().map(|state| &state.metadata),
+        )?;
         let bytes = match self.profile {
             SessionProfile::WorkingSize => {
                 let bytes = save_size::presentation_saved_bytes(&presentation)?;
@@ -3459,7 +3663,13 @@ impl DesignerRuntime {
                 })
             })?;
         let new_revision = new_revision.as_str().to_owned();
-        self.view_index.rekey(expected_revision, &new_revision);
+        // A cell record can change an Auto cell's display text, which display
+        // filters read; only an unchanged set of cell records keeps the orders.
+        if presentation.cells == self.presentation.cells {
+            self.view_index.rekey(expected_revision, &new_revision);
+        } else {
+            self.view_index.retain_revision(&new_revision);
+        }
         if let Some((revision, _, _)) = &mut self.totals_cache {
             if revision == expected_revision {
                 revision.clone_from(&new_revision);
@@ -3541,6 +3751,7 @@ impl DesignerRuntime {
                 | SemanticCommand::AppendSchemaField { .. }
                 | SemanticCommand::RemoveSchemaField { .. }
                 | SemanticCommand::RenameSchemaField { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -3792,9 +4003,9 @@ impl DesignerRuntime {
             }
             let projection = match fields.remove(&field) {
                 Some(mut projection) => {
-                    projection.display = columns
-                        .get(&field)
-                        .and_then(|column| field_display_text(&projection, column));
+                    projection.display = columns.get(&field).and_then(|column| {
+                        field_display_text(&projection, column, &self.presentation)
+                    });
                     projection
                 }
                 None => blanks.remove(&field)?,
@@ -3829,6 +4040,38 @@ impl DesignerRuntime {
                 *self = candidate;
                 Ok(response)
             }
+            DesignerRequest::NewBlankWorkbook {
+                occurrence_id,
+                profile: DesignerProfile::WorkingSize,
+            } => {
+                let (candidate, response) = blank_workbook::candidate(&occurrence_id)?;
+                *self = candidate;
+                Ok(response)
+            }
+            DesignerRequest::PromoteFirstRowToHeaders {
+                expected_revision,
+                collection,
+            } => self
+                .promote_first_row_to_headers(&expected_revision, &collection)
+                .map(DesignerResponse::Published),
+            DesignerRequest::WriteCellAt {
+                expected_revision,
+                collection,
+                row,
+                column,
+                input,
+            } => self
+                .write_cell_at(&expected_revision, &collection, row, column, &input)
+                .map(DesignerResponse::Published),
+            DesignerRequest::PasteCellsAt {
+                expected_revision,
+                collection,
+                row,
+                column,
+                rows,
+            } => self
+                .paste_cells_at(&expected_revision, &collection, row, column, &rows)
+                .map(DesignerResponse::Published),
             DesignerRequest::NewTable {
                 occurrence_id,
                 name,
@@ -3923,6 +4166,36 @@ impl DesignerRuntime {
                 &field,
                 wrap,
             )?)),
+            DesignerRequest::SetCellStyle {
+                expected_revision,
+                collection,
+                entities,
+                fields,
+                changes,
+            } => Ok(DesignerResponse::Published(self.set_cell_style(
+                &expected_revision,
+                &collection,
+                &entities,
+                &fields,
+                &changes,
+            )?)),
+            DesignerRequest::SetCellStyleRange {
+                expected_revision,
+                collection,
+                row,
+                row_count,
+                fields,
+                changes,
+            } => self
+                .set_cell_style_range(
+                    &expected_revision,
+                    &collection,
+                    row,
+                    row_count,
+                    &fields,
+                    &changes,
+                )
+                .map(DesignerResponse::Published),
             DesignerRequest::SetColumnWidth {
                 expected_revision,
                 collection,
@@ -4230,6 +4503,9 @@ impl DesignerRuntime {
             DesignerRequest::TranslateA1Formula { input } => Ok(DesignerResponse::A1Translation(
                 self.translate_a1_formula(&input)?,
             )),
+            DesignerRequest::RenderA1Formula { input } => Ok(DesignerResponse::A1Translation(
+                self.render_a1_formula(&input)?,
+            )),
             DesignerRequest::PreviewCleanup {
                 expected_revision,
                 operation,
@@ -4466,6 +4742,18 @@ impl DesignerRuntime {
     /// Returns a stale-revision, storage, or bounded-transfer failure without
     /// mutating the resident occurrence.
     pub fn export_project(&self, expected_revision: &str) -> Result<ProjectExport, DesignerError> {
+        self.export_project_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_project_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError> {
         let current = self.current_revision();
         if current != expected_revision {
             return Err(DesignerError::StaleQuery {
@@ -4477,6 +4765,11 @@ impl DesignerRuntime {
         // A constrained document has no legacy representation at all, so this
         // answer is more specific than the generic v3-origin prohibition and
         // applies to both origins.
+        if snapshot.document().has_auto_fields() {
+            return Err(DesignerError::LegacyExportUnsupported {
+                message: "Auto fields require exportProjectV3 or exportCanonicalTree".to_owned(),
+            });
+        }
         if snapshot.document().has_number_formats() || snapshot.document().has_date_formats() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message: "number formats require exportProjectV3 or exportCanonicalTree".to_owned(),
@@ -4524,7 +4817,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 
@@ -4536,6 +4829,18 @@ impl DesignerRuntime {
     pub fn export_project_v3(
         &self,
         expected_revision: &str,
+    ) -> Result<ProjectExport, DesignerError> {
+        self.export_project_v3_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_project_v3_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
     ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         // The same profile decision as v3 open, so the preflight below admits
@@ -4555,7 +4860,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 
@@ -4608,6 +4913,18 @@ impl DesignerRuntime {
         &self,
         expected_revision: &str,
     ) -> Result<ProjectExport, DesignerError> {
+        self.export_portable_ro_with_metadata(expected_revision, None)
+    }
+
+    /// Export with optional host metadata, retaining runtime worksheet lifecycle authority.
+    ///
+    /// # Errors
+    /// Returns the export errors above or refuses a stale worksheet mapping.
+    pub fn export_portable_ro_with_metadata(
+        &self,
+        expected_revision: &str,
+        metadata: Option<&InteropMetadata>,
+    ) -> Result<ProjectExport, DesignerError> {
         let snapshot = self.exact_snapshot(expected_revision)?;
         ensure_export_document_profile(snapshot.document(), self.profile)?;
         let tree = self.encode_v3_export_tree(snapshot.document())?;
@@ -4623,7 +4940,7 @@ impl DesignerRuntime {
         Ok(ProjectExport {
             revision: snapshot.revision().as_str().to_owned(),
             bytes,
-            import_metadata: self.imported.as_ref().map(|state| state.metadata.clone()),
+            import_metadata: self.project_import_metadata(metadata)?,
         })
     }
 
@@ -4739,6 +5056,7 @@ impl DesignerRuntime {
                         id: entity.id.to_string(),
                         key: entity.key.to_string(),
                         position: None,
+                        styles: self.row_styles(spec, &entity.id),
                         blank_fields: blank_field_ids(entity, spec),
                         fields: spec
                             .columns
@@ -4822,6 +5140,7 @@ impl DesignerRuntime {
             key: entity.key.to_string(),
             position: None,
             blank_fields: blank_field_ids(entity, spec),
+            styles: self.row_styles(spec, &entity.id),
             fields,
         })
     }
@@ -4971,10 +5290,12 @@ impl DesignerRuntime {
             let Some(row) = row_of.get(value.field.entity.as_str()).copied() else {
                 continue;
             };
+            let (number_format, date_format) =
+                auto_input::cell_formats(&self.presentation, column, value.field.entity.as_str());
             texts[row] = Some(display_text::cell_text(
                 view_value(value).as_ref(),
-                column.number_format.as_ref(),
-                column.date_format.as_ref(),
+                number_format,
+                date_format,
                 column.required,
             ));
         }
@@ -5099,10 +5420,15 @@ impl DesignerRuntime {
             ) else {
                 continue;
             };
+            let (number_format, date_format) = auto_input::cell_formats(
+                &self.presentation,
+                columns[ordinal],
+                value.field.entity.as_str(),
+            );
             texts[ordinal][row] = display_text::cell_text(
                 view_value(value).as_ref(),
-                columns[ordinal].number_format.as_ref(),
-                columns[ordinal].date_format.as_ref(),
+                number_format,
+                date_format,
                 columns[ordinal].required,
             );
         }
@@ -5183,10 +5509,14 @@ impl DesignerRuntime {
         }
         let mut order = Vec::with_capacity(row_count);
         for (row, row_cells) in cells.iter().enumerate() {
+            let entity = spec.entities[row].as_str();
+            let style = |ordinal: usize| {
+                auto_input::stored_style(&self.presentation, entity, &plan.fields[ordinal])
+            };
             let admitted = plan
                 .filters
                 .iter()
-                .all(|predicate| predicate_matches(predicate, row_cells));
+                .all(|predicate| predicate_matches(predicate, row_cells, style));
             if admitted || keep.contains(&spec.entities[row]) {
                 order.push(row);
             }
@@ -5653,7 +5983,7 @@ impl DesignerRuntime {
             if display {
                 // Set the text before the row's bytes are counted, so an
                 // oversized reply still refuses.
-                attach_display_text(spec, &mut row);
+                attach_display_text(spec, &self.presentation, &mut row);
             }
             let row_bytes = serde_json::to_vec(&row)
                 .map_err(|error| view_encoding_failure("row", &error))?
@@ -5702,7 +6032,19 @@ impl DesignerRuntime {
             blank: false,
             target: field_target(&field.field),
             address: field.presentation_address.to_string(),
-            editable_scalar: scalar_kind(field.stored_value.as_ref()),
+            editable_scalar: if self
+                .session
+                .document()
+                .entities
+                .get(&field.field.entity)
+                .and_then(|entity| self.session.document().schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(&field.field.field))
+                .is_some_and(|definition| definition.field_type == FieldType::Auto)
+            {
+                Some(ScalarKind::Auto)
+            } else {
+                scalar_kind(field.stored_value.as_ref())
+            },
             stored,
             formula,
             calculated: field.calculated_value.as_ref().map(calculation_projection),
@@ -5917,11 +6259,18 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error(
                 "requiredness changes support only scalar columns",
             ));
+        }
+        if definition.field_type == FieldType::Auto && required {
+            return Err(table_error("Auto fields must be optional"));
         }
         if definition.required == required {
             return Err(PatchLifecycleError::NoChange.into());
@@ -6139,6 +6488,7 @@ impl DesignerRuntime {
             many: false,
             changed: Vec::new(),
             import_metadata: None,
+            header_fallbacks: Vec::new(),
         })
     }
 
@@ -6190,7 +6540,7 @@ impl DesignerRuntime {
             .fields
             .get(&FieldId::from(field.to_owned()))
             .ok_or_else(|| table_error("column is unavailable"))?;
-        if definition.field_type != FieldType::Number {
+        if !matches!(definition.field_type, FieldType::Number | FieldType::Auto) {
             return Err(DesignerError::InvalidNumberFormat {
                 source: tachiko_workspace_engine::NumberFormatError::NonNumberField,
             });
@@ -6377,6 +6727,12 @@ impl DesignerRuntime {
         // serial is never handed out again (snapshot diffs key columns by id).
         self.proposal_serial = serial - 1;
         let id = appended_field_id(schema, serial, &self.row_namespace);
+        // An Auto initializer implies the same display as typing it.
+        let mut displays = Vec::new();
+        for initializer in initializers {
+            let field = FieldRef::new(EntityId::from(initializer.entity.clone()), id.clone());
+            auto_input::collect_display(&kind, &field, &initializer.input, &mut displays);
+        }
         let field = FieldDefinition {
             id: id.clone(),
             key: FieldKey::from(key),
@@ -6405,7 +6761,7 @@ impl DesignerRuntime {
                 order: previous_order,
             },
         ];
-        self.record_edit(expected, forward, inverse)
+        self.record_input_edit(expected, forward, inverse, displays)
     }
 
     fn rename_table(
@@ -6480,7 +6836,11 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             old.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
@@ -6524,7 +6884,11 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
@@ -6600,11 +6964,18 @@ impl DesignerRuntime {
             .ok_or_else(|| table_error("column is unavailable"))?;
         if !matches!(
             definition.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         ) {
             return Err(table_error("column is not a supported scalar"));
         }
         let kind = native_table_field_type(field_type)?;
+        if kind == FieldType::Auto || definition.field_type == FieldType::Auto {
+            return Err(table_error("Auto column retyping is unsupported"));
+        }
         if kind == definition.field_type {
             return Err(table_error("column already has that type"));
         }
@@ -6904,7 +7275,7 @@ impl DesignerRuntime {
         }];
         let imported_before = self.imported.clone();
         let publication =
-            self.publish_commands_with_imported(expected, &forward, None, Some(&key))?;
+            self.publish_commands_with_imported(expected, &forward, None, Some(&key), None)?;
         self.duplicate_serial = serial;
         self.record_history_entry(
             HistoryEntry::new(
@@ -7051,6 +7422,7 @@ impl DesignerRuntime {
             .zip(ordered_ids)
             .collect();
         let mut schema = Schema {
+            headerless: source_schema.headerless,
             // The copy keeps the source's projected column order.
             field_order: Some(
                 source_spec
@@ -7117,6 +7489,7 @@ impl DesignerRuntime {
             &forward,
             None,
             Some(&target_key),
+            None,
         )?;
         self.duplicate_serial = ids.serial;
         self.record_history_entry(
@@ -7211,6 +7584,17 @@ impl DesignerRuntime {
         source: &str,
         inverse: Option<&mut Option<HistoryAction>>,
     ) -> Result<(PublicationProjection, String), DesignerError> {
+        let snapshot = self.session.export_snapshot();
+        if snapshot
+            .document()
+            .entities
+            .get(&target.as_field_ref().entity)
+            .and_then(|entity| snapshot.document().schemas.get(&entity.schema))
+            .and_then(|schema| schema.fields.get(&target.as_field_ref().field))
+            .is_some_and(|field| field.field_type == FieldType::Auto)
+        {
+            return Err(table_error("Auto formulas are unsupported"));
+        }
         self.publish_formula_update_unmapped(expected_revision, target, source, inverse)
             .map_err(|error| match &error {
                 DesignerError::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
@@ -7290,26 +7674,7 @@ impl DesignerRuntime {
             .get(command.target())
             .cloned()
             .ok_or_else(|| tracker_error("accepted formula source is unavailable"))?;
-        let mut working_admission = None;
-        match self.profile {
-            // Working size never rebuilds the occurrence; it re-proves only its
-            // own document bounds against the exact candidate.
-            SessionProfile::WorkingSize => {
-                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
-                self.ensure_working_saved_bytes_for(&candidate)?;
-                working_admission = Some(Self::measure_working_admission(&candidate)?);
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
-                Self::from_document_profile_with_opened(
-                    candidate,
-                    PREFLIGHT_OCCURRENCE,
-                    self.profile,
-                )?;
-            }
-            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
-                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
-            }
-        }
+        let working_admission = self.preflight_formula_candidate(candidate)?;
         let execute_now = self.clock.tick();
         let invalidation = {
             let mut publication = self.session.publication_authority(&mut self.clock);
@@ -7337,6 +7702,39 @@ impl DesignerRuntime {
             self.formula_sources = sources;
         }
         Ok((self.published_projection(&invalidation), forward))
+    }
+
+    fn preflight_formula_candidate(
+        &self,
+        candidate: Document,
+    ) -> Result<Option<WorkingAdmission>, DesignerError> {
+        if !self.presentation.is_empty() {
+            self.preflight_presentation(
+                &candidate,
+                &self.presentation,
+                self.imported.as_ref().map(|state| &state.metadata),
+            )?;
+        }
+        match self.profile {
+            // Working size never rebuilds the occurrence; it re-proves only its
+            // own document bounds against the exact candidate.
+            SessionProfile::WorkingSize => {
+                ensure_document_profile(&candidate, SessionProfile::WorkingSize)?;
+                self.ensure_working_saved_bytes_for(&candidate)?;
+                return Self::measure_working_admission(&candidate).map(Some);
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary if self.opened_from_v3 => {
+                Self::from_document_profile_with_opened(
+                    candidate,
+                    PREFLIGHT_OCCURRENCE,
+                    self.profile,
+                )?;
+            }
+            SessionProfile::TextCapacity | SessionProfile::Ordinary => {
+                Self::from_document_profile(candidate, PREFLIGHT_OCCURRENCE, self.profile)?;
+            }
+        }
+        Ok(None)
     }
 
     fn restore_formula_inverse(
@@ -7479,10 +7877,14 @@ impl DesignerRuntime {
             .collect::<BTreeSet<_>>();
         let mut references = BTreeSet::new();
         let mut reference_probe = expression.clone();
-        map_copy_references(&mut reference_probe, &mut |reference, _| {
-            references.insert(reference.clone());
-            Ok(())
-        })?;
+        map_copy_references(
+            &mut reference_probe,
+            &mut |reference, _| {
+                references.insert(reference.clone());
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )?;
         if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
             return Err(tracker_error(
                 "fixed references must be unique source dependencies",
@@ -7502,27 +7904,40 @@ impl DesignerRuntime {
             require_copy_target_number(document, &target)?;
             let old = document.entities[&target.entity].fields.get(&target.field);
             let mut copied = expression.clone();
-            map_copy_references(&mut copied, &mut |reference, numeric| {
-                if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
-                    return require_copy_reference(document, reference, numeric);
-                }
-                let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
-                let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
-                let shifted_column =
-                    copy_index(reference_column, source_column, column, relative_columns)?;
-                *reference = FieldRef::new(
-                    spec.entities.get(shifted_row).cloned().ok_or_else(|| {
-                        tracker_error("relative reference row is outside the collection")
-                    })?,
-                    spec.columns
-                        .get(shifted_column)
-                        .map(|column| column.id.clone())
-                        .ok_or_else(|| {
-                            tracker_error("relative reference column is outside the collection")
+            map_copy_references(
+                &mut copied,
+                &mut |reference, numeric| {
+                    if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
+                        return require_copy_reference(document, reference, numeric);
+                    }
+                    let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
+                    let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
+                    let shifted_column =
+                        copy_index(reference_column, source_column, column, relative_columns)?;
+                    *reference = FieldRef::new(
+                        spec.entities.get(shifted_row).cloned().ok_or_else(|| {
+                            tracker_error("relative reference row is outside the collection")
                         })?,
-                );
-                require_copy_reference(document, reference, numeric)
-            })?;
+                        spec.columns
+                            .get(shifted_column)
+                            .map(|column| column.id.clone())
+                            .ok_or_else(|| {
+                                tracker_error("relative reference column is outside the collection")
+                            })?,
+                    );
+                    require_copy_reference(document, reference, numeric)
+                },
+                &mut |field| {
+                    if relative_columns {
+                        let reference = FieldRef::new(source.entity.clone(), field.clone());
+                        let (_, reference_column) = copy_position(spec, &rows, &reference)?;
+                        let shifted = copy_index(reference_column, source_column, column, true)
+                        .map_err(|_| tracker_error(&format!("relative reference {}.{} from {}.{} to {}.{} is outside the collection", source.entity, field, source.entity, source.field, target.entity, target.field)))?;
+                        *field = spec.columns.get(shifted).ok_or_else(|| tracker_error(&format!("relative reference {}.{} from {}.{} to {}.{} is outside the collection", source.entity, field, source.entity, source.field, target.entity, target.field)))?.id.clone();
+                    }
+                    Ok(())
+                },
+            )?;
             // `[.field]` resolves against the destination's own row, so the
             // copied formula must prove that row can supply the field now
             // rather than on the first evaluation.
@@ -7593,7 +8008,7 @@ impl DesignerRuntime {
         expected_revision: &str,
         commands: &[SemanticCommand],
     ) -> Result<PublicationProjection, DesignerError> {
-        self.publish_commands_with_imported(expected_revision, commands, None, None)
+        self.publish_commands_with_imported(expected_revision, commands, None, None, None)
     }
 
     #[allow(clippy::too_many_lines)] // Closed semantic command catalogue publishes atomically.
@@ -7603,6 +8018,7 @@ impl DesignerRuntime {
         commands: &[SemanticCommand],
         restored_import: Option<&imported_lifecycle::ImportedState>,
         added_collection: Option<&str>,
+        input_presentation: Option<PresentationStore>,
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
@@ -7621,6 +8037,8 @@ impl DesignerRuntime {
                 source: Box::new(source),
             })?;
         let candidate = prepared.document();
+        let input_presentation_bytes =
+            auto_input::admit_presentation(input_presentation.as_ref(), candidate, self.profile)?;
         let imported = match restored_import {
             Some(state) => Some(state.clone()),
             None => self.plan_imported_state(candidate, commands)?,
@@ -7669,7 +8087,7 @@ impl DesignerRuntime {
                 );
                 capacity::check_working_saved_bytes_bound(
                     document_bytes,
-                    self.presentation_saved_bytes,
+                    input_presentation_bytes.unwrap_or(self.presentation_saved_bytes),
                 )?;
                 Some(document_bytes)
             }
@@ -7741,6 +8159,17 @@ impl DesignerRuntime {
                         )?;
                     }
                 }
+                let presentation = input_presentation.as_ref().unwrap_or(&self.presentation);
+                if !presentation.is_empty() {
+                    self.preflight_presentation(
+                        prepared.document(),
+                        presentation,
+                        imported
+                            .as_ref()
+                            .or(self.imported.as_ref())
+                            .map(|state| &state.metadata),
+                    )?;
+                }
             }
             // Preflight only upgrades a constraint mismatch into its typed
             // refusal. Every other invalid candidate is still refused
@@ -7798,6 +8227,7 @@ impl DesignerRuntime {
             || commands.iter().any(|command| match command {
                 SemanticCommand::AppendEntity { entity } => entity.rank.is_some(),
                 SemanticCommand::SetEntityRank { .. }
+                | SemanticCommand::SetSchemaHeaderless { .. }
                 | SemanticCommand::SetSchemaDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldDisplayName { .. }
                 | SemanticCommand::SetSchemaFieldRequiredness { .. }
@@ -7807,7 +8237,8 @@ impl DesignerRuntime {
                 | SemanticCommand::SetSchemaFieldOrder { .. }
                 | SemanticCommand::UnsetField { .. } => true,
                 SemanticCommand::AppendSchemaField { field, .. } => {
-                    field.display_name.is_some()
+                    field.field_type == FieldType::Auto
+                        || field.display_name.is_some()
                         || field.number_format.is_some()
                         || field.date_format.is_some()
                 }
@@ -7815,7 +8246,8 @@ impl DesignerRuntime {
                     schema.display_name.is_some()
                         || schema.field_order.is_some()
                         || schema.fields.values().any(|field| {
-                            field.display_name.is_some()
+                            field.field_type == FieldType::Auto
+                                || field.display_name.is_some()
                                 || field.number_format.is_some()
                                 || field.date_format.is_some()
                         })
@@ -7880,6 +8312,11 @@ impl DesignerRuntime {
                 .ok_or(DesignerError::MissingInvalidation)?
                 .clone()
         };
+        if let Some(presentation) = input_presentation {
+            self.presentation = presentation;
+            self.presentation_saved_bytes =
+                input_presentation_bytes.expect("input presentation was measured");
+        }
         self.capacity_usage = capacity_usage;
         // The Valid arm above always fills both for a working-size publish;
         // any other published path measures again on its next full walk.
@@ -7918,7 +8355,7 @@ impl DesignerRuntime {
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(all(test, not(feature = "capacity-bench")))]
         if keep_formula_sources {
             if let Ok(sources) = self.session.formula_source_projections() {
                 assert_eq!(self.formula_sources, sources);
@@ -8033,6 +8470,7 @@ impl DesignerRuntime {
     fn tracker_document(occurrence_id: &str) -> Document {
         let mut document = Document::empty(occurrence_id, "Driver Tracker");
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("tracker"),
             key: SchemaKey::from("tracker"),
@@ -8148,6 +8586,7 @@ impl DesignerRuntime {
             );
         }
         let schema = Schema {
+            headerless: false,
             field_order: None,
             id: schema_id.clone(),
             key: SchemaKey::from(schema_key),
@@ -8385,6 +8824,7 @@ impl DesignerRuntime {
         let mut seen = BTreeSet::new();
         let mut forward = Vec::new();
         let mut inverse = Vec::new();
+        let mut displays = Vec::new();
         let mut specs: BTreeMap<&EntityId, &CollectionSpec> = BTreeMap::new();
         for spec in self.collection_specs.values() {
             for entity in &spec.entities {
@@ -8445,6 +8885,7 @@ impl DesignerRuntime {
             if present && old.is_none() {
                 return Err(DesignerError::UnsupportedScalarEdit { field });
             }
+            auto_input::collect_display(&column.field_type, &field, &edit.input, &mut displays);
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
                 let (command, undo) = cell_edit_commands(&field, old, value.as_ref());
@@ -8452,7 +8893,7 @@ impl DesignerRuntime {
                 inverse.extend(undo);
             }
         }
-        self.record_edit(expected, forward, inverse)
+        self.record_input_edit(expected, forward, inverse, displays)
     }
 
     fn history_edit(
@@ -8492,17 +8933,23 @@ impl DesignerRuntime {
             })?;
         }
         let mut result = match action {
+            HistoryAction::InputCommands { commands, styles } => {
+                self.publish_input_commands(expected, commands, styles)
+            }
             HistoryAction::Commands(commands) => {
-                self.publish_commands_with_imported(expected, commands, imported, None)
+                self.publish_commands_with_imported(expected, commands, imported, None, None)
             }
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
             } => {
                 let result =
-                    self.publish_commands_with_imported(expected, commands, imported, None)?;
+                    self.publish_commands_with_imported(expected, commands, imported, None, None)?;
                 self.default_collection.clone_from(default_collection);
                 Ok(result)
+            }
+            HistoryAction::CellPresentation { store, .. } => {
+                self.apply_cell_presentation(expected, store.clone())
             }
             HistoryAction::ColumnPresentation {
                 schema,
@@ -8661,6 +9108,22 @@ impl DesignerRuntime {
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let mut entity =
             native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
+        // An Auto initializer implies the same display as typing it.
+        let mut displays = Vec::new();
+        for initializer in initializers {
+            let field = FieldRef::new(entity.id.clone(), FieldId::from(initializer.field.clone()));
+            let column = spec
+                .columns
+                .iter()
+                .find(|column| column.id == field.field)
+                .expect("row initializer field was validated");
+            auto_input::collect_display(
+                &column.field_type,
+                &field,
+                &initializer.input,
+                &mut displays,
+            );
+        }
         let typed = values.keys().cloned().collect();
         for (field, value) in values {
             entity.fields.insert(field, value);
@@ -8683,7 +9146,7 @@ impl DesignerRuntime {
             entity: entity.id.clone(),
         });
         forward.push(SemanticCommand::AppendEntity { entity });
-        let publication = self.record_edit(expected, forward, inverse)?;
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -8827,6 +9290,7 @@ impl DesignerRuntime {
         };
         let mut new_rows = Vec::new();
         let mut typed_rows = Vec::new();
+        let mut displays = Vec::new();
         let mut edited = Vec::new();
         let mut allocated = BTreeSet::new();
         let mut row_ids = RowIds::new(
@@ -8874,6 +9338,7 @@ impl DesignerRuntime {
                     PasteCellInput::Text(text) => pasted_column_input(&column.field_type, text)?,
                     PasteCellInput::Typed(input) => input.clone(),
                 };
+                auto_input::collect_display(&column.field_type, &field, &input, &mut displays);
                 let value = cell_edit_value(column, old, &input, &field)?;
                 if existing.is_some() && value.as_ref() != old {
                     fills.remove(&field.field);
@@ -8914,7 +9379,7 @@ impl DesignerRuntime {
             forward.push(SemanticCommand::AppendEntity { entity });
         }
         inverse.reverse();
-        let publication = self.record_edit(expected, forward, inverse)?;
+        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
@@ -9007,10 +9472,21 @@ fn columns_revision(columns: &[ColumnProjection]) -> Result<String, DesignerErro
 }
 
 fn admit_native_requiredness(kind: &FieldType, required: bool) -> Result<(), DesignerError> {
+    if *kind == FieldType::Auto {
+        return if required {
+            Err(table_error("Auto fields must be optional"))
+        } else {
+            Ok(())
+        };
+    }
     if required
         || matches!(
             kind,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         )
     {
         Ok(())
@@ -9062,6 +9538,9 @@ fn cell_edit_value(
     input: &ScalarEditInput,
     field: &FieldRef,
 ) -> Result<Option<Value>, DesignerError> {
+    if column.field_type == FieldType::Auto {
+        return auto_input::value(input);
+    }
     if matches!(input, ScalarEditInput::Clear) {
         // Clearing a formula cell removes its formula; a required column keeps
         // the existing refusal because clearing would leave it blank.
@@ -9073,7 +9552,11 @@ fn cell_edit_value(
         if column.required
             || !matches!(
                 column.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         {
             return Err(table_error("clear requires an optional column"));
@@ -9085,7 +9568,11 @@ fn cell_edit_value(
     } else if !column.required
         && matches!(
             column.field_type,
-            FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+            FieldType::Auto
+                | FieldType::Text
+                | FieldType::Number
+                | FieldType::Boolean
+                | FieldType::Date
         )
     {
         parse_column_initializer(&column.field_type, input).map(Some)
@@ -9214,7 +9701,7 @@ fn group_dimension_columns<'a>(
                 }
             }
             FieldType::Date => {}
-            _ => {
+            FieldType::Auto | FieldType::Number | FieldType::Reference { .. } => {
                 return Err(invalid_group_query(format!(
                     "dimension '{}' is a Number column; group by Text, Date or Yes/No",
                     dimension.field
@@ -9343,7 +9830,11 @@ fn group_key(bucket: GroupBucket, stored: Option<&StoredValueProjection>) -> Gro
 /// Attach display text to Number and Date cells of one window row. Text,
 /// Yes/No and Reference cells carry none, because their own value is
 /// already the text and repeating it would double the reply bytes.
-fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
+fn attach_display_text(
+    spec: &CollectionSpec,
+    presentation: &PresentationStore,
+    row: &mut RowProjection,
+) {
     for field in &mut row.fields {
         let Some(column) = spec
             .columns
@@ -9352,31 +9843,32 @@ fn attach_display_text(spec: &CollectionSpec, row: &mut RowProjection) {
         else {
             continue;
         };
-        field.display = field_display_text(field, column);
+        field.display = field_display_text(field, column, presentation);
     }
 }
 
-/// The Number or Date a field shows as display text, in its column's format.
-fn field_display_text(field: &FieldProjection, column: &ColumnSpec) -> Option<String> {
+/// The Number or Date a field shows as display text, in its column's format
+/// or an Auto cell's implied one.
+fn field_display_text(
+    field: &FieldProjection,
+    column: &ColumnSpec,
+    presentation: &PresentationStore,
+) -> Option<String> {
+    let (number_format, date_format) =
+        auto_input::cell_formats(presentation, column, &field.target.entity);
     if let Some(CalculationProjection::Value {
         result: Some(StoredValueProjection::Date { value }),
         ..
     }) = &field.calculated
     {
-        return Some(display_text::format_date(
-            *value,
-            column.date_format.as_ref(),
-        ));
+        return Some(display_text::format_date(*value, date_format));
     }
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
-        return Some(display_text::format_date(
-            *value,
-            column.date_format.as_ref(),
-        ));
+        return Some(display_text::format_date(*value, date_format));
     }
     display_text::displayed_number(field.stored.as_ref(), field.calculated.as_ref())
-        .map(|value| display_text::format_number(value, column.number_format.as_ref()))
+        .map(|value| display_text::format_number(value, number_format))
 }
 
 fn blank_field_ids(
@@ -9409,6 +9901,7 @@ fn blank_field_projection(
         diagnostics: Vec::new(),
         editable_scalar: if native_table_rows && !column.required {
             match column.field_type {
+                FieldType::Auto => Some(ScalarKind::Auto),
                 FieldType::Text => Some(ScalarKind::Text),
                 FieldType::Number => Some(ScalarKind::Number),
                 FieldType::Boolean => Some(ScalarKind::Boolean),
@@ -9424,6 +9917,12 @@ fn blank_field_projection(
 
 fn pasted_column_input(kind: &FieldType, text: &str) -> Result<ScalarEditInput, DesignerError> {
     let sample = match kind {
+        FieldType::Auto => {
+            return Ok(ScalarEditInput::Auto {
+                input: text.to_owned(),
+                date_order: None,
+            });
+        }
         FieldType::Text => Value::Text(String::new()),
         FieldType::Number => Value::Number(Number::new(0.0).expect("finite zero")),
         FieldType::Boolean => Value::Boolean(false),
@@ -9652,9 +10151,11 @@ fn admit_portable_ro(
     let verified = decode_portable_package_v1(input)?;
     let tree = verified.tree();
     let document = decode_roproj_v3(tree)?;
-    let (mut candidate, opened) = admit_v3_document(document, occurrence_id)?;
+    let (mut candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation_from_tree(tree)?)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9693,9 +10194,9 @@ fn admit_portable_ro_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -9742,13 +10243,15 @@ fn admit_project(
         opened_from_v3,
         presentation,
     } = decode_project_bundle(input)?;
-    let (mut candidate, opened) = if opened_from_v3 {
+    let (mut candidate, mut opened) = if opened_from_v3 {
         admit_v3_document(document, occurrence_id)?
     } else {
         admit_document(document, occurrence_id)?
     };
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    opened.table = candidate.query_table(&candidate.default_collection)?;
+    ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
 }
 
@@ -9784,9 +10287,9 @@ fn admit_project_working_size(
         save_size::presentation_saved_bytes(&presentation)?,
     )?;
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
-    let opened = candidate.opened_window()?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    let opened = candidate.opened_window()?;
     Ok((candidate, opened))
 }
 
@@ -9843,9 +10346,10 @@ pub(crate) fn admit_imported_project(
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
-        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
+        opened.table = candidate.query_table(&candidate.default_collection)?;
+        ensure_opened_wire_projection_size(&opened, candidate.profile)?;
         return Ok((candidate, opened));
     }
 
@@ -9865,6 +10369,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error)
@@ -9886,6 +10392,8 @@ pub(crate) fn admit_imported_project(
             candidate.set_presentation(presentation)?;
             candidate.attach_imported_metadata(metadata);
             opened.bootstrap = candidate.bootstrap_projection();
+            opened.table = candidate.query_table(&candidate.default_collection)?;
+            ensure_opened_wire_projection_size(&opened, candidate.profile)?;
             Ok((candidate, opened))
         }
         Err(error) => Err(error),
@@ -10100,7 +10608,11 @@ pub(crate) fn ensure_wire_reply_size(
     reply: &DesignerWireReply,
     profile: SessionProfile,
 ) -> Result<(), DesignerError> {
-    let maximum = match reply {
+    ensure_projection_size_with_limit(reply, wire_reply_byte_limit(reply, profile))
+}
+
+fn wire_reply_byte_limit(reply: &DesignerWireReply, profile: SessionProfile) -> usize {
+    match reply {
         DesignerWireReply::Ok {
             response: DesignerResponse::ImportPreview(_),
         } if profile == SessionProfile::WorkingSize => {
@@ -10131,8 +10643,58 @@ pub(crate) fn ensure_wire_reply_size(
             }
             SessionProfile::Ordinary => MAX_PROJECTION_BYTES,
         },
+    }
+}
+
+// Count and encode in one pass. Once over budget, count the rest without
+// retaining more bytes so refusals keep their exact actual/maximum values.
+struct SizedReplyWriter {
+    bytes: Vec<u8>,
+    actual: usize,
+    maximum: usize,
+}
+
+impl std::io::Write for SizedReplyWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.actual = self.actual.saturating_add(bytes.len());
+        if self.actual <= self.maximum {
+            self.bytes.extend_from_slice(bytes);
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(crate) fn encode_sized_reply(
+    reply: &DesignerWireReply,
+    profile: SessionProfile,
+    mut bytes: Vec<u8>,
+) -> Result<Vec<u8>, DesignerError> {
+    bytes.clear();
+    let maximum = wire_reply_byte_limit(reply, profile);
+    let mut writer = SizedReplyWriter {
+        bytes,
+        actual: 0,
+        maximum,
     };
-    ensure_projection_size_with_limit(reply, maximum)
+    serde_json::to_writer(&mut writer, reply).map_err(|error| {
+        DesignerError::UnsupportedProject {
+            message: format!("a Designer projection could not be encoded: {error}"),
+        }
+    })?;
+    tachiko_workspace_engine::instrumentation::record_json_bytes(
+        u64::try_from(writer.actual).unwrap_or(u64::MAX),
+    );
+    if writer.actual > maximum {
+        return Err(DesignerError::ProjectionTooLarge {
+            actual: writer.actual,
+            maximum,
+        });
+    }
+    Ok(writer.bytes)
 }
 
 fn next_proposal_id(serial: &mut u64, namespace: &str) -> Result<ProposalId, DesignerError> {
@@ -10151,6 +10713,7 @@ fn budget_schema<const COUNT: usize>(
     fields: [(&str, FieldType); COUNT],
 ) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id,
         key: SchemaKey::from(key),
@@ -10612,7 +11175,8 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
             if let Some(occurrence_id) = match &request {
                 DesignerRequest::NewTracker { occurrence_id, .. }
                 | DesignerRequest::NewBudget { occurrence_id, .. }
-                | DesignerRequest::NewTable { occurrence_id, .. } => Some(occurrence_id),
+                | DesignerRequest::NewTable { occurrence_id, .. }
+                | DesignerRequest::NewBlankWorkbook { occurrence_id, .. } => Some(occurrence_id),
                 _ => None,
             } {
                 let result = (match &request {
@@ -10621,6 +11185,9 @@ pub fn process_wire_request(runtime: &mut Option<DesignerRuntime>, input: &[u8])
                     }
                     DesignerRequest::NewBudget { profile, .. } => {
                         starter_candidate(occurrence_id, *profile, Starter::Budget)
+                    }
+                    DesignerRequest::NewBlankWorkbook { .. } => {
+                        blank_workbook::candidate(occurrence_id)
                     }
                     DesignerRequest::NewTable {
                         name,
@@ -10843,7 +11410,7 @@ fn require_copy_target_number(document: &Document, field: &FieldRef) -> Result<(
 
 /// Prove the numeric targets that `map_copy_references` does not visit:
 /// `[.field]` resolves against the destination row, and a column total names a
-/// schema column the copy keeps unchanged. Either must be valid now rather
+/// schema column. Either must be valid now rather
 /// than on the first evaluation.
 fn require_copy_expression_numbers(
     document: &Document,
@@ -10879,15 +11446,13 @@ fn require_copy_column_number(
 fn map_copy_references(
     expression: &mut Expression,
     visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
+    visit_same_row: &mut impl FnMut(&mut FieldId) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        // A relative copy keeps `[.field]` unchanged: the destination row is
-        // the formula's owner, so no per-row rewrite exists. A column total
-        // names a schema column, which no row-level copy changes.
-        Expression::Number(_)
-        | Expression::SameRowReference(_)
-        | Expression::ColumnTotal(_)
-        | Expression::ColumnAggregate { .. } => Ok(()),
+        Expression::SameRowReference(field) => visit_same_row(field),
+        Expression::Number(_) | Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
+            Ok(())
+        }
         // A column argument names a schema column, but a criterion expression
         // can read a cell of the copied row and must be rebased like any
         // other formula text.
@@ -10896,8 +11461,8 @@ fn map_copy_references(
                 if let Some(expression) = &mut criterion.value {
                     match expression.as_mut() {
                         Expression::Reference(reference) => visit(reference, false)?,
-                        Expression::SameRowReference(_) => {}
-                        other => map_copy_references(other, visit)?,
+                        Expression::SameRowReference(field) => visit_same_row(field)?,
+                        other => map_copy_references(other, visit, visit_same_row)?,
                     }
                 }
             }
@@ -10911,14 +11476,14 @@ fn map_copy_references(
             operand: reference, ..
         } => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(_) => Ok(()),
+            Expression::SameRowReference(field) => visit_same_row(field),
             _ => unreachable!("date function has a bound reference child"),
         },
         Expression::Days { end, start } => {
             for operand in [end, start] {
                 match operand.as_mut() {
                     Expression::Reference(reference) => visit(reference, false)?,
-                    Expression::SameRowReference(_) => {}
+                    Expression::SameRowReference(field) => visit_same_row(field)?,
                     _ => unreachable!("date function has a bound reference child"),
                 }
             }
@@ -10926,7 +11491,7 @@ fn map_copy_references(
         }
         Expression::IsBlank(reference) => match reference.as_mut() {
             Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(_) => Ok(()),
+            Expression::SameRowReference(field) => visit_same_row(field),
             _ => unreachable!("ISBLANK has a bound reference child"),
         },
         // A bare key reference is compared by its own type, like a criterion;
@@ -10936,17 +11501,17 @@ fn map_copy_references(
         } => {
             match key.as_mut() {
                 Expression::Reference(reference) => visit(reference, false)?,
-                Expression::SameRowReference(_) => {}
-                other => map_copy_references(other, visit)?,
+                Expression::SameRowReference(field) => visit_same_row(field)?,
+                other => map_copy_references(other, visit, visit_same_row)?,
             }
             if let Some(fallback) = if_missing {
-                map_copy_references(fallback, visit)?;
+                map_copy_references(fallback, visit, visit_same_row)?;
             }
             Ok(())
         }
         _ => {
             for child in expression.children_mut() {
-                map_copy_references(child, visit)?;
+                map_copy_references(child, visit, visit_same_row)?;
             }
             Ok(())
         }
@@ -11149,6 +11714,8 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                 id: schema.id.to_string(),
                 key: schema.key.to_string(),
                 display_name: schema.effective_name().to_owned(),
+                headerless: schema.headerless,
+                data_start_row: if schema.headerless { 1 } else { 2 },
                 entity_count: entities.len(),
             };
             (
@@ -12015,6 +12582,7 @@ fn ensure_static_profile(
         many: false,
         changed: Vec::new(),
         import_metadata: None,
+        header_fallbacks: Vec::new(),
     };
     ensure_projection_size_with_limit(
         &publication,
@@ -12390,6 +12958,7 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
 
 const fn field_type_name(field_type: &FieldType) -> &'static str {
     match field_type {
+        FieldType::Auto => "auto",
         FieldType::Number => "number",
         FieldType::Text => "text",
         FieldType::Boolean => "boolean",
@@ -12718,6 +13287,7 @@ fn native_table_row(
                     continue;
                 }
                 let value = match &column.field_type {
+                    FieldType::Auto => return Err(table_error("Auto fields must be optional")),
                     FieldType::Text => Value::Text(String::new()),
                     FieldType::Number => Value::Number(Number::new(0.0).expect("zero is finite")),
                     FieldType::Boolean => Value::Boolean(false),
@@ -12748,11 +13318,15 @@ fn has_scalar_row_authoring_shape(
     schema: &Schema,
     entities: &[EntityId],
 ) -> bool {
-    (1..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
+    (usize::from(!schema.headerless)..=MAX_TABLE_FIELDS).contains(&schema.fields.len())
         && schema.fields.values().all(|field| {
             matches!(
                 field.field_type,
-                FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
+                FieldType::Auto
+                    | FieldType::Text
+                    | FieldType::Number
+                    | FieldType::Boolean
+                    | FieldType::Date
             )
         })
         && entities.iter().all(|id| {
@@ -12766,7 +13340,13 @@ fn has_scalar_row_authoring_shape(
                         entity.fields.get(id).map_or(!field.required, |value| {
                             matches!(
                                 (field.field_type.clone(), value),
-                                (FieldType::Text, Value::Text(_))
+                                (
+                                    FieldType::Auto,
+                                    Value::Number(_)
+                                        | Value::Text(_)
+                                        | Value::Boolean(_)
+                                        | Value::Date(_)
+                                ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
                                     | (FieldType::Date, Value::Date(_) | Value::Formula(_))
@@ -12927,12 +13507,13 @@ fn appended_field_id(schema: &Schema, serial: u64, namespace: &str) -> FieldId {
 
 fn native_table_field_type(input: &str) -> Result<FieldType, DesignerError> {
     match input.to_ascii_lowercase().as_str() {
+        "auto" => Ok(FieldType::Auto),
         "text" => Ok(FieldType::Text),
         "number" => Ok(FieldType::Number),
         "boolean" => Ok(FieldType::Boolean),
         "date" => Ok(FieldType::Date),
         _ => Err(table_error(
-            "column type must be Text, Number, Boolean, or Date",
+            "column type must be Auto, Text, Number, Boolean, or Date",
         )),
     }
 }
@@ -13107,6 +13688,10 @@ fn parse_column_initializer(
     field_type: &FieldType,
     input: &ScalarEditInput,
 ) -> Result<Value, DesignerError> {
+    if *field_type == FieldType::Auto {
+        return auto_input::value(input)?
+            .ok_or_else(|| table_error("blank Auto initializers must be omitted"));
+    }
     match (field_type, input) {
         (FieldType::Number, ScalarEditInput::Number { input }) => authored_number(input)
             .map(Value::Number)
@@ -14548,6 +15133,10 @@ mod tests {
             .map(|column| RowInitializer {
                 field: column.id.to_string(),
                 input: match &column.field_type {
+                    FieldType::Auto => ScalarEditInput::Auto {
+                        input: "42".into(),
+                        date_order: None,
+                    },
                     FieldType::Text => ScalarEditInput::Text {
                         value: "new".to_owned(),
                     },
@@ -15763,6 +16352,8 @@ mod tests {
             direct_tracker_rows: false,
             native_table_rows: false,
             summary: super::CollectionSummary {
+                headerless: false,
+                data_start_row: 2,
                 id: "s".to_owned(),
                 key: "s".to_owned(),
                 display_name: "S".to_owned(),
@@ -15795,6 +16386,7 @@ mod tests {
             key: id.to_owned(),
             position: None,
             blank_fields: Vec::new(),
+            styles: Vec::new(),
             fields: vec![super::FieldProjection {
                 blank: false,
                 target: super::FieldTarget {
@@ -15820,6 +16412,7 @@ mod tests {
             key: "blank".to_owned(),
             position: None,
             blank_fields: vec!["amount".to_owned()],
+            styles: Vec::new(),
             fields: Vec::new(),
         };
         let rows = vec![
@@ -15945,10 +16538,14 @@ mod tests {
             ))),
         };
         let mut visited = Vec::new();
-        super::map_copy_references(&mut expression, &mut |reference, numeric| {
-            visited.push((reference.field.as_str().to_owned(), numeric));
-            Ok(())
-        })
+        super::map_copy_references(
+            &mut expression,
+            &mut |reference, numeric| {
+                visited.push((reference.field.as_str().to_owned(), numeric));
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
         .expect("the lookup copy walk succeeds");
         assert_eq!(
             visited,

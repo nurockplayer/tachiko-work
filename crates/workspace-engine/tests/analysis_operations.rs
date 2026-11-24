@@ -90,6 +90,7 @@ fn analysis_document() -> Document {
         schemas: BTreeMap::from([(
             SchemaId::from("weapons"),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: SchemaId::from("weapons"),
                 key: SchemaKey::from("weapons"),
@@ -129,6 +130,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
     document.schemas.insert(
         SchemaId::from("categories"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("categories"),
             key: SchemaKey::from("categories"),
@@ -139,6 +141,7 @@ fn analysis_document_with_wrong_schema_reference() -> Document {
     document.schemas.insert(
         SchemaId::from("characters"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),
@@ -906,6 +909,7 @@ fn authorized_target_domain_and_type_errors_remain_structured() {
     other_domain.schemas.insert(
         SchemaId::from("characters"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("characters"),
             key: SchemaKey::from("characters"),

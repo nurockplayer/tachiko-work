@@ -1733,12 +1733,13 @@ fn collect_schema_projection_changes(
         {
             changes.address_index_changed = true;
         }
-        // The column order (R4a) is schema presentation too.
+        // Column order and header state also change schema presentation.
         if before_schema.map(|schema| {
             (
                 &schema.id,
                 &schema.key,
                 &schema.display_name,
+                schema.headerless,
                 &schema.field_order,
             )
         }) != after_schema.map(|schema| {
@@ -1746,6 +1747,7 @@ fn collect_schema_projection_changes(
                 &schema.id,
                 &schema.key,
                 &schema.display_name,
+                schema.headerless,
                 &schema.field_order,
             )
         }) {
@@ -1917,6 +1919,7 @@ mod tests {
         before.schemas.insert(
             "s".into(),
             Schema {
+                headerless: false,
                 id: "s".into(),
                 key: "s".into(),
                 display_name: None,
@@ -1970,6 +1973,7 @@ mod tests {
             constraint: tachiko_semantic_core::FieldConstraint::None,
         };
         let schema = tachiko_semantic_core::Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),

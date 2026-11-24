@@ -72,12 +72,15 @@ pub(crate) fn cell_style(
         if let Some(bold) = style.bold {
             result.bold = bold;
         }
+        if let Some(italic) = style.italic {
+            result.italic = italic;
+        }
         if let Some(fill) = &style.fill {
             result.fill = Some(fill[1..].to_owned());
         }
-        // XLSX export represents any nonempty side list as a full box.
         if let Some(borders) = &style.borders {
             result.border = !borders.is_empty();
+            result.border_sides.clone_from(borders);
         }
         if let (Some(format), SourceValue::Number { .. } | SourceValue::Empty) =
             (&style.number_format, value)

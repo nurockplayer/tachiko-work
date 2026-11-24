@@ -9,6 +9,73 @@ All notable changes to Tachiko Work are documented in this file.
   Date differences compose with numeric functions; impact previews, field
   explanations, native-table row authoring and CSV/XLSX export retain calculated Dates.
 
+- Add `set_cell_style_range` for compact formatting requests over stored rows
+  and selected fields, with one Undo/Redo step for the whole range (#922).
+
+- Translate and render headerless A1 formulas with row 1 as the first data row.
+  Add `render_a1_formula` and atomic `paste_cells_at`: positional block paste
+  allocates sparse rows and generated Auto columns like `write_cell_at`, with
+  one publication and Undo/Redo step (#936; Part of #668).
+
+- Reduce XLSX open serialization passes and temporary source buffers, and reuse
+  the WASM spreadsheet reply arena without changing payloads or byte limits
+  (Part of #678 5e; MVP item 7). Compact private XML attributes and small child
+  lists to reduce parser allocation and repeat-inspection memory growth; avoid
+  cloning unchanged import documents and promoting empty column presentation.
+- Generate unique column display names for positional writes after column
+  deletion, preserving surviving names and using deterministic suffixes (#919).
+- Promote the first stored data row of a headerless table with
+  `promote_first_row_to_headers`. Headings retain field identities and types;
+  blank and duplicate labels receive reported deterministic generated names.
+  Promotion is one Undo/Redo step and survives v3 and portable `.ro` reopen
+  (#924, #668 PR4).
+- `write_cell_at` accepts distant stored positions without a request change.
+  Intervening rows and generated Auto columns have empty optional cells;
+  the write and all created structure Undo/Redo together and survive v3/portable
+  `.ro` reopen. Working-size row/field limits refuse atomically (#923, #668 PR3).
+
+- Reuse the last inspected XLSX's decoded source for an identical import in
+  native and browser hosts. Match bytes, import options and capacity profile;
+  release the single retained source on import, the next inspect or close (#678 5d).
+- Shift same-row formula references during sideways copy/fill when relative columns are enabled (#901).
+- Reduce repeated XLSX semantic-admission and representation-proof work without
+  changing import refusals, formula results or exported bytes (#678 5d).
+- Reduce XLSX source XML parsing and tree destruction costs by sharing element
+  names and namespace URIs and updating namespace scopes only at declarations
+  (Part of #678 5d).
+
+- Add `setCellStyle` for rectangular record/field selections: set or toggle bold
+  and italic, set or clear fill, and Undo/Redo each call as one presentation-only
+  revision. Native and imported table/window rows share resolved style projections;
+  styles follow record identity and survive v3/portable `.ro` save and reopen.
+  Border editing supports per-side, outline and all borders, set or clear, in
+  the same call (#889, #815 slice 2). XLSX exports of native tables and imported
+  workbooks write edited bold, italic, fill and exact border sides.
+- Qualify lossless SpreadsheetML Text escaping across every XLSX export
+  profile, including literal `_xHHHH_`, `_x005F_` and partial prefixes. Protect
+  prefixes completed by CR encoding; shared and inline imports decode once
+  and retain located refusals for unsupported decoded Text (#547).
+- Blank headerless workbooks expose `new_blank_workbook` and `write_cell_at`.
+  First and adjacent writes create optional Auto columns and rows atomically,
+  with generated Column A/B labels, tagged values and one Undo step. Headerless
+  schema state, labels and cells survive v3/portable `.ro` save/reopen and v2
+  delta/merge; distant writes and Auto formulas remain explicitly refused
+  (#899, #668 PR2).
+- Imported project, v3 and portable `.ro` exports accept optional host import
+  metadata, preserving host worksheet names and column presentation in their
+  companion and on reopen. Worksheet lifecycle changes retain runtime authority;
+  exports without host metadata keep their existing behavior (#895).
+- Auto row and column initializers retain implied currency, percent and date
+  formats through Undo/Redo, v3 and portable `.ro` saves. Windows, distinct
+  values and display filters resolve those per-cell formats; mixed value and
+  presentation edits publish every changed cell (#896, #897).
+- Auto scalar columns accept classifier-backed edits and paste with lossless
+  Number/Text/Date/Boolean tags, optional blanks and distinct empty Text.
+  Implied per-cell formats, Undo/Redo, v3 and portable `.ro` preserve values and
+  tags. Browser protocol, worker client and WASM bridge expose Auto input;
+  delta/conflict v2 preserve it, frozen writers refuse it, and Auto formula
+  entry remains explicitly unsupported (#887, #668 PR1).
+
 - Resident project inspection (`inspectCurrentProject`) recovers the current
   imported worksheet mapping after a lost lifecycle or Undo/Redo reply, so
   callers can export without reopening. The optional mapping is omitted for

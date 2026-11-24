@@ -85,6 +85,7 @@ fn differential_document() -> Document {
     document.schemas.insert(
         SchemaId::from("weapons"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "weapons".into(),
             key: "weapons".into(),

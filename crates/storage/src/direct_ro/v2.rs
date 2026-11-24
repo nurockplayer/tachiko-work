@@ -15,7 +15,9 @@ pub(crate) const FORMAT_VERSION: u32 = 2;
 pub(crate) enum CodecError {
     Json(serde_json::Error),
     InvalidRepresentation(String),
+    UnsupportedHeaderless,
     UnsupportedRowRank,
+    UnsupportedAutoField,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -193,6 +195,12 @@ fn deserialize_round_digits<'de, D: serde::Deserializer<'de>>(
 
 impl DocumentV2 {
     pub(crate) fn from_semantic(document: &Document) -> Result<Self, CodecError> {
+        if document.has_auto_fields() {
+            return Err(CodecError::UnsupportedAutoField);
+        }
+        if document.has_headerless_schemas() {
+            return Err(CodecError::UnsupportedHeaderless);
+        }
         if document.has_row_ranks() {
             return Err(CodecError::UnsupportedRowRank);
         }
@@ -308,6 +316,7 @@ impl SchemaV2 {
 
     fn into_semantic(self) -> Schema {
         Schema {
+            headerless: false,
             field_order: self
                 .field_order
                 .map(|order| order.into_iter().map(FieldId::from).collect()),
@@ -371,6 +380,7 @@ impl FieldDefinitionV2 {
 impl FieldTypeV2 {
     fn from_semantic(field_type: &FieldType) -> Self {
         match field_type {
+            FieldType::Auto => unreachable!("Auto is refused before direct-ro/v2 encoding"),
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,

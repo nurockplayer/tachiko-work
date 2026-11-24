@@ -676,6 +676,7 @@ impl SchemaV1 {
             }
         }
         Ok(Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
@@ -694,6 +695,7 @@ impl SchemaV1 {
             })
             .collect::<Result<_, FormatError>>()?;
         Ok(Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from(self.id),
             key: SchemaKey::from(self.key),
@@ -900,6 +902,7 @@ impl FieldDefinitionV1 {
 impl FieldTypeV1 {
     fn from_semantic(field_type: &FieldType) -> Result<Self, FormatError> {
         Ok(match field_type {
+            FieldType::Auto => return Err(FormatError::UnsupportedAutoField),
             FieldType::Number => Self::Number,
             FieldType::Text => Self::Text,
             FieldType::Boolean => Self::Boolean,

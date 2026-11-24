@@ -41,6 +41,7 @@ fn fixture_document() -> Document {
         doc.schemas.insert(
             schema.into(),
             Schema {
+                headerless: false,
                 id: schema.into(),
                 key: schema.to_ascii_lowercase().into(),
                 display_name: Some(schema.into()),
@@ -80,6 +81,163 @@ fn fixture_document() -> Document {
 fn fixture() -> DesignerRuntime {
     DesignerRuntime::from_document(fixture_document(), "00000000-0000-4000-8000-000000000000")
         .unwrap()
+}
+
+#[test]
+fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
+    for (headerless, header_row) in [(true, 0), (false, 1)] {
+        for (text, source, display) in [
+            (
+                format!("A{}", header_row + 1),
+                "[r1.qty]",
+                format!("$A${}", header_row + 1),
+            ),
+            (
+                format!("A{}", header_row + 2),
+                "[.qty]",
+                format!("A{}", header_row + 2),
+            ),
+            (
+                format!("SUM(A{}:A{})", header_row + 1, header_row + 3),
+                "[items.qty:total]",
+                format!("SUM($A${}:$A${})", header_row + 1, header_row + 3),
+            ),
+        ] {
+            let mut document = fixture_document();
+            document.schemas.get_mut("Items").unwrap().headerless = headerless;
+            let mut runtime = Some(
+                DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000936")
+                    .unwrap(),
+            );
+            let mut translation = request(&text);
+            translation["geometry"]["header_row"] = header_row.into();
+            translation["geometry"]["columns"] =
+                serde_json::from_str(r#"["qty","name","price","total"]"#).unwrap();
+            let translated = call(&mut runtime, &translation);
+            assert_eq!(translated["status"], "ok", "{translated}");
+            assert_eq!(translated["response"]["payload"]["source"], source);
+            let updated = call(&mut runtime, &serde_json::from_str(&format!(
+                r#"{{"type":"formula_update","expected_revision":"resident/0","target":{{"entity":"r2","field":"total"}},"source":{}}}"#,
+                serde_json::to_string(source).unwrap(),
+            )).unwrap());
+            assert_eq!(updated["status"], "ok", "{updated}");
+            let revision = updated["response"]["payload"]["resulting_revision"].clone();
+            let mut render: Json = serde_json::from_str(r#"{"type":"render_a1_formula","expected_revision":"resident/1","collection_id":"Items","row_entity_id":"r2","target_field_id":"total","geometry":{}}"#).unwrap();
+            render["expected_revision"] = revision.clone();
+            render["geometry"] = translation["geometry"].clone();
+            let rendered = call(&mut runtime, &render);
+            assert_eq!(rendered["status"], "ok", "{rendered}");
+            assert_eq!(rendered["response"]["payload"]["source"], display);
+            assert_eq!(rendered["response"]["payload"]["revision"], revision);
+            translation["expected_revision"] = revision.clone();
+            translation["text"] = display.into();
+            let rebound = call(&mut runtime, &translation);
+            assert_eq!(rebound["status"], "ok", "{rebound}");
+            assert_eq!(rebound["response"]["payload"]["source"], source);
+            let mut stale = render;
+            stale["expected_revision"] = "resident/0".into();
+            refused(&mut runtime, &stale, "stale_revision");
+            let mut outside = translation;
+            outside["type"] = "render_a1_formula".into();
+            outside.as_object_mut().unwrap().remove("text");
+            outside["geometry"]["rows"] = serde_json::from_str(r#"["r2","r3"]"#).unwrap();
+            if source != "[.qty]" {
+                refused(&mut runtime, &outside, "out_of_bounds");
+            }
+        }
+    }
+}
+
+#[test]
+fn render_a1_lookup_guards_optional_text_and_number_keys() {
+    for (field, cell, column, text_key) in [("name", "A3", "A", true), ("qty", "B3", "B", false)] {
+        let mut document = fixture_document();
+        document
+            .schemas
+            .get_mut("Items")
+            .unwrap()
+            .fields
+            .get_mut(field)
+            .unwrap()
+            .required = false;
+        for (row, number) in [("r1", 1.0), ("r2", 2.0), ("r3", 3.0)] {
+            let value = if text_key {
+                Value::Text(row.into())
+            } else {
+                Value::Number(Number::new(number).unwrap())
+            };
+            document
+                .entities
+                .get_mut(row)
+                .unwrap()
+                .fields
+                .insert(field.into(), value);
+        }
+        let mut runtime = Some(
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap(),
+        );
+        let source = format!("LOOKUP([.{field}],[items.{field}:column],[items.price:column],42)");
+        let mut update: Json = serde_json::from_str(
+            r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":""}"#,
+        ).unwrap();
+        update["source"] = source.clone().into();
+        let updated = call(&mut runtime, &update);
+        assert_eq!(updated["status"], "ok", "{updated}");
+        let revision = updated["response"]["payload"]["resulting_revision"].clone();
+        let mut render = request("");
+        render["type"] = "render_a1_formula".into();
+        render["expected_revision"] = revision.clone();
+        render.as_object_mut().unwrap().remove("text");
+        let rendered = call(&mut runtime, &render);
+        assert_eq!(rendered["status"], "ok", "{rendered}");
+        let guard = format!("IF(ISBLANK({cell}),1/0,{cell})");
+        let key = if text_key {
+            format!(
+                "SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({guard},\"~\",\"~~\"),\"*\",\"~*\"),\"?\",\"~?\")"
+            )
+        } else {
+            guard
+        };
+        assert_eq!(
+            rendered["response"]["payload"]["source"],
+            format!("IFNA(INDEX($C$2:$C$4,MATCH({key},${column}$2:${column}$4,0)),42)"),
+        );
+        let mut translation = request(rendered["response"]["payload"]["source"].as_str().unwrap());
+        translation["expected_revision"] = revision;
+        let rebound = call(&mut runtime, &translation);
+        assert_eq!(rebound["status"], "ok", "{rebound}");
+        assert_eq!(rebound["response"]["payload"]["source"], source);
+    }
+}
+
+#[test]
+fn headerless_cross_sheet_a1_starts_at_row_one() {
+    let mut document = fixture_document();
+    document.schemas.get_mut("Items").unwrap().headerless = true;
+    document.schemas.get_mut("Other").unwrap().headerless = true;
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000936").unwrap(),
+    );
+    let mut input = request("Other!A1");
+    input["geometry"]["header_row"] = 0.into();
+    input["geometry"]["sheets"] = serde_json::from_str(
+        r#"{"Other":{"collection_id":"Other","header_row":0,"rows":["o1"],"columns":["x"]}}"#,
+    )
+    .unwrap();
+    let translated = call(&mut runtime, &input);
+    assert_eq!(translated["status"], "ok", "{translated}");
+    assert_eq!(translated["response"]["payload"]["source"], "[o1.x]");
+    let updated = call(&mut runtime, &serde_json::from_str(
+        r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":"[o1.x]"}"#,
+    ).unwrap());
+    assert_eq!(updated["status"], "ok", "{updated}");
+    input["type"] = "render_a1_formula".into();
+    input["expected_revision"] = updated["response"]["payload"]["resulting_revision"].clone();
+    input.as_object_mut().unwrap().remove("text");
+    let rendered = call(&mut runtime, &input);
+    assert_eq!(rendered["status"], "ok", "{rendered}");
+    assert_eq!(rendered["response"]["payload"]["source"], "'Other'!$A$1");
 }
 
 fn request(text: &str) -> Json {

@@ -30,6 +30,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "scalar".into(),
@@ -48,6 +49,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         "other".into(),
         Schema {
+            headerless: false,
             field_order: None,
             id: "other".into(),
             key: "other".into(),

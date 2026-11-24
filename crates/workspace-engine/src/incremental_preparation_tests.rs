@@ -95,6 +95,7 @@ fn base_document() -> Document {
     document.schemas.insert(
         SchemaId::from("s"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),
@@ -493,6 +494,7 @@ fn generated_document() -> Document {
     document.schemas.insert(
         SchemaId::from("s"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "s".into(),
             key: "table".into(),
@@ -632,6 +634,7 @@ fn column_document() -> Document {
         document.schemas.insert(
             SchemaId::from(key),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: key.into(),
                 key: key.into(),
@@ -643,6 +646,7 @@ fn column_document() -> Document {
     document.schemas.insert(
         SchemaId::from("readers"),
         Schema {
+            headerless: false,
             field_order: None,
             id: "readers".into(),
             key: "readers".into(),
@@ -756,6 +760,7 @@ fn publication_rebuilds_retained_state_for_a_zero_field_entity() {
 
 fn schema(id: &str, fields: BTreeMap<FieldId, FieldDefinition>) -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: id.into(),
         key: id.into(),

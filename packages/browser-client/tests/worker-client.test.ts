@@ -34,7 +34,7 @@ describe("Designer project inspection", () => {
     let receive: ((event: MessageEvent) => void) | undefined;
     const opened = {
       bootstrap: { title: "Candidate", revision: "resident/0", default_collection: "items", collections: [] },
-      table: { revision: "resident/0", collection: { id: "items", key: "items", entity_count: 0 }, columns: [], rows: [] },
+      table: { revision: "resident/0", collection: { id: "items", key: "items", headerless: false, data_start_row: 2, entity_count: 0 }, columns: [], rows: [] },
     };
     const postMessage = vi.fn((request: { id: number; kind: string; bytes: ArrayBuffer }, transfer: Transferable[]) => {
       expect(request.kind).toBe("inspect_project");
@@ -259,7 +259,7 @@ describe("Designer canonical and portable storage bridge", () => {
       postMessage: (request: { id: number; kind: string; occurrence_id?: string }) => {
         if (request.kind === "open_portable_ro") {
           expect(request.occurrence_id).toBe("123e4567-e89b-42d3-a456-426614174000");
-          receive?.({ data: { id: request.id, status: "ok", response: { type: "opened", payload: { bootstrap: { title: "Opened", revision: "resident/0", default_collection: "items", collections: [] }, table: { revision: "resident/0", collection: { id: "items", key: "items", entity_count: 0 }, columns: [], rows: [] } } } } } as MessageEvent);
+          receive?.({ data: { id: request.id, status: "ok", response: { type: "opened", payload: { bootstrap: { title: "Opened", revision: "resident/0", default_collection: "items", collections: [] }, table: { revision: "resident/0", collection: { id: "items", key: "items", headerless: false, data_start_row: 2, entity_count: 0 }, columns: [], rows: [] } } } } } as MessageEvent);
         } else if (request.kind === "observe_occurrence") {
           receive?.({ data: { id: request.id, status: "ok", response: { type: "occurrence_observed", payload: { scope: "designer-occurrence/123e4567-e89b-42d3-a456-426614174000/doc", revision: "resident/0" } } } } as MessageEvent);
         }
@@ -302,7 +302,7 @@ describe("duplicate collection column names", () => {
     let receive: ((event: MessageEvent) => void) | undefined;
     const requests: Record<string, unknown>[] = [];
     const publication = { resulting_revision: "resident/1" };
-    const duplicated = { publication, collection: { id: "new", key: "new", entity_count: 0 } };
+    const duplicated = { publication, collection: { id: "new", key: "new", headerless: false, data_start_row: 2, entity_count: 0 } };
     const worker = {
       addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
       postMessage: (request: { id: number; request: Record<string, unknown> }) => {
@@ -324,7 +324,7 @@ describe("duplicate collection column names", () => {
   it("sends the copy's column names with the duplicate request", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;
-    const duplicated = { publication: { revision: "resident/2" }, collection: { id: "table_1", key: "table_1", entity_count: 0 } };
+    const duplicated = { publication: { revision: "resident/2" }, collection: { id: "table_1", key: "table_1", headerless: false, data_start_row: 2, entity_count: 0 } };
     const worker = {
       addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
         if (type === "message") receive = callback;
@@ -347,6 +347,33 @@ describe("duplicate collection column names", () => {
 });
 
 describe("A1 translation transport", () => {
+  it("sends headerless reverse geometry and positional block paste without existing identities", async () => {
+    const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
+    let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: unknown[] = [];
+    const rendered = {revision: "resident/0", source: "$A$1", notes: []};
+    const published = {base_revision: "resident/0", resulting_revision: "resident/1"};
+    const worker = {
+      addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
+      postMessage: (message: {id: number; kind: string; request: {type: string}}) => {
+        requests.push(message.request);
+        const response = message.request.type === "render_a1_formula"
+          ? {type: "a1_translation", payload: rendered}
+          : {type: "published", payload: published};
+        receive?.({data: {id: message.id, status: "ok", response}} as MessageEvent);
+      },
+    } as unknown as Worker;
+    const client = new WorkerDesignerClient(() => worker);
+    await expect(client.renderA1Formula({expectedRevision: "resident/0", collectionId: "sheet", rowEntityId: "r2", targetFieldId: "total",
+      geometry: {headerRow: 0, rows: ["r1", "r2"], columns: ["amount", "total"]}})).resolves.toEqual(rendered);
+    await expect(client.pasteCellsAt("resident/0", "sheet", 1, 1, [["00123", "2"]])).resolves.toEqual(published);
+    expect(requests).toEqual([
+      {type: "render_a1_formula", expected_revision: "resident/0", collection_id: "sheet", row_entity_id: "r2", target_field_id: "total",
+        geometry: {header_row: 0, rows: ["r1", "r2"], columns: ["amount", "total"]}},
+      {type: "paste_cells_at", expected_revision: "resident/0", collection: "sheet", row: 1, column: 1, rows: [["00123", "2"]]},
+    ]);
+  });
+
   it("round-trips same-row translation and the partial-range refusal", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;
@@ -376,13 +403,13 @@ describe("working-size Worker transport", () => {
     bootstrap: { title: "Working", revision: "resident/0", default_collection: "items", collections: [] },
     window: {
       revision: "resident/0",
-      collection: { id: "items", key: "items", entity_count: 0 },
+      collection: { id: "items", key: "items", headerless: false, data_start_row: 2, entity_count: 0 },
       columns: [], rows: [], total_rows: 0, unfiltered_rows: 0, start: 0,
     },
   };
   const opened = {
     bootstrap: openedWindow.bootstrap,
-    table: { revision: "resident/0", collection: { id: "items", key: "items", entity_count: 0 }, columns: [], rows: [] },
+    table: { revision: "resident/0", collection: { id: "items", key: "items", headerless: false, data_start_row: 2, entity_count: 0 }, columns: [], rows: [] },
   };
   type Sent = { id: number; kind: string; [key: string]: unknown };
 

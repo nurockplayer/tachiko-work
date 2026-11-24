@@ -1,4 +1,4 @@
-import type { A1Translation, TranslateA1FormulaInput } from "./protocol.ts";
+import type { A1Translation, RenderA1FormulaInput, TranslateA1FormulaInput } from "./protocol.ts";
 import type { CleanupOperation, CleanupPreview, ImportedProjection, ImportedWindowProjection, ImportOptions, ImportSelection, InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation, SourceWorkbook, SpreadsheetExport, SpreadsheetFormat, SpreadsheetOperation } from "./interop-protocol.ts";
 import { projectTransferFromEntries } from "../host/project-transfer.ts";
 import { isCapacityFailure } from "./protocol.ts";
@@ -9,6 +9,8 @@ import {
 import type {
   FormulaCopy,
   TrackerCommand,
+  ScalarEditInput,
+  PasteCellInput,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -22,6 +24,7 @@ import type {
   FieldConstraintInput,
   NumberFormat,
   DateFormat,
+  CellStyleChange,
   FieldTarget,
   FieldProjection,
   OpenedProjection,
@@ -198,6 +201,17 @@ export class WorkerDesignerClient implements DesignerClient {
       }}));
   }
 
+  async renderA1Formula(input: RenderA1FormulaInput): Promise<A1Translation> {
+    return expectResponse("a1_translation", await this.#command({type: "render_a1_formula",
+      expected_revision: input.expectedRevision, collection_id: input.collectionId,
+      row_entity_id: input.rowEntityId, target_field_id: input.targetFieldId,
+      geometry: {
+        header_row: input.geometry.headerRow, rows: input.geometry.rows, columns: input.geometry.columns,
+        ...(input.geometry.sheets === undefined ? {} : {sheets: Object.fromEntries(Object.entries(input.geometry.sheets).map(([name, sheet]) =>
+          [name, {collection_id: sheet.collectionId, header_row: sheet.headerRow, rows: sheet.rows, columns: sheet.columns}]))}),
+      }}));
+  }
+
   async previewCleanup(expectedRevision: string, operation: CleanupOperation): Promise<CleanupPreview> {
     return expectResponse("cleanup_preview", await this.#command({type: "preview_cleanup", expected_revision: expectedRevision, operation}));
   }
@@ -213,6 +227,22 @@ export class WorkerDesignerClient implements DesignerClient {
   /** Create a Budget whose session profile is the working-size one. */
   async newBudgetWorkingSize(): Promise<OpenedWindowProjection> {
     return expectResponse("opened_window", await this.#command({type: "new_budget", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
+  }
+
+  async newBlankWorkbook(): Promise<OpenedWindowProjection> {
+    return expectResponse("opened_window", await this.#command({type: "new_blank_workbook", occurrence_id: freshOccurrenceId(), profile: "working_size"}));
+  }
+
+  async promoteFirstRowToHeaders(expectedRevision: string, collection: string): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "promote_first_row_to_headers", expected_revision: expectedRevision, collection});
+  }
+
+  async writeCellAt(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "write_cell_at", expected_revision: expectedRevision, collection, row, column, input});
+  }
+
+  async pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "paste_cells_at", expected_revision: expectedRevision, collection, row, column, rows});
   }
 
   async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {
@@ -246,6 +276,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("published", await this.#command(request));
   }
 
+  async editAuto(expectedRevision: string, target: FieldTarget, input: string, dateOrder?: "month_first" | "day_first"): Promise<PublicationProjection> {
+    return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "auto", input, ...(dateOrder === undefined ? {} : {date_order: dateOrder})}}));
+  }
+
   async clearField(expectedRevision: string, target: FieldTarget): Promise<PublicationProjection> {
     return expectResponse("published", await this.#command({type: "edit_scalar", expected_revision: expectedRevision, target, input: {kind: "clear"}}));
   }
@@ -276,6 +310,14 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setColumnWrap(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_wrap", expected_revision: expectedRevision, collection, field, wrap});
+  }
+
+  async setCellStyle(expectedRevision: string, collection: string, entities: string[], fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_cell_style", expected_revision: expectedRevision, collection, entities, fields, changes});
+  }
+
+  async setCellStyleRange(expectedRevision: string, collection: string, row: number, rowCount: number, fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_cell_style_range", expected_revision: expectedRevision, collection, row, row_count: rowCount, fields, changes});
   }
 
   async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {
@@ -410,11 +452,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened_window", reply.response);
   }
 
-  async exportProject(expectedRevision: string): Promise<ProjectExport> {
+  async exportProject(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_project",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "project_exported") {
       throw new Error(`Expected project export, received '${reply.status}'.`);
@@ -422,11 +465,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
-  async exportProjectV3(expectedRevision: string): Promise<ProjectExport> {
+  async exportProjectV3(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_project_v3",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "project_exported") {
       throw new Error(`Expected project export, received '${reply.status}'.`);
@@ -446,11 +490,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
-  async exportPortableRo(expectedRevision: string): Promise<ProjectExport> {
+  async exportPortableRo(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport> {
     const reply = await this.#send({
       id: this.#claimId(),
       kind: "export_portable_ro",
       expected_revision: expectedRevision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (reply.status !== "portable_ro_exported") {
       throw new Error(`Expected portable .ro export, received '${reply.status}'.`);

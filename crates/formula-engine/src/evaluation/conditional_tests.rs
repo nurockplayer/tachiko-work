@@ -114,6 +114,7 @@ fn conditional(aggregate: ConditionalAggregate, criteria: Vec<ColumnCriterion>) 
 
 fn row_schema() -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("row"),
         key: SchemaKey::from("row"),
@@ -136,6 +137,7 @@ fn row_schema() -> Schema {
 
 fn summary_schema() -> Schema {
     Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("summary"),
         key: SchemaKey::from("summary"),

@@ -29,6 +29,7 @@ fn document(cells: Vec<(&str, FieldType, Option<Value>)>) -> Document {
     document.schemas.insert(
         "s".into(),
         Schema {
+            headerless: false,
             id: "s".into(),
             key: "items".into(),
             display_name: None,

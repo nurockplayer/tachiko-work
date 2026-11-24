@@ -93,6 +93,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         plan_id.clone(),
         Schema {
+            headerless: false,
             field_order: None,
             id: plan_id.clone(),
             key: SchemaKey::from("plan"),
@@ -109,6 +110,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         SchemaId::from("settings"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("settings"),
             key: SchemaKey::from("settings"),
@@ -119,6 +121,7 @@ fn fixture() -> Document {
     document.schemas.insert(
         SchemaId::from("summary"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("summary"),
             key: SchemaKey::from("summary"),

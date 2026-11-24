@@ -429,6 +429,13 @@ pub struct Schema {
         deserialize_with = "stored_display_name"
     )]
     pub display_name: Option<String>,
+    /// A grid whose first stored row is data, rather than a header.
+    #[serde(
+        default,
+        skip_serializing_if = "std::ops::Not::not",
+        deserialize_with = "stored_headerless"
+    )]
+    pub headerless: bool,
     pub fields: BTreeMap<FieldId, FieldDefinition>,
     /// Presentation order of `fields`. `None` means field-id order. `Some` must be an exact
     /// permutation of `fields` and must differ from id order (see `normalize_field_order`).
@@ -458,6 +465,14 @@ pub struct FieldDefinition {
         deserialize_with = "optional_date_format"
     )]
     pub date_format: Option<crate::DateFormat>,
+}
+
+fn stored_headerless<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    if bool::deserialize(deserializer)? {
+        Ok(true)
+    } else {
+        Err(serde::de::Error::custom("headerless false must be omitted"))
+    }
 }
 
 fn optional_date_format<'de, D: Deserializer<'de>>(
@@ -524,6 +539,19 @@ impl FieldDefinition {
 }
 
 impl Document {
+    #[must_use]
+    pub fn has_headerless_schemas(&self) -> bool {
+        self.schemas.values().any(|schema| schema.headerless)
+    }
+
+    #[must_use]
+    pub fn has_auto_fields(&self) -> bool {
+        self.schemas
+            .values()
+            .flat_map(|schema| schema.fields.values())
+            .any(|field| field.field_type == FieldType::Auto)
+    }
+
     #[must_use]
     pub fn has_row_ranks(&self) -> bool {
         self.entities.values().any(|entity| entity.rank.is_some())
@@ -651,6 +679,7 @@ impl FieldConstraint {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FieldType {
+    Auto,
     Number,
     Text,
     Boolean,
@@ -1434,7 +1463,7 @@ pub enum NumberFormatError {
 impl fmt::Display for NumberFormatError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::NonNumberField => "number format is only valid on Number fields",
+            Self::NonNumberField => "number format is only valid on Number or Auto fields",
             Self::DecimalsOutOfRange => "number format decimals must be between 0 and 10",
             Self::InvalidCurrencyCode => "currency code must be three uppercase ASCII letters",
         })
@@ -1449,7 +1478,7 @@ impl NumberFormat {
     /// # Errors
     /// Returns a typed declaration error without coercion.
     pub fn validate_for(&self, field_type: &FieldType) -> Result<(), NumberFormatError> {
-        if *field_type != FieldType::Number {
+        if !matches!(field_type, FieldType::Number | FieldType::Auto) {
             return Err(NumberFormatError::NonNumberField);
         }
         if self.decimals > 10 {

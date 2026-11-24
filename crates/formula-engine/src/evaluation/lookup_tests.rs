@@ -29,6 +29,7 @@ fn a_thousand_lookup_formulas_share_one_index_each_pass() {
         doc.schemas.insert(
             id.into(),
             Schema {
+                headerless: false,
                 id: id.into(),
                 key: id.into(),
                 display_name: None,

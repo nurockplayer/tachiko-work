@@ -29,7 +29,9 @@ pub enum MergeOutcome {
     UnsupportedDisplayName,
     UnsupportedNumberFormat,
     UnsupportedFieldOrder,
+    UnsupportedHeaderless,
     UnsupportedRowRank,
+    UnsupportedAutoField,
 }
 
 /// Conflict-free structural result awaiting workspace finalization.
@@ -500,6 +502,22 @@ impl From<&Entity> for EntitySubject {
 pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
     if [base, ours, theirs]
         .iter()
+        .any(|document| document.has_headerless_schemas())
+    {
+        return MergeOutcome::UnsupportedHeaderless;
+    }
+    if [base, ours, theirs]
+        .iter()
+        .any(|document| document.has_auto_fields())
+    {
+        return MergeOutcome::UnsupportedAutoField;
+    }
+    merge_supported(base, ours, theirs)
+}
+
+fn merge_supported(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
+    if [base, ours, theirs]
+        .iter()
         .any(|document| document.has_row_ranks())
     {
         return MergeOutcome::UnsupportedRowRank;
@@ -684,6 +702,7 @@ fn merge_schema(
     );
 
     Some(Schema {
+        headerless: false,
         field_order: None,
         id: schema_id.clone(),
         key: key?,

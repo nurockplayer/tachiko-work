@@ -271,8 +271,12 @@ pub enum DiffError {
     UnsupportedNumberFormat,
     #[error("tachiko.semantic-delta/v1 does not support durable field order")]
     UnsupportedFieldOrder,
+    #[error("frozen v1 diff does not support headerless schema; use canonical delta v2")]
+    UnsupportedHeaderless,
     #[error("frozen v1 diff does not support row rank; use canonical delta v2")]
     UnsupportedRowRank,
+    #[error("frozen v1 diff does not support Auto fields; use canonical delta v2")]
+    UnsupportedAutoField,
     #[error("could not calculate the original document: {0}")]
     BeforeCalculation(#[source] CalculationError),
     #[error("could not calculate the changed document: {0}")]
@@ -509,6 +513,12 @@ fn push_changed_formula_impacts(
 ///
 /// Returns the first unsupported [`DiffError`] for the pair.
 pub fn require_diff_supported(before: &Document, after: &Document) -> Result<(), DiffError> {
+    if before.has_auto_fields() || after.has_auto_fields() {
+        return Err(DiffError::UnsupportedAutoField);
+    }
+    if before.has_headerless_schemas() || after.has_headerless_schemas() {
+        return Err(DiffError::UnsupportedHeaderless);
+    }
     if before.has_row_ranks() || after.has_row_ranks() {
         return Err(DiffError::UnsupportedRowRank);
     }
@@ -906,6 +916,7 @@ fn render_change(
 
 fn format_definition(definition: &FieldDefinition, document: &Document) -> String {
     let field_type = match &definition.field_type {
+        tachiko_semantic_core::FieldType::Auto => "auto".to_owned(),
         tachiko_semantic_core::FieldType::Number => "number".to_owned(),
         tachiko_semantic_core::FieldType::Text => "text".to_owned(),
         tachiko_semantic_core::FieldType::Boolean => "boolean".to_owned(),

@@ -110,6 +110,7 @@ struct DirectoryField {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum FieldTypeFact {
+    Auto,
     Number,
     Text,
     Boolean,
@@ -1819,6 +1820,7 @@ fn validate_directory_coverage(directory: &Directory) -> Result<(), FormatError>
 
 fn field_type_fact(field_type: &FieldType) -> FieldTypeFact {
     match field_type {
+        FieldType::Auto => FieldTypeFact::Auto,
         FieldType::Number => FieldTypeFact::Number,
         FieldType::Text => FieldTypeFact::Text,
         FieldType::Boolean => FieldTypeFact::Boolean,
@@ -2169,6 +2171,7 @@ fn mixed_document(entity_count: usize, text_char_count: usize) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("records"),
@@ -2223,6 +2226,7 @@ fn dependency_chain_document(entity_count: usize, cycle: bool) -> Document {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id,
                 key: SchemaKey::from("chain"),
@@ -2506,7 +2510,9 @@ fn wide_field_document(entity_count: usize, field_count: usize) -> Document {
                         }
                         FieldType::Text => Value::Text(format!("wide value {index}/{offset}")),
                         FieldType::Boolean => Value::Boolean((index + offset) % 2 == 0),
-                        FieldType::Date | FieldType::Reference { .. } => unreachable!(),
+                        FieldType::Auto | FieldType::Date | FieldType::Reference { .. } => {
+                            unreachable!()
+                        }
                     };
                     (field.clone(), value)
                 })
@@ -2547,6 +2553,7 @@ fn single_schema_document(
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id,
                 key: SchemaKey::from(schema_key),
@@ -2587,6 +2594,7 @@ fn ids_in_shard(prefix: &str, shard: usize, count: usize) -> Vec<EntityId> {
     ids
 }
 
+#[allow(clippy::too_many_lines)] // One literal research fixture.
 fn late_invalid_pressure_document(entity_count: usize) -> Document {
     assert!(entity_count >= 3);
     let ids = ids_in_shard("issue-175-late", 15, entity_count);
@@ -2601,6 +2609,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             cold_schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: cold_schema_id.clone(),
                 key: SchemaKey::from("late_cold"),
@@ -2611,6 +2620,7 @@ fn late_invalid_pressure_document(entity_count: usize) -> Document {
         (
             hot_schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: hot_schema_id.clone(),
                 key: SchemaKey::from("late_hot"),
@@ -3423,6 +3433,7 @@ fn issue_175_host_validation_cancels_at_formula_node_checkpoint() {
         schemas: BTreeMap::from([(
             schema_id.clone(),
             Schema {
+                headerless: false,
                 field_order: None,
                 id: schema_id.clone(),
                 key: SchemaKey::from("formula_poll"),

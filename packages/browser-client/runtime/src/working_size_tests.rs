@@ -247,6 +247,7 @@ fn assert_window_reply_shape(opened: &OpenedWindowProjection) {
 fn text_grid(rows: usize, columns: usize) -> Document {
     let mut document = Document::empty("working-size-bench", "Working Size Fixture");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
@@ -456,6 +457,7 @@ fn populated_limit_grid() -> Document {
     document.schemas.insert(
         SchemaId::from("grid"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("grid"),
             key: SchemaKey::from("grid"),
@@ -1556,6 +1558,7 @@ fn largest_row_grid(rows: usize) -> Document {
 fn shared_reference_grid(rows: usize) -> Document {
     let mut document = Document::empty("shared-reference", "Shared Reference");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
@@ -1625,6 +1628,7 @@ fn publication_with_targets(total: usize) -> PublicationProjection {
         many: false,
         changed: Vec::new(),
         import_metadata: None,
+        header_fallbacks: Vec::new(),
     }
 }
 
@@ -1673,6 +1677,7 @@ fn plain_format() -> NumberFormat {
 fn redraw_grid() -> Document {
     let mut document = Document::empty("redraw", "Redraw");
     let mut ledger = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("ledger"),
         key: SchemaKey::from("ledger"),
@@ -1700,6 +1705,7 @@ fn redraw_grid() -> Document {
         .insert(FieldId::from("agg"), number_field("agg", None));
     document.schemas.insert(ledger.id.clone(), ledger);
     let mut mirror = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("mirror"),
         key: SchemaKey::from("mirror"),
@@ -2536,6 +2542,7 @@ fn blank_working_table(occurrence: &str, count: usize) -> (DesignerRuntime, Stri
 fn fill_grid(rows: usize) -> Document {
     let mut document = Document::empty("fill", "Fill");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),
@@ -2581,6 +2588,7 @@ fn two_collection_grid() -> Document {
     let mut document = Document::empty("lookups", "Lookups");
     for collection in ["grid", "mirror"] {
         let mut schema = Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from(collection),
             key: SchemaKey::from(collection),
@@ -3217,6 +3225,7 @@ fn values_grid() -> Document {
     document.schemas.insert(
         SchemaId::from("refs"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("refs"),
             key: SchemaKey::from("refs"),
@@ -3280,6 +3289,7 @@ fn values_grid() -> Document {
     document.schemas.insert(
         SchemaId::from("grid"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("grid"),
             key: SchemaKey::from("grid"),
@@ -3358,6 +3368,7 @@ fn long_identity_grid() -> Document {
     document.schemas.insert(
         schema_id.clone(),
         Schema {
+            headerless: false,
             field_order: Some(vec![field_id.clone()]),
             id: schema_id.clone(),
             key: SchemaKey::from(long.clone()),
@@ -3553,6 +3564,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     document.schemas.insert(
         SchemaId::from("entries"),
         Schema {
+            headerless: false,
             field_order: Some(field_order),
             id: SchemaId::from("entries"),
             key: SchemaKey::from("entries"),
@@ -3592,6 +3604,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     document.schemas.insert(
         SchemaId::from("products"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("products"),
             key: SchemaKey::from("products"),
@@ -3738,6 +3751,7 @@ fn wrap_document() -> Document {
     document.schemas.insert(
         SchemaId::from("grid"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("grid"),
             key: SchemaKey::from("grid"),
@@ -3801,6 +3815,7 @@ fn date_format_grid() -> Document {
     document.schemas.insert(
         SchemaId::from("dates"),
         Schema {
+            headerless: false,
             field_order: None,
             id: SchemaId::from("dates"),
             key: SchemaKey::from("dates"),
@@ -4175,6 +4190,7 @@ fn number_grid(rows: usize, columns: usize) -> Document {
 fn number_grid_filled(rows: usize, columns: usize, filled: usize) -> Document {
     let mut document = Document::empty("working-size-delta", "Working Size Delta");
     let mut schema = Schema {
+        headerless: false,
         field_order: None,
         id: SchemaId::from("grid"),
         key: SchemaKey::from("grid"),

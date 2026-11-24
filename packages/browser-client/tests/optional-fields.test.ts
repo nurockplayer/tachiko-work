@@ -11,7 +11,7 @@ const present: FieldProjection = {
 };
 const blank: FieldProjection = {...present, blank: true, stored: null};
 const table: TableProjection = {
-  revision: "resident/0", collection: {id: "items", key: "items", display_name: "items", entity_count: 1},
+  revision: "resident/0", collection: {id: "items", key: "items", display_name: "items", headerless: false, data_start_row: 2, entity_count: 1},
   columns: [{id: "note", key: "note", display_name: "note", field_type: "text", required: false}],
   rows: [{id: "row", key: "row", fields: [], blank_fields: ["note"]}],
 };
@@ -239,7 +239,7 @@ describe("Worker presence projections", () => {
   it("accepts imported optional Date/Boolean presence, including blanks and false", async () => {
     const {client, reply} = fixture();
     const importedTable: TableProjection = {...table,
-      collection: {...table.collection, entity_count: 2},
+      collection: {...table.collection, headerless: false, data_start_row: 2, entity_count: 2},
       columns: [
         {id: "date", key: "date", display_name: "date", field_type: "date", required: false},
         {id: "flag", key: "flag", display_name: "flag", field_type: "boolean", required: false},
