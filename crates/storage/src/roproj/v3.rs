@@ -1345,15 +1345,7 @@ impl ExpressionV3 {
                     FieldId::from(args.column.field),
                 ),
             },
-            Self::Lookup(args) => Expression::Lookup {
-                key: Box::new(args.key.into_semantic()?),
-                key_column: ColumnRef::new(args.key_column.schema, args.key_column.field),
-                result_column: ColumnRef::new(args.result_column.schema, args.result_column.field),
-                if_missing: args
-                    .if_missing
-                    .map(|value| value.into_semantic().map(Box::new))
-                    .transpose()?,
-            },
+            Self::Lookup(args) => args.into_semantic()?,
             Self::ColumnConditional(args) => column_conditional_into_semantic(args)?,
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
@@ -1523,6 +1515,20 @@ fn column_conditional_into_semantic(
         aggregate: Box::new(aggregate),
         criteria,
     })
+}
+
+impl LookupArgumentsV3 {
+    fn into_semantic(self) -> Result<Expression, FormatError> {
+        Ok(Expression::Lookup {
+            key: Box::new(self.key.into_semantic()?),
+            key_column: ColumnRef::new(self.key_column.schema, self.key_column.field),
+            result_column: ColumnRef::new(self.result_column.schema, self.result_column.field),
+            if_missing: self
+                .if_missing
+                .map(|value| value.into_semantic().map(Box::new))
+                .transpose()?,
+        })
+    }
 }
 
 impl BinaryArgumentsV3 {

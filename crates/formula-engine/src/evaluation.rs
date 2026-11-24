@@ -376,25 +376,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                                 .iter()
                                 .cloned(),
                         );
-                        if let Some(expression) = &criterion.value {
-                            match expression.as_ref() {
-                                Expression::Reference(reference)
-                                | Expression::AnchoredReference(reference) => {
-                                    if failures.contains_key(reference) {
-                                        references.insert(reference.clone());
-                                    }
-                                }
-                                Expression::SameRowReference(field)
-                                | Expression::AnchoredSameRowReference(field) => {
-                                    let reference =
-                                        FieldRef::new(self.owner.entity.clone(), field.clone());
-                                    if failures.contains_key(&reference) {
-                                        references.insert(reference);
-                                    }
-                                }
-                                other => pending.push(other),
-                            }
-                        }
+                        pending.extend(criterion.value.as_deref());
                     }
                 }
                 Expression::Lookup {

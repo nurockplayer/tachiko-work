@@ -632,7 +632,7 @@ impl ExpressionV2 {
             match node {
                 Self::Number(number) => validate_number(*number)?,
                 Self::Reference(reference) | Self::AnchoredReference(reference) => {
-                    reference.validate(schemas, entities)?
+                    reference.validate(schemas, entities)?;
                 }
                 Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     if !schemas
