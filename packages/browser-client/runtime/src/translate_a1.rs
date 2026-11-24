@@ -480,6 +480,7 @@ impl DesignerRuntime {
                                 ),
                                 !field.required,
                             )
+                            .with_collection(&grid.collection_id)
                             .with_legacy_relative_column()
                         });
                 }

@@ -2097,7 +2097,7 @@ fn native_xlsx_fixed_reference_to_the_owner_row_stays_absolute() {
     assert_eq!(reply["status"], "ok", "{reply}");
     let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
     assert!(
-        sheet.contains("<f>&apos;Calculated&apos;!$A$2</f><v>2</v>"),
+        sheet.contains("<f>&apos;Calculated&apos;!A$2</f><v>2</v>"),
         "{sheet}"
     );
 }

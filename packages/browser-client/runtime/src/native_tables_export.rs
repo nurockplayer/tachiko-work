@@ -193,7 +193,7 @@ fn write_formulas(
                             document.entities[entity].fields.get(&column.id),
                         ),
                         column.field_type == FieldType::Date && !column.required,
-                    ),
+                    ).with_collection(&spec.summary.id),
                 );
                 count += usize::from(matches!(
                     document.entities[entity].fields.get(&column.id),

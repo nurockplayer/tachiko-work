@@ -609,66 +609,48 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
 fn imported_workbook_xlsx_preserves_column_anchors() {
     use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
 
-    let (mut source, mut selection) = workbook_fixture();
-    selection.column_types[0][3] = ImportFieldType::Number;
-    for row in &mut source.sheets[0].rows {
-        row[3].value = SourceValue::Number { value: 0.0 };
+    for (source_formula, xlsx_formula, copied_value) in [
+        ("[sheet_1_row_1.$column_1]", "'Data'!$A$2", 8.0),
+        ("[.$column_1]", "$A2", 8.0),
+        ("[sheet_1_row_1.column_1]", "'Data'!A$2", 2.0),
+        ("[.column_1]", "A2", 2.0),
+        ("[sheet_2_row_1.column_1]", "'Calculations'!$A$2", 30.0),
+    ] {
+        let (mut source, mut selection) = workbook_fixture();
+        selection.column_types[0][3] = ImportFieldType::Number;
+        for row in &mut source.sheets[0].rows {
+            row[2].formula = None;
+            row[2].value = SourceValue::Number { value: 0.0 };
+            row[3].value = SourceValue::Number { value: 0.0 };
+        }
+        source.sheets[1].rows[0][0] = source_cell(SourceValue::Number { value: 30.0 }, None);
+        let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+        let sheet = &imported.metadata.sheets[0];
+        let target = FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[2].field_id.clone() };
+        let destination = FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[3].field_id.clone() };
+        let DesignerResponse::Published(published) = runtime.handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".into(), target: target.clone(), source: source_formula.into(),
+        }).unwrap() else { panic!("updating a formula publishes") };
+        let exported = runtime.export_workbook(&published.resulting_revision, &imported.metadata).unwrap();
+        let reopened = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+        assert_eq!(reopened.sheets[0].rows[0][2].formula.as_deref(), Some(xlsx_formula), "{source_formula}");
+        let DesignerResponse::Published(before) = runtime.handle(DesignerRequest::CopyFormula {
+            expected_revision: published.resulting_revision, source: target, destinations: vec![destination],
+            fixed_references: vec![], relative_rows: false, relative_columns: true,
+        }).unwrap() else { panic!("copying a formula publishes") };
+        let before = runtime.export_workbook(&before.resulting_revision, &imported.metadata).unwrap();
+        let (mut runtime, imported) = import_workbook(&reopened, &selection, OCCURRENCE).unwrap();
+        let sheet = &imported.metadata.sheets[0];
+        let DesignerResponse::Published(copied) = runtime.handle(DesignerRequest::CopyFormula {
+            expected_revision: "resident/0".into(),
+            source: FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[2].field_id.clone() },
+            destinations: vec![FieldTarget { entity: sheet.rows[0].entity_id.clone(), field: sheet.columns[3].field_id.clone() }],
+            fixed_references: vec![], relative_rows: false, relative_columns: true,
+        }).unwrap() else { panic!("copying a formula publishes") };
+        let after = runtime.export_workbook(&copied.resulting_revision, &imported.metadata).unwrap();
+        assert_eq!(before.sheets[0].rows[0][3].formula, after.sheets[0].rows[0][3].formula, "{source_formula}");
+        assert_eq!(after.sheets[0].rows[0][3].value, SourceValue::Number { value: copied_value }, "{source_formula}");
     }
-    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
-    let sheet = &imported.metadata.sheets[0];
-    let DesignerResponse::Published(published) = runtime
-        .handle(DesignerRequest::FormulaUpdate {
-            expected_revision: "resident/0".into(),
-            target: FieldTarget {
-                entity: sheet.rows[0].entity_id.clone(),
-                field: sheet.columns[2].field_id.clone(),
-            },
-            source: "[.$column_1]+[sheet_1_row_1.$column_1]".into(),
-        })
-        .unwrap()
-    else {
-        panic!("updating a formula publishes");
-    };
-    let exported = runtime
-        .export_workbook(&published.resulting_revision, &imported.metadata)
-        .unwrap();
-    let reopened = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
-    assert_eq!(
-        reopened.sheets[0].rows[0][2].formula.as_deref(),
-        Some("($A2+'Data'!$A$2)")
-    );
-    let (mut runtime, imported) = import_workbook(&reopened, &selection, OCCURRENCE).unwrap();
-    let sheet = &imported.metadata.sheets[0];
-    let DesignerResponse::Published(copied) = runtime
-        .handle(DesignerRequest::CopyFormula {
-            expected_revision: "resident/0".into(),
-            source: FieldTarget {
-                entity: sheet.rows[0].entity_id.clone(),
-                field: sheet.columns[2].field_id.clone(),
-            },
-            destinations: vec![FieldTarget {
-                entity: sheet.rows[0].entity_id.clone(),
-                field: sheet.columns[3].field_id.clone(),
-            }],
-            fixed_references: vec![],
-            relative_rows: false,
-            relative_columns: true,
-        })
-        .unwrap()
-    else {
-        panic!("copying a formula publishes");
-    };
-    let exported = runtime
-        .export_workbook(&copied.resulting_revision, &imported.metadata)
-        .unwrap();
-    assert_eq!(
-        exported.sheets[0].rows[0][3].formula.as_deref(),
-        Some("($A2+'Data'!$A$2)")
-    );
-    assert_eq!(
-        exported.sheets[0].rows[0][3].value,
-        SourceValue::Number { value: 16.0 }
-    );
 }
 
 fn extremum_fixture(formula: &str) -> (SourceWorkbook, ImportSelection) {
@@ -1620,7 +1602,7 @@ fn imported_forward_and_cross_sheet_formulas_rebind_and_export_from_live_ids_aft
     assert_eq!(exported.sheets[0].rows.len(), 2);
     assert_eq!(
         exported.sheets[0].rows[0][2].formula.as_deref(),
-        Some("('Data'!$C$3*2)")
+        Some("('Data'!C$3*2)")
     );
     assert_eq!(
         exported.sheets[1].rows[0][0].formula.as_deref(),

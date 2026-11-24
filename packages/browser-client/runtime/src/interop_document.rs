@@ -1261,7 +1261,8 @@ fn import_workbook_document(
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
     let mut referenced = BTreeMap::<EntityId, BTreeSet<FieldId>>::new();
-    for (_, references, _) in pending.values() {
+    for (target, (_, references, _)) in &pending {
+        referenced.entry(target.entity.clone()).or_default().insert(target.field.clone());
         for reference in &references.cells {
             referenced
                 .entry(reference.entity.clone())
@@ -2210,7 +2211,7 @@ fn export_a1_maps(
                             entity.fields.get(definition.field_id.as_str()),
                         ),
                         field.is_some_and(|field| !field.required),
-                    ),
+                    ).with_collection(&sheet.schema_id),
                 );
             }
         }
@@ -5257,6 +5258,7 @@ pub(crate) struct ExportCell {
     criterion_type: Option<FieldType>,
     optional: bool,
     legacy_relative_column: bool,
+    collection: String,
 }
 
 impl ExportCell {
@@ -5274,7 +5276,13 @@ impl ExportCell {
             criterion_type,
             optional,
             legacy_relative_column: false,
+            collection: String::new(),
         }
+    }
+
+    pub(crate) fn with_collection(mut self, collection: &str) -> Self {
+        self.collection = collection.to_owned();
+        self
     }
 
     pub(crate) fn with_legacy_relative_column(mut self) -> Self {
@@ -5396,7 +5404,12 @@ fn export_in(
         // A fixed identity keeps pointing at that identity when filled down.
         Expression::Reference(reference) => addresses
             .get(reference)
-            .map(ExportCell::absolute)
+            .map(|cell| {
+                let mut cell = cell.clone();
+                let owner_cell = addresses.get(owner).expect("formula owner is outside the export mapping");
+                cell.legacy_relative_column = cell.collection == owner_cell.collection;
+                cell.absolute()
+            })
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::AnchoredSameRowReference(field) => addresses
             .get(&FieldRef::new(owner.entity.clone(), field.clone()))
@@ -5921,11 +5934,11 @@ mod import_dependency_tests {
             }],
         };
         let referenced = BTreeMap::from([
-            ("a".into(), BTreeSet::from(["value".into()])),
+            ("a".into(), BTreeSet::from(["value".into(), "total".into()])),
             ("b".into(), BTreeSet::from(["value".into()])),
         ]);
         let maps = export_a1_maps(&document, &metadata, Some(&referenced));
-        assert_eq!(maps.0.len(), 2);
+        assert_eq!(maps.0.len(), 3);
         assert_eq!(maps.1.len(), 2);
         assert_eq!(
             maps.0[&FieldRef::new("a", "value")].absolute(),
