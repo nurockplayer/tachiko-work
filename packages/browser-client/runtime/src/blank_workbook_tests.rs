@@ -1,6 +1,6 @@
 use crate::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, ScalarEditInput, ScalarKind,
-    StoredValueProjection, TableView, blank_workbook, open_portable_ro_working_size,
+    CalculationProjection, DesignerRequest, DesignerResponse, DesignerRuntime, ScalarEditInput,
+    ScalarKind, StoredValueProjection, TableView, blank_workbook, open_portable_ro_working_size,
     open_project_working_size,
 };
 
@@ -49,6 +49,52 @@ fn filled() -> DesignerRuntime {
         write(&mut runtime, row, column, input);
     }
     runtime
+}
+
+fn assert_formula_result(runtime: &DesignerRuntime, row: usize, column: usize, expected: f64) {
+    let table = runtime.query_table("sheet").unwrap();
+    let column_id = &table.columns[column - 1].id;
+    let field = table.rows[row - 1]
+        .fields
+        .iter()
+        .find(|field| &field.target.field == column_id)
+        .unwrap();
+    assert!(field.formula.is_some());
+    let Some(CalculationProjection::Value { value, .. }) = field.calculated else {
+        panic!("expected a calculated value, got {:?}", field.calculated);
+    };
+    assert_eq!(value, expected);
+}
+
+#[test]
+fn blank_workbook_formula_in_empty_a1_survives_reopen() {
+    let mut runtime = blank();
+    write(&mut runtime, 1, 1, "=1+2");
+    assert_formula_result(&runtime, 1, 1, 3.0);
+
+    let bytes = runtime
+        .export_portable_ro(runtime.current_revision())
+        .unwrap()
+        .bytes;
+    let mut reopened = None;
+    open_portable_ro_working_size(
+        &mut reopened,
+        &bytes,
+        "00000000-0000-4000-8000-000000000944",
+    )
+    .unwrap();
+    assert_formula_result(&reopened.unwrap(), 1, 1, 3.0);
+}
+
+#[test]
+fn blank_workbook_formula_in_unallocated_c3_recalculates_after_b2_edit() {
+    let mut runtime = blank();
+    write(&mut runtime, 2, 2, "5");
+    write(&mut runtime, 3, 3, "=B2*2");
+    assert_formula_result(&runtime, 3, 3, 10.0);
+
+    write(&mut runtime, 2, 2, "7");
+    assert_formula_result(&runtime, 3, 3, 14.0);
 }
 
 fn paste(
@@ -510,14 +556,14 @@ fn blank_workbook_v3_and_portable_reopen_preserve_schema_labels_and_cells() {
 }
 
 #[test]
-fn blank_workbook_zero_stale_and_formula_writes_refuse_without_publication() {
+fn blank_workbook_zero_stale_and_malformed_writes_refuse_without_publication() {
     let mut runtime = filled();
     write(&mut runtime, 3, 1, "Coffee");
     let before = runtime.session.document().clone();
     let revision = runtime.current_revision().to_owned();
     let history = runtime.undo.len();
-    for (row, column, input) in [(0, 1, "1"), (1, 0, "1"), (4, 3, "=1+1")] {
-        let error = runtime
+    for (row, column, input) in [(0, 1, "1"), (1, 0, "1"), (4, 3, "=(")] {
+        runtime
             .write_cell_at(
                 &revision,
                 "sheet",
@@ -529,9 +575,6 @@ fn blank_workbook_zero_stale_and_formula_writes_refuse_without_publication() {
                 },
             )
             .unwrap_err();
-        if input.starts_with('=') {
-            assert!(error.to_string().contains("Auto formulas are unsupported"));
-        }
         assert_eq!(runtime.session.document(), &before);
         assert_eq!(runtime.current_revision(), revision);
         assert_eq!(runtime.undo.len(), history);
