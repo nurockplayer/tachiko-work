@@ -1830,6 +1830,15 @@ mod issue_175_research {
         diagnostics: &mut Vec<Diagnostic>,
         cancelled: &mut impl FnMut() -> bool,
     ) -> ValidationControl {
+        let is_bare_reference = |expression: &Expression| {
+            matches!(
+                expression,
+                Expression::Reference(_)
+                    | Expression::SameRowReference(_)
+                    | Expression::AnchoredReference(_)
+                    | Expression::AnchoredSameRowReference(_)
+            )
+        };
         let mut pending = vec![(expression, true)];
         let mut nodes = 0usize;
         while let Some((node, numeric)) = pending.pop() {
@@ -1838,15 +1847,16 @@ mod issue_175_research {
             }
             nodes += 1;
             match node {
-                Expression::Reference(reference)
-                | Expression::AnchoredReference(reference) => validate_formula_reference(
-                    document,
-                    owner,
-                    reference,
-                    numeric,
-                    path,
-                    diagnostics,
-                ),
+                Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                    validate_formula_reference(
+                        document,
+                        owner,
+                        reference,
+                        numeric,
+                        path,
+                        diagnostics,
+                    );
+                }
                 Expression::SameRowReference(field)
                 | Expression::AnchoredSameRowReference(field) => validate_formula_reference(
                     document,
@@ -1874,14 +1884,7 @@ mod issue_175_research {
                         path,
                         diagnostics,
                     );
-                    let bare = matches!(
-                        key.as_ref(),
-                        Expression::Reference(_)
-                            | Expression::SameRowReference(_)
-                            | Expression::AnchoredReference(_)
-                            | Expression::AnchoredSameRowReference(_)
-                    );
-                    pending.push((key, !bare));
+                    pending.push((key, !is_bare_reference(key)));
                     if let Some(value) = if_missing {
                         pending.push((value, true));
                     }
@@ -1900,14 +1903,7 @@ mod issue_175_research {
                     );
                     for criterion in criteria {
                         if let Some(expression) = &criterion.value {
-                            let bare = matches!(
-                                expression.as_ref(),
-                                Expression::Reference(_)
-                                    | Expression::SameRowReference(_)
-                                    | Expression::AnchoredReference(_)
-                                    | Expression::AnchoredSameRowReference(_)
-                            );
-                            pending.push((expression, !bare));
+                            pending.push((expression, !is_bare_reference(expression)));
                         }
                     }
                 }
