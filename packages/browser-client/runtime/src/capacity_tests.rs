@@ -981,7 +981,7 @@ fn large_date_formula_document_refuses_instead_of_entering_scalar_capacity_conve
         "00000000-0000-4000-8000-000000000534",
     ) {
         Err(DesignerError::CapacityExceeded(error)) => {
-            assert_eq!(error.limit, CapacityLimit::TableRows)
+            assert_eq!(error.limit, CapacityLimit::TableRows);
         }
         other => panic!(
             "large Date formula document must refuse, got {:?}",

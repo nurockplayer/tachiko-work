@@ -609,13 +609,17 @@ fn date_formula_authoring_recalculates_and_undo_restores_date() {
     assert_eq!(calculated(&runtime), result("2026-01-10"));
     history(&mut runtime, false);
     assert_eq!(calculated(&runtime), result("2026-01-09"));
+    assert_date_formula_exports(&mut runtime, &collection);
+}
+
+fn assert_date_formula_exports(runtime: &mut DesignerRuntime, collection: &str) {
     let revision = runtime.current_revision().to_owned();
     for workbook in [
         runtime
-            .export_native_tables_workbook(&revision, &collection)
+            .export_native_tables_workbook(&revision, collection)
             .unwrap(),
         runtime
-            .export_native_tables_csv_workbook(&revision, &collection)
+            .export_native_tables_csv_workbook(&revision, collection)
             .unwrap(),
     ] {
         assert_eq!(
@@ -626,7 +630,7 @@ fn date_formula_authoring_recalculates_and_undo_restores_date() {
         );
     }
     let workbook = runtime
-        .export_native_tables_workbook(&revision, &collection)
+        .export_native_tables_workbook(&revision, collection)
         .unwrap();
     assert!(
         workbook
@@ -635,7 +639,7 @@ fn date_formula_authoring_recalculates_and_undo_restores_date() {
             .any(|finding| finding.code == "native_tables_formula_value_only")
     );
     let csv_workbook = runtime
-        .export_native_tables_csv_workbook(&revision, &collection)
+        .export_native_tables_csv_workbook(&revision, collection)
         .unwrap();
     let csv = super::interop_adapter::export_csv(&csv_workbook.sheets[0]).unwrap();
     assert!(String::from_utf8(csv).unwrap().contains("2026-01-09"));
@@ -648,7 +652,7 @@ fn date_formula_authoring_recalculates_and_undo_restores_date() {
         }
     );
     runtime
-        .insert_row(None, &revision, &collection, &[])
+        .insert_row(None, &revision, collection, &[])
         .unwrap();
-    assert_eq!(row_ids(&runtime, &collection).len(), 2);
+    assert_eq!(row_ids(runtime, collection).len(), 2);
 }

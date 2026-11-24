@@ -1668,8 +1668,9 @@ impl CalculationProjection {
             } => Some(*value),
             Self::Value {
                 result: Some(_), ..
-            } => None,
-            Self::Failure { .. } | Self::Unavailable => None,
+            }
+            | Self::Failure { .. }
+            | Self::Unavailable => None,
         }
     }
 }
