@@ -638,7 +638,7 @@ fn ranked_native_and_imported_xlsx_csv_keep_identity_styles_and_addresses() {
     );
     assert_eq!(
         native.sheets[0].rows[0][1].formula.as_deref(),
-        Some("'rows'!$A$3")
+        Some("'rows'!A$3")
     );
     assert_eq!(
         native.sheets[0].rows[0][1].value,
