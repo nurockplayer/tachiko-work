@@ -311,7 +311,8 @@ must be representable; zero is accepted only for a headerless schema.
 geometry})` (wire `render_a1_formula`) renders the stored formula using the same
 geometry and returns `a1_translation` with A1 text in `source` and empty `notes`.
 It is read-only and revision-pinned. Same-row references render relatively;
-fixed identities render with absolute rows and columns. Whole-column aggregates
+legacy fixed identities render with an absolute row and relative column, matching
+their sideways-copy behavior. Whole-column aggregates
 render over the supplied complete data rows, starting at row 1 when `header_row`
 is zero. References outside the geometry refuse with `out_of_bounds`.
 
