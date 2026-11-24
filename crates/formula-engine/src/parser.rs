@@ -804,8 +804,8 @@ impl<'input> Parser<'input> {
 
         let entity = &inner[..dot];
         let field = &inner[dot + 1..];
-        let anchored = field.starts_with('$');
-        let field = field.strip_prefix('$').unwrap_or(field);
+        let anchored = column.is_none() && field.starts_with('$');
+        let field = &field[usize::from(anchored)..];
         if !is_valid_identifier(entity) {
             self.position = invalid_identifier_position(entity, inner_start);
             return Err(self.error("invalid reference entity key"));

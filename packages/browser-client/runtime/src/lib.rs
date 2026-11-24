@@ -16513,11 +16513,11 @@ mod tests {
         let mut visited = Vec::new();
         super::map_copy_references(
             &mut expression,
-            &mut |reference, numeric| {
+            &mut |reference, numeric, _| {
                 visited.push((reference.field.as_str().to_owned(), numeric));
                 Ok(())
             },
-            &mut |_| Ok(()),
+            &mut |_, _| Ok(()),
         )
         .expect("the lookup copy walk succeeds");
         assert_eq!(

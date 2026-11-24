@@ -186,14 +186,13 @@ fn a1_column_anchor_four_combinations_in_both_geometries() {
     for header_row in [0, 1] {
         let row = header_row + 1;
         let mut sources = Vec::new();
-        for (text, render, entity, field) in [
-            (format!("A{row}"), true, "r2", "price"),
-            (format!("$A{row}"), true, "r2", "qty"),
-            (format!("A${row}"), false, "r1", "price"),
-            (format!("$A${row}"), true, "r1", "qty"),
+        for (text, entity, field) in [
+            (format!("A{row}"), "r2", "price"),
+            (format!("$A{row}"), "r2", "qty"),
+            (format!("A${row}"), "r1", "price"),
+            (format!("$A${row}"), "r1", "qty"),
         ] {
-            let (source, dependencies) =
-                column_anchor_copy(header_row, &text, render.then_some(text.as_str()), "r2");
+            let (source, dependencies) = column_anchor_copy(header_row, &text, Some(&text), "r2");
             assert_eq!(
                 dependencies,
                 [json!({"entity": entity, "field": field})],
@@ -402,8 +401,8 @@ fn translate_a1_steward_acceptance() {
         &["relative_copy_semantics_changed"],
     );
     ok(&mut rt, "B$3*C3", "[r2.qty]*[.price]", &[]);
-    ok(&mut rt, "$B3*C3", "[.qty]*[.price]", &[]);
-    ok(&mut rt, "$B$3*C3", "[r2.qty]*[.price]", &[]);
+    ok(&mut rt, "$B3*C3", "[.$qty]*[.price]", &[]);
+    ok(&mut rt, "$B$3*C3", "[r2.$qty]*[.price]", &[]);
     for text in ["SUM(B2:B4)", "SUM(B1:B4)"] {
         ok(
             &mut rt,
@@ -618,7 +617,7 @@ fn translate_a1_existing_formula_and_indirect_cycle() {
 #[test]
 fn translate_a1_qualified_current_collection_keeps_relative_row() {
     let mut rt = Some(fixture());
-    for (text, source) in [("Items!B3", "[.qty]"), ("Items!$B$3", "[r2.qty]")] {
+    for (text, source) in [("Items!B3", "[.qty]"), ("Items!$B$3", "[r2.$qty]")] {
         let mut input = request(text);
         input["geometry"]["sheets"] = serde_json::from_str(
             r#"{"Items":{"collection_id":"Items","header_row":1,"rows":["r1","r2","r3"],"columns":["name","qty","price","total"]}}"#,
@@ -768,7 +767,7 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         ),
         (
             "SUMIF($B$2:$B$4,$B$3,$C$2:$C$4)",
-            "SUMIF([items.qty:column],[r2.qty],[items.price:column])",
+            "SUMIF([items.qty:column],[r2.$qty],[items.price:column])",
         ),
         (
             "SUMIF(B2:B4,B$3,C2:C4)",

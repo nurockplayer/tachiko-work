@@ -312,13 +312,16 @@ geometry})` (wire `render_a1_formula`) renders the stored formula using the same
 geometry and returns `a1_translation` with A1 text in `source` and empty `notes`.
 It is read-only and revision-pinned. Same-row references render relatively;
 legacy fixed identities render with an absolute row and relative column, matching
-their sideways-copy behavior. Whole-column aggregates
+their sideways-copy behavior. Stored column anchors render with `$` before the
+column letter. Whole-column aggregates
 render over the supplied complete data rows, starting at row 1 when `header_row`
 is zero. References outside the geometry refuse with `out_of_bounds`.
 
 A same-row reference with a relative row becomes `[.field]`. A fixed row or
-other row becomes `[entity.field]`. Relative references becoming fixed identities
-carry `relative_copy_semantics_changed`; a `$` column alone has no effect.
+other row becomes `[entity.field]`. A `$` column is stored before the field key
+as `[.$field]` or `[entity.$field]` and keeps that field when copied with relative
+columns enabled. Relative rows becoming fixed identities carry
+`relative_copy_semantics_changed`.
 `SUM`, `AVERAGE`, and `COUNT` over exactly one whole numeric data column, starting
 at the header or first data row and ending at the last data row, become
 `[collection.field:total]`, `:average`, and `:count`, with `range_tracks_collection`.
