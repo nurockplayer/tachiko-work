@@ -447,7 +447,7 @@ fn validate_rule_condition(
             });
         }
         match node {
-            Expression::Reference(_) => {
+            Expression::Reference(_) | Expression::AnchoredReference(_) => {
                 return Err(PresentationError::RuleConditionReference {
                     rule: rule_id.clone(),
                 });
