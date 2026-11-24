@@ -158,10 +158,9 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "or",
             "args": expressions.iter().map(expression_json).collect::<Vec<_>>()
         }),
-        Expression::Not(expression) => serde_json::json!({
-            "op": "not",
-            "args": expression_json(expression)
-        }),
+        Expression::Not(expression) => {
+            serde_json::json!({"op": "not", "args": expression_json(expression)})
+        }
         Expression::Round { value, digits } => serde_json::json!({
             "op": "round",
             "args": {"value": expression_json(value), "digits": digits}
@@ -175,10 +174,9 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
         Expression::RoundDown { value, digits } => {
             serde_json::json!({"op": "round_down", "args": {"value": expression_json(value), "digits": digits}})
         }
-        Expression::IsBlank(expression) => serde_json::json!({
-            "op": "is_blank",
-            "args": expression_json(expression)
-        }),
+        Expression::IsBlank(expression) => {
+            serde_json::json!({"op": "is_blank", "args": expression_json(expression)})
+        }
         Expression::AnchoredReference(_) | Expression::AnchoredSameRowReference(_) => {
             panic!("anchored references are not representable in the frozen formats")
         }
