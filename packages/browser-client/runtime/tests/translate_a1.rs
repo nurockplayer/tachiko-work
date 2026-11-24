@@ -160,12 +160,19 @@ fn render_a1_lookup_guards_optional_text_and_number_keys() {
             .get_mut(field)
             .unwrap()
             .required = false;
-        document
-            .entities
-            .get_mut("r2")
-            .unwrap()
-            .fields
-            .remove(field);
+        for (row, number) in [("r1", 1.0), ("r2", 2.0), ("r3", 3.0)] {
+            let value = if text_key {
+                Value::Text(row.into())
+            } else {
+                Value::Number(Number::new(number).unwrap())
+            };
+            document
+                .entities
+                .get_mut(row)
+                .unwrap()
+                .fields
+                .insert(field.into(), value);
+        }
         let mut runtime = Some(
             DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
                 .unwrap(),
