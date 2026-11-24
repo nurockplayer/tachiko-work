@@ -2019,7 +2019,7 @@ fn validate_key(key: &str) -> Result<(), ()> {
 
 fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, target: &EntityId) {
     match expression {
-        Expression::Reference(reference) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
             if &reference.entity == source {
                 reference.entity = target.clone();
             }
@@ -2029,6 +2029,7 @@ fn rewrite_expression_entity(expression: &mut Expression, source: &EntityId, tar
         // nothing to rebase.
         Expression::Number(_)
         | Expression::SameRowReference(_)
+        | Expression::AnchoredSameRowReference(_)
         | Expression::ColumnTotal(_)
         | Expression::ColumnAggregate { .. } => {}
         _ => {
@@ -3512,6 +3513,8 @@ fn drop_expression_iteratively(expression: Expression) {
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
+            | Expression::AnchoredReference(_)
+            | Expression::AnchoredSameRowReference(_)
             | Expression::ColumnTotal(_)
             | Expression::ColumnAggregate { .. } => {}
         }
