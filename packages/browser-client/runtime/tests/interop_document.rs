@@ -609,7 +609,11 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
 fn imported_workbook_xlsx_preserves_column_anchors() {
     use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
 
-    let (source, selection) = workbook_fixture();
+    let (mut source, mut selection) = workbook_fixture();
+    selection.column_types[0][3] = ImportFieldType::Number;
+    for row in &mut source.sheets[0].rows {
+        row[3].value = SourceValue::Number { value: 0.0 };
+    }
     let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
     let sheet = &imported.metadata.sheets[0];
     let DesignerResponse::Published(published) = runtime
@@ -632,6 +636,38 @@ fn imported_workbook_xlsx_preserves_column_anchors() {
     assert_eq!(
         reopened.sheets[0].rows[0][2].formula.as_deref(),
         Some("($A2+'Data'!$A$2)")
+    );
+    let (mut runtime, imported) = import_workbook(&reopened, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let DesignerResponse::Published(copied) = runtime
+        .handle(DesignerRequest::CopyFormula {
+            expected_revision: "resident/0".into(),
+            source: FieldTarget {
+                entity: sheet.rows[0].entity_id.clone(),
+                field: sheet.columns[2].field_id.clone(),
+            },
+            destinations: vec![FieldTarget {
+                entity: sheet.rows[0].entity_id.clone(),
+                field: sheet.columns[3].field_id.clone(),
+            }],
+            fixed_references: vec![],
+            relative_rows: false,
+            relative_columns: true,
+        })
+        .unwrap()
+    else {
+        panic!("copying a formula publishes");
+    };
+    let exported = runtime
+        .export_workbook(&copied.resulting_revision, &imported.metadata)
+        .unwrap();
+    assert_eq!(
+        exported.sheets[0].rows[0][3].formula.as_deref(),
+        Some("($A2+'Data'!$A$2)")
+    );
+    assert_eq!(
+        exported.sheets[0].rows[0][3].value,
+        SourceValue::Number { value: 16.0 }
     );
 }
 
@@ -2051,7 +2087,7 @@ fn conditional_aggregate_imports_live_and_editing_updates_values() {
         .unwrap();
     assert_eq!(
         exported.sheets[0].rows[0][2].formula.as_deref(),
-        Some("SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D2)")
+        Some("SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,$D2)")
     );
     assert_eq!(
         exported.sheets[0].rows[0][2].value,
@@ -2170,7 +2206,7 @@ fn a_date_cell_criterion_on_a_date_column_imports_live() {
         .unwrap();
     assert_eq!(
         exported.sheets[0].rows[0][2].formula.as_deref(),
-        Some("COUNTIFS('Data'!$E$2:$E$4,E2)")
+        Some("COUNTIFS('Data'!$E$2:$E$4,$E2)")
     );
     assert_eq!(
         exported.sheets[0].rows[0][2].value,
@@ -2301,9 +2337,9 @@ fn conditional_aggregates_round_trip_through_xlsx() {
         .export_workbook("resident/0", &imported.metadata)
         .unwrap();
     for (row, formula) in [
-        (0, "SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D2)"),
-        (1, "COUNTIFS('Data'!$A$2:$A$4,D3)"),
-        (2, "AVERAGEIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,D4)"),
+        (0, "SUMIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,$D2)"),
+        (1, "COUNTIFS('Data'!$A$2:$A$4,$D3)"),
+        (2, "AVERAGEIFS('Data'!$B$2:$B$4,'Data'!$A$2:$A$4,$D4)"),
     ] {
         assert_eq!(
             exported.sheets[0].rows[row][2].formula.as_deref(),

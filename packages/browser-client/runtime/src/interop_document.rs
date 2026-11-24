@@ -2848,8 +2848,9 @@ impl A1Geometry for ImportA1Geometry<'_> {
         let field = &document.schemas[&entity.schema].fields[&reference.field];
         references.cells.insert(reference);
         Ok(format!(
-            "[{}.{}]",
+            "[{}.{}{}]",
             if same_row { "" } else { entity.key.as_str() },
+            if address.starts_with('$') { "$" } else { "" },
             field.key.as_str()
         ))
     }
