@@ -866,7 +866,7 @@ fn strip_column_range(source: &str) -> Option<&str> {
 
 /// Inventory the closed formula wire grammar, independently of its cached
 /// result. Quoted worksheet references are names, never strings or numbers;
-/// a same-row reference is an unqualified relative A1 address.
+/// a same-row reference is unqualified with a relative row and optional column anchor.
 /// A future serializer token outside this grammar refuses until it is governed.
 fn compatible_formula(
     formula: &str,
@@ -910,18 +910,19 @@ fn compatible_formula(
         {
             let open = remaining.find('(').ok_or_else(refuse)?;
             remaining = &remaining[open + 1..];
-        } else if remaining
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_uppercase)
+        } else if remaining.starts_with('$')
+            || remaining
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_uppercase)
         {
-            // A same-row reference is the owner's row as relative A1.
+            remaining = remaining.strip_prefix('$').unwrap_or(remaining);
             let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
             let rows = remaining[columns..]
                 .bytes()
                 .take_while(u8::is_ascii_digit)
                 .count();
-            if rows == 0 {
+            if columns == 0 || rows == 0 {
                 return Err(refuse());
             }
             remaining = &remaining[columns + rows..];
