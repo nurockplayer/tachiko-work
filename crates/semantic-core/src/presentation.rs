@@ -452,7 +452,7 @@ fn validate_rule_condition(
                     rule: rule_id.clone(),
                 });
             }
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 if !schema.fields.contains_key(field) {
                     return Err(PresentationError::MissingField {
                         schema: schema.id.clone(),
@@ -608,7 +608,7 @@ fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {
     let mut stack = vec![&rule.condition];
     while let Some(node) = stack.pop() {
         match node {
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 if !schema.fields.contains_key(field) {
                     return false;
                 }

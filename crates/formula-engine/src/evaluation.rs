@@ -235,10 +235,11 @@ impl<V: ValueStore> Evaluation<'_, V> {
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
             match node {
-                Expression::Reference(reference) => {
+                Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                     references.insert(reference.clone());
                 }
-                Expression::SameRowReference(field) => {
+                Expression::SameRowReference(field)
+                | Expression::AnchoredSameRowReference(field) => {
                     references.insert(FieldRef::new(self.owner.entity.clone(), field.clone()));
                 }
                 Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
@@ -264,10 +265,12 @@ impl<V: ValueStore> Evaluation<'_, V> {
                         ));
                         if let Some(expression) = &criterion.value {
                             match expression.as_ref() {
-                                Expression::Reference(reference) => {
+                                Expression::Reference(reference)
+                                | Expression::AnchoredReference(reference) => {
                                     references.insert(reference.clone());
                                 }
-                                Expression::SameRowReference(field) => {
+                                Expression::SameRowReference(field)
+                                | Expression::AnchoredSameRowReference(field) => {
                                     references.insert(FieldRef::new(
                                         self.owner.entity.clone(),
                                         field.clone(),
@@ -338,12 +341,13 @@ impl<V: ValueStore> Evaluation<'_, V> {
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
             match node {
-                Expression::Reference(reference) => {
+                Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                     if failures.contains_key(reference) {
                         references.insert(reference.clone());
                     }
                 }
-                Expression::SameRowReference(field) => {
+                Expression::SameRowReference(field)
+                | Expression::AnchoredSameRowReference(field) => {
                     let reference = FieldRef::new(self.owner.entity.clone(), field.clone());
                     if failures.contains_key(&reference) {
                         references.insert(reference);
@@ -374,12 +378,14 @@ impl<V: ValueStore> Evaluation<'_, V> {
                         );
                         if let Some(expression) = &criterion.value {
                             match expression.as_ref() {
-                                Expression::Reference(reference) => {
+                                Expression::Reference(reference)
+                                | Expression::AnchoredReference(reference) => {
                                     if failures.contains_key(reference) {
                                         references.insert(reference.clone());
                                     }
                                 }
-                                Expression::SameRowReference(field) => {
+                                Expression::SameRowReference(field)
+                                | Expression::AnchoredSameRowReference(field) => {
                                     let reference =
                                         FieldRef::new(self.owner.entity.clone(), field.clone());
                                     if failures.contains_key(&reference) {
@@ -443,8 +449,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
     pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
-            Expression::Reference(reference) => self.reference(reference),
-            Expression::SameRowReference(field) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                self.reference(reference)
+            }
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 self.reference(&FieldRef::new(self.owner.entity.clone(), field.clone()))
             }
             Expression::If {
@@ -583,8 +591,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
         column: &ColumnRef,
     ) -> Result<Option<EntityId>, CalculationFailure> {
         let key = match key {
-            Expression::Reference(reference) => self.lookup_reference_key(reference)?,
-            Expression::SameRowReference(field) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                self.lookup_reference_key(reference)?
+            }
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 self.lookup_reference_key(&FieldRef::new(self.owner.entity.clone(), field.clone()))?
             }
             expression => exact_key(CriterionCell::Number(self.number(expression)?.get())),
@@ -838,8 +848,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
 
     fn date(&self, operand: &Expression) -> Result<Date, CalculationFailure> {
         let reference = match operand {
-            Expression::Reference(reference) => reference.clone(),
-            Expression::SameRowReference(field) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                reference.clone()
+            }
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 FieldRef::new(self.owner.entity.clone(), field.clone())
             }
             _ => return Err(CalculationFailure::TypeMismatch),
@@ -915,8 +927,11 @@ impl<V: ValueStore> Evaluation<'_, V> {
             Expression::Not(value) => self.condition(value).map(|value| !value),
             Expression::IsBlank(value) => {
                 let reference = match value.as_ref() {
-                    Expression::Reference(reference) => reference.clone(),
-                    Expression::SameRowReference(field) => {
+                    Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                        reference.clone()
+                    }
+                    Expression::SameRowReference(field)
+                    | Expression::AnchoredSameRowReference(field) => {
                         FieldRef::new(self.owner.entity.clone(), field.clone())
                     }
                     _ => return Err(CalculationFailure::TypeMismatch),

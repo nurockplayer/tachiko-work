@@ -1088,7 +1088,9 @@ impl ExpressionV2 {
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV2::from_semantic(reference))
             }
-            Expression::SameRowReference(_) => {
+            Expression::SameRowReference(_)
+            | Expression::AnchoredReference(_)
+            | Expression::AnchoredSameRowReference(_) => {
                 return invalid_representation(
                     "same-row references are not representable in frozen .roproj/v2; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
@@ -1635,6 +1637,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Number(_)
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
+                    | Expression::AnchoredReference(_)
+                    | Expression::AnchoredSameRowReference(_)
                     | Expression::ColumnTotal(_)
                     | Expression::ColumnAggregate { .. } => {}
                     Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {

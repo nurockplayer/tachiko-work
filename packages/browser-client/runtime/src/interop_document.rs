@@ -5352,8 +5352,10 @@ pub(crate) fn export_expression(
 /// The field a direct reference names, resolved against the formula's owner.
 fn direct_reference(argument: &Expression, owner: &FieldRef) -> Option<FieldRef> {
     match argument {
-        Expression::Reference(reference) => Some(reference.clone()),
-        Expression::SameRowReference(field) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            Some(reference.clone())
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             Some(FieldRef::new(owner.entity.clone(), field.clone()))
         }
         _ => None,
@@ -5394,6 +5396,18 @@ fn export_in(
         Expression::Reference(reference) => addresses
             .get(reference)
             .map(ExportCell::absolute)
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
+        Expression::AnchoredSameRowReference(field) => addresses
+            .get(&FieldRef::new(owner.entity.clone(), field.clone()))
+            .map(|cell| format!("${}", cell.relative()))
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
+        Expression::AnchoredReference(reference) => addresses
+            .get(reference)
+            .map(|cell| {
+                let mut anchored = cell.clone();
+                anchored.legacy_relative_column = false;
+                anchored.absolute()
+            })
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::ColumnTotal(column) => export_column("SUM", column, columns),
         Expression::ColumnAggregate { function, column } => {
@@ -5693,8 +5707,10 @@ fn export_criterion(
     let value_type = match criterion.value.as_deref() {
         None => None,
         Some(Expression::Number(_)) => Some(&FieldType::Number),
-        Some(Expression::Reference(reference)) => cell_type(reference),
-        Some(Expression::SameRowReference(field)) => {
+        Some(Expression::Reference(reference) | Expression::AnchoredReference(reference)) => {
+            cell_type(reference)
+        }
+        Some(Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field)) => {
             cell_type(&FieldRef::new(owner.entity.clone(), field.clone()))
         }
         Some(_) => {

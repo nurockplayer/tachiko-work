@@ -646,6 +646,21 @@ fn expression_bytes(expression: &Expression) -> u64 {
             compact_string("args", field.as_str(), false),
             1,
         ]),
+        Expression::AnchoredReference(reference) => total([
+            1,
+            compact_string("op", "anchored_reference", true),
+            compact_prefix("args"),
+            1,
+            compact_string("entity", reference.entity.as_str(), true),
+            compact_string("field", reference.field.as_str(), false),
+            2,
+        ]),
+        Expression::AnchoredSameRowReference(field) => total([
+            1,
+            compact_string("op", "anchored_same_row_reference", true),
+            compact_string("args", field.as_str(), false),
+            1,
+        ]),
         Expression::ColumnTotal(column) => total([
             1,
             compact_string("op", "column_total", true),

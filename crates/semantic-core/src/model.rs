@@ -842,6 +842,8 @@ pub enum Expression {
     // that contains this node, so the node stores only the field identity and
     // keeps meaning "this row" through copies and row-relative moves.
     SameRowReference(FieldId),
+    AnchoredReference(FieldRef),
+    AnchoredSameRowReference(FieldId),
     // The sum of one Number column across every entity of a schema. The node
     // names the schema and field, never the rows, so adding, deleting or
     // renaming rows keeps the total meaning the whole column.
@@ -992,6 +994,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
+            | Self::AnchoredReference(_)
+            | Self::AnchoredSameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Lookup {
@@ -1037,6 +1041,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
+            | Self::AnchoredReference(_)
+            | Self::AnchoredSameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Lookup {
@@ -1084,6 +1090,8 @@ impl Expression {
             Self::Number(_)
             | Self::Reference(_)
             | Self::SameRowReference(_)
+            | Self::AnchoredReference(_)
+            | Self::AnchoredSameRowReference(_)
             | Self::ColumnTotal(_)
             | Self::ColumnAggregate { .. } => Some(Number),
             Self::Lookup {
@@ -1138,7 +1146,10 @@ impl Expression {
             }
             Self::DatePart { operand, .. } => matches!(
                 operand.as_ref(),
-                Self::Reference(_) | Self::SameRowReference(_)
+                Self::Reference(_)
+                    | Self::SameRowReference(_)
+                    | Self::AnchoredReference(_)
+                    | Self::AnchoredSameRowReference(_)
             )
             .then_some(Number),
             Self::Weekday {
@@ -1147,20 +1158,32 @@ impl Expression {
             } => ((1..=3).contains(return_type)
                 && matches!(
                     operand.as_ref(),
-                    Self::Reference(_) | Self::SameRowReference(_)
+                    Self::Reference(_)
+                        | Self::SameRowReference(_)
+                        | Self::AnchoredReference(_)
+                        | Self::AnchoredSameRowReference(_)
                 ))
             .then_some(Number),
-            Self::Days { end, start } => {
-                (matches!(end.as_ref(), Self::Reference(_) | Self::SameRowReference(_))
-                    && matches!(
-                        start.as_ref(),
-                        Self::Reference(_) | Self::SameRowReference(_)
-                    ))
-                .then_some(Number)
-            }
+            Self::Days { end, start } => (matches!(
+                end.as_ref(),
+                Self::Reference(_)
+                    | Self::SameRowReference(_)
+                    | Self::AnchoredReference(_)
+                    | Self::AnchoredSameRowReference(_)
+            ) && matches!(
+                start.as_ref(),
+                Self::Reference(_)
+                    | Self::SameRowReference(_)
+                    | Self::AnchoredReference(_)
+                    | Self::AnchoredSameRowReference(_)
+            ))
+            .then_some(Number),
             Self::IsBlank(value) => matches!(
                 value.as_ref(),
-                Self::Reference(_) | Self::SameRowReference(_)
+                Self::Reference(_)
+                    | Self::SameRowReference(_)
+                    | Self::AnchoredReference(_)
+                    | Self::AnchoredSameRowReference(_)
             )
             .then_some(Condition),
         }
@@ -1176,10 +1199,10 @@ impl Expression {
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
             match node {
-                Self::Reference(reference) => {
+                Self::Reference(reference) | Self::AnchoredReference(reference) => {
                     references.insert(reference.clone());
                 }
-                Self::SameRowReference(field) => {
+                Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
                 }
                 Self::Lookup { key, .. } => pending.push(key),
@@ -1199,8 +1222,10 @@ impl Expression {
         let mut pending = vec![(self, true)];
         while let Some((node, numeric)) = pending.pop() {
             match node {
-                Self::Reference(reference) => uses.push((reference.clone(), numeric)),
-                Self::SameRowReference(field) => {
+                Self::Reference(reference) | Self::AnchoredReference(reference) => {
+                    uses.push((reference.clone(), numeric))
+                }
+                Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
                 }
                 Self::DatePart { operand, .. } | Self::Weekday { operand, .. } => {
@@ -1213,8 +1238,13 @@ impl Expression {
                 Self::Lookup {
                     key, if_missing, ..
                 } => {
-                    let bare =
-                        matches!(key.as_ref(), Self::Reference(_) | Self::SameRowReference(_));
+                    let bare = matches!(
+                        key.as_ref(),
+                        Self::Reference(_)
+                            | Self::SameRowReference(_)
+                            | Self::AnchoredReference(_)
+                            | Self::AnchoredSameRowReference(_)
+                    );
                     pending.push((key, !bare));
                     if let Some(value) = if_missing {
                         pending.push((value, true));
@@ -1228,7 +1258,10 @@ impl Expression {
                         if let Some(expression) = &criterion.value {
                             let bare = matches!(
                                 expression.as_ref(),
-                                Self::Reference(_) | Self::SameRowReference(_)
+                                Self::Reference(_)
+                                    | Self::SameRowReference(_)
+                                    | Self::AnchoredReference(_)
+                                    | Self::AnchoredSameRowReference(_)
                             );
                             pending.push((expression, !bare));
                         }

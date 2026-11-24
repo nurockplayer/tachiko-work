@@ -409,6 +409,8 @@ pub(crate) enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
+    AnchoredReference(FieldRefV3),
+    AnchoredSameRowReference(String),
     ColumnTotal(ColumnRefV3),
     ColumnAggregate(ColumnAggregateArgsV3),
     ColumnConditional(ColumnConditionalArgsV3),
@@ -1191,7 +1193,10 @@ impl NumberV3 {
 fn require_date_operand(operand: &ExpressionV3) -> Result<(), FormatError> {
     if !matches!(
         operand,
-        ExpressionV3::Reference(_) | ExpressionV3::SameRowReference(_)
+        ExpressionV3::Reference(_)
+            | ExpressionV3::SameRowReference(_)
+            | ExpressionV3::AnchoredReference(_)
+            | ExpressionV3::AnchoredSameRowReference(_)
     ) {
         return invalid_representation("date function requires a field reference".to_owned());
     }
@@ -1216,11 +1221,11 @@ impl ExpressionV3 {
                 ));
             }
             match node {
-                Self::Reference(reference) => {
+                Self::Reference(reference) | Self::AnchoredReference(reference) => {
                     require_id("formula entity id", &reference.entity)?;
                     require_id("formula field id", &reference.field)?;
                 }
-                Self::SameRowReference(field) => {
+                Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     require_id("formula field id", field)?;
                 }
                 Self::ColumnTotal(column)
@@ -1299,7 +1304,10 @@ impl ExpressionV3 {
                 Self::IsBlank(expression) => {
                     if !matches!(
                         expression.as_ref(),
-                        Self::Reference(_) | Self::SameRowReference(_)
+                        Self::Reference(_)
+                            | Self::SameRowReference(_)
+                            | Self::AnchoredReference(_)
+                            | Self::AnchoredSameRowReference(_)
                     ) {
                         return invalid_representation(
                             "ISBLANK requires a field reference".to_owned(),
@@ -1320,6 +1328,12 @@ impl ExpressionV3 {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
             Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::AnchoredReference(reference) => {
+                Expression::AnchoredReference(FieldRef::new(reference.entity, reference.field))
+            }
+            Self::AnchoredSameRowReference(field) => {
+                Expression::AnchoredSameRowReference(FieldId::from(field))
+            }
             Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
                 SchemaId::from(column.schema),
                 FieldId::from(column.field),
@@ -1645,6 +1659,12 @@ impl ExpressionV3 {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
             Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::AnchoredReference(reference) => {
+                Self::AnchoredReference(FieldRefV3::from_semantic(reference))
+            }
+            Expression::AnchoredSameRowReference(field) => {
+                Self::AnchoredSameRowReference(field.to_string())
+            }
             Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV3 {
                 schema: column.schema.to_string(),
                 field: column.field.to_string(),
@@ -2195,6 +2215,18 @@ pub(crate) fn write_expression(
             compact_member_string(output, "op", "same_row_reference", true)?;
             compact_member_string(output, "args", field, false)?;
         }
+        ExpressionV3::AnchoredReference(reference) => {
+            compact_member_string(output, "op", "anchored_reference", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "entity", &reference.entity, true)?;
+            compact_member_string(output, "field", &reference.field, false)?;
+            output.push('}');
+        }
+        ExpressionV3::AnchoredSameRowReference(field) => {
+            compact_member_string(output, "op", "anchored_same_row_reference", true)?;
+            compact_member_string(output, "args", field, false)?;
+        }
         ExpressionV3::ColumnTotal(column) => {
             compact_member_string(output, "op", "column_total", true)?;
             compact_member_prefix(output, "args")?;
@@ -2610,7 +2642,10 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
                         if !matches!(
                             operand.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "date function requires a field reference".to_owned(),
@@ -2627,10 +2662,16 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Days { end, start } => {
                         if !matches!(
                             end.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) || !matches!(
                             start.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "date function requires a field reference".to_owned(),
@@ -2642,7 +2683,10 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::IsBlank(expression) => {
                         if !matches!(
                             expression.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "ISBLANK requires a field reference".to_owned(),
@@ -2669,6 +2713,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Number(_)
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
+                    | Expression::AnchoredReference(_)
+                    | Expression::AnchoredSameRowReference(_)
                     | Expression::ColumnTotal(_)
                     | Expression::ColumnAggregate { .. } => {}
                 }
