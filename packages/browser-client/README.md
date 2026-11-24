@@ -37,6 +37,18 @@ Structure, classified values and implied displays publish in one revision and
 Undo/Redo together. Invalid input and capacity/lifecycle refusals leave the
 document and history unchanged. Existing `paste_cells` calls are unchanged.
 
+## Range-based cell styles
+
+`setCellStyleRange(expectedRevision, collection, row, rowCount, fields, changes)`
+sends `{type: "set_cell_style_range", expected_revision, collection, row, row_count, fields, changes}`.
+Row 1 is the first stored data row, independent of headers or view sorting.
+The nonempty range must fit within stored rows. Supply field IDs in selection
+order for outline borders. The command applies the same style changes as
+`setCellStyle`, including bold or italic toggles that clear only when every
+selected cell already has that style. Blank cells in stored rows receive
+presentation without creating values. One Undo restores the prior
+presentation for the entire range, and one Redo reapplies it.
+
 ## Explicit v3 project transfers
 
 The experimental client offers `exportProjectV3(expectedRevision)` to explicitly

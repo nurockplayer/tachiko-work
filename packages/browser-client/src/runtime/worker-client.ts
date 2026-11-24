@@ -316,6 +316,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "set_cell_style", expected_revision: expectedRevision, collection, entities, fields, changes});
   }
 
+  async setCellStyleRange(expectedRevision: string, collection: string, row: number, rowCount: number, fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_cell_style_range", expected_revision: expectedRevision, collection, row, row_count: rowCount, fields, changes});
+  }
+
   async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_width", expected_revision: expectedRevision, collection, field, width});
   }

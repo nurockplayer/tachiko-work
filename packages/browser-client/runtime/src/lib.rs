@@ -376,6 +376,14 @@ pub enum DesignerRequest {
         fields: Vec<String>,
         changes: Vec<CellStyleChange>,
     },
+    SetCellStyleRange {
+        expected_revision: String,
+        collection: String,
+        row: usize,
+        row_count: usize,
+        fields: Vec<String>,
+        changes: Vec<CellStyleChange>,
+    },
     SetColumnWidth {
         expected_revision: String,
         collection: String,
@@ -4160,6 +4168,23 @@ impl DesignerRuntime {
                 &fields,
                 &changes,
             )?)),
+            DesignerRequest::SetCellStyleRange {
+                expected_revision,
+                collection,
+                row,
+                row_count,
+                fields,
+                changes,
+            } => self
+                .set_cell_style_range(
+                    &expected_revision,
+                    &collection,
+                    row,
+                    row_count,
+                    &fields,
+                    &changes,
+                )
+                .map(DesignerResponse::Published),
             DesignerRequest::SetColumnWidth {
                 expected_revision,
                 collection,

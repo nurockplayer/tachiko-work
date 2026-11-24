@@ -103,6 +103,125 @@ pub(crate) fn window(
 }
 
 #[test]
+fn cell_style_range_formats_20_000_cells_inside_text_capacity_wire_limit() {
+    const ROWS: usize = 5_000;
+    let mut document = fixture();
+    let schema = document.schemas.get_mut("rows").unwrap();
+    let mut fourth = schema.fields["c"].clone();
+    fourth.id = "d".into();
+    fourth.key = "d".into();
+    schema.fields.insert(fourth.id.clone(), fourth);
+    let mut template = document.entities["r1"].clone();
+    for field in ["b", "c", "d"] {
+        template
+            .fields
+            .insert(field.into(), Value::Number(Number::new(1.0).unwrap()));
+    }
+    let entities: Vec<_> = (0..ROWS).map(|i| format!("record-{i:05}")).collect();
+    document.entities.clear();
+    for id in &entities {
+        let mut entity = template.clone();
+        entity.id = id.as_str().into();
+        entity.key = id.as_str().into();
+        document.entities.insert(entity.id.clone(), entity);
+    }
+    let mut runtime = Some(DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap());
+    let limit = crate::wire_request_limit(runtime.as_ref());
+    assert_eq!(
+        runtime.as_ref().unwrap().profile,
+        SessionProfile::TextCapacity
+    );
+    assert_eq!(limit, 65_536);
+
+    let mut request = json!({
+        "type": "set_cell_style", "expected_revision": "resident/0", "collection": "rows",
+        "entities": entities, "fields": ["a", "b", "c", "d"],
+        "changes": [{"kind": "toggle_bold"}],
+    });
+    let oversized = serde_json::to_vec(&request).unwrap();
+    assert!(oversized.len() > limit);
+    let reply: serde_json::Value =
+        serde_json::from_slice(&crate::process_wire_request(&mut runtime, &oversized)).unwrap();
+    assert_eq!(reply["error"]["code"], "request_too_large");
+
+    request.as_object_mut().unwrap().remove("entities");
+    request["type"] = json!("set_cell_style_range");
+    request["row"] = json!(1);
+    request["row_count"] = json!(ROWS);
+    let compact = serde_json::to_vec(&request).unwrap();
+    assert!(compact.len() < limit);
+    let reply: serde_json::Value =
+        serde_json::from_slice(&crate::process_wire_request(&mut runtime, &compact)).unwrap();
+    assert_eq!(reply["response"]["type"], "published", "{reply}");
+    let mut runtime = runtime.unwrap();
+    assert_eq!(runtime.undo.len(), 1);
+    let styled = runtime.presentation.clone();
+    assert_eq!(styled.cells.len(), ROWS * 4);
+    assert!(
+        styled
+            .cells
+            .values()
+            .all(|id| styled.styles[id].bold == Some(true))
+    );
+    history(&mut runtime, false);
+    assert!(runtime.presentation.is_empty());
+    assert!(runtime.undo.is_empty());
+    history(&mut runtime, true);
+    assert_eq!(runtime.presentation, styled);
+    assert_eq!(runtime.session.document(), &document);
+}
+
+#[test]
+fn cell_style_range_uses_stored_rows_and_restores_mixed_sparse_styles() {
+    let mut document = fixture();
+    document.entities.get_mut("r3").unwrap().rank =
+        Some(tachiko_workspace_engine::RowRank::new("A").unwrap());
+    let mut runtime = DesignerRuntime::from_document(document.clone(), OCCURRENCE).unwrap();
+    edit(
+        &mut runtime,
+        &["r3"],
+        &["c"],
+        &json!([{"kind": "bold", "value": true}, {"kind": "italic", "value": true}]),
+    )
+    .unwrap();
+    let before = runtime.query_table("rows").unwrap();
+    let mut request = json!({
+        "type": "set_cell_style_range", "expected_revision": runtime.current_revision(),
+        "collection": "rows", "row": 1, "row_count": 2, "fields": ["c", "b"],
+        "changes": [{"kind": "toggle_bold"}],
+    });
+    let publication = runtime
+        .handle(serde_json::from_value(request.clone()).unwrap())
+        .unwrap();
+    assert!(matches!(publication, DesignerResponse::Published(_)));
+    assert_eq!(runtime.undo.len(), 2);
+    let after = runtime.query_table("rows").unwrap();
+    for row in &after.rows {
+        if row.id == "r2" {
+            assert_eq!(row.styles, []);
+        } else {
+            assert!(!row.styles[0].bold);
+            assert!(row.styles[1].bold && row.styles[2].bold);
+            assert_eq!(row.styles[2].italic, row.id == "r3");
+        }
+    }
+    let revision = runtime.current_revision().to_owned();
+    request["expected_revision"] = json!(revision);
+    request["row_count"] = json!(4);
+    assert!(matches!(
+        runtime.handle(serde_json::from_value(request).unwrap()),
+        Err(DesignerError::InvalidTableOperation { .. })
+    ));
+    assert_eq!(runtime.current_revision(), revision);
+    assert_eq!(runtime.undo.len(), 2);
+    history(&mut runtime, false);
+    assert_eq!(runtime.query_table("rows").unwrap().rows, before.rows);
+    history(&mut runtime, true);
+    assert_eq!(runtime.query_table("rows").unwrap().rows, after.rows);
+    assert_eq!(runtime.session.document(), &document);
+}
+
+#[test]
 fn rectangle_toggle_and_each_undo_are_presentation_only_in_every_profile() {
     for profile in [
         SessionProfile::Ordinary,

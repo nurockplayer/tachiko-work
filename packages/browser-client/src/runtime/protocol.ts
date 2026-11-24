@@ -631,6 +631,7 @@ export type TrackerCommand =
   | { type: "set_column_alignment"; expected_revision: string; collection: string; field: string; alignment: CellAlignment | null }
   | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
   | { type: "set_cell_style"; expected_revision: string; collection: string; entities: string[]; fields: string[]; changes: CellStyleChange[] }
+  | { type: "set_cell_style_range"; expected_revision: string; collection: string; row: number; row_count: number; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
