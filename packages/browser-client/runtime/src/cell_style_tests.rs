@@ -198,7 +198,7 @@ fn cell_style_range_uses_stored_rows_and_restores_mixed_sparse_styles() {
     let after = runtime.query_table("rows").unwrap();
     for row in &after.rows {
         if row.id == "r2" {
-            assert!(row.styles.is_empty());
+            assert_eq!(row.styles, []);
         } else {
             assert!(!row.styles[0].bold);
             assert!(row.styles[1].bold && row.styles[2].bold);
