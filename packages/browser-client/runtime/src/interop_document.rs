@@ -5285,7 +5285,7 @@ impl ExportCell {
     }
 
     pub(crate) fn with_collection(mut self, collection: &str) -> Self {
-        self.collection = collection.to_owned();
+        collection.clone_into(&mut self.collection);
         self
     }
 
