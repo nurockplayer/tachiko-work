@@ -5255,6 +5255,7 @@ pub(crate) struct ExportCell {
     row: usize,
     criterion_type: Option<FieldType>,
     optional: bool,
+    legacy_relative_column: bool,
 }
 
 impl ExportCell {
@@ -5271,15 +5272,25 @@ impl ExportCell {
             row,
             criterion_type,
             optional,
+            legacy_relative_column: false,
         }
+    }
+
+    pub(crate) fn with_legacy_relative_column(mut self) -> Self {
+        self.legacy_relative_column = true;
+        self
     }
 
     /// The absolute, sheet-qualified address of a stable identity.
     fn absolute(&self) -> String {
+        let column_anchor = if self.legacy_relative_column { "" } else { "$" };
         if self.sheet.is_empty() {
-            format!("${}${}", self.column, self.row)
+            format!("{column_anchor}{}${}", self.column, self.row)
         } else {
-            format!("'{}'!${}${}", self.sheet, self.column, self.row)
+            format!(
+                "'{}'!{column_anchor}{}${}",
+                self.sheet, self.column, self.row
+            )
         }
     }
 

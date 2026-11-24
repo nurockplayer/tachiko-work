@@ -479,6 +479,7 @@ impl DesignerRuntime {
                                 ),
                                 !field.required,
                             )
+                            .with_legacy_relative_column()
                         });
                 }
             }

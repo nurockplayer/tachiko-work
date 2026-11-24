@@ -212,7 +212,7 @@ fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
             (
                 format!("A{}", header_row + 1),
                 "[r1.qty]",
-                format!("$A${}", header_row + 1),
+                format!("A${}", header_row + 1),
             ),
             (
                 format!("A{}", header_row + 2),
