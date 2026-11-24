@@ -13128,17 +13128,22 @@ fn column_fill_formulas(
 }
 
 fn row_relative_formula(expression: &mut Expression, owner: &EntityId) -> bool {
-    if let Expression::Reference(reference) = expression {
-        if reference.entity != *owner {
-            return false;
+    *expression = match expression {
+        Expression::Reference(reference) if reference.entity == *owner => {
+            Expression::SameRowReference(reference.field.clone())
         }
-        *expression = Expression::SameRowReference(reference.field.clone());
-        return true;
-    }
-    expression
-        .children_mut()
-        .into_iter()
-        .all(|child| row_relative_formula(child, owner))
+        Expression::AnchoredReference(reference) if reference.entity == *owner => {
+            Expression::AnchoredSameRowReference(reference.field.clone())
+        }
+        Expression::Reference(_) | Expression::AnchoredReference(_) => return false,
+        _ => {
+            return expression
+                .children_mut()
+                .into_iter()
+                .all(|child| row_relative_formula(child, owner));
+        }
+    };
+    true
 }
 
 /// Fill new cells where possible without making an otherwise valid addition fail.
