@@ -1157,9 +1157,12 @@ impl Expression {
             Self::Weekday {
                 operand,
                 return_type,
-            } => ((1..=3).contains(return_type) && is_reference(operand.as_ref())).then_some(Number),
-            Self::Days { end, start } => (is_reference(end.as_ref()) && is_reference(start.as_ref()))
-                .then_some(Number),
+            } => {
+                ((1..=3).contains(return_type) && is_reference(operand.as_ref())).then_some(Number)
+            }
+            Self::Days { end, start } => {
+                (is_reference(end.as_ref()) && is_reference(start.as_ref())).then_some(Number)
+            }
             Self::IsBlank(value) => is_reference(value.as_ref()).then_some(Condition),
         }
     }

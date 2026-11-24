@@ -1838,9 +1838,15 @@ mod issue_175_research {
             }
             nodes += 1;
             match node {
-                Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-                    validate_formula_reference(document, owner, reference, numeric, path, diagnostics);
-                }
+                Expression::Reference(reference)
+                | Expression::AnchoredReference(reference) => validate_formula_reference(
+                    document,
+                    owner,
+                    reference,
+                    numeric,
+                    path,
+                    diagnostics,
+                ),
                 Expression::SameRowReference(field)
                 | Expression::AnchoredSameRowReference(field) => validate_formula_reference(
                     document,
