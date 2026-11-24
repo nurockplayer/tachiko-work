@@ -270,6 +270,21 @@ fn edit_text(runtime: &mut DesignerRuntime, expected: &str, target: &str, value:
 }
 
 #[test]
+fn anchored_text_criteria_keep_reference_semantics() {
+    let mut runtime = open_fixture();
+    published(
+        &mut runtime,
+        DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "rent.matching".into(),
+            source: "COUNTIFS([plan.category:column], [settings.$criterion], [plan.category:column], [.$category])".to_owned(),
+        },
+    );
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(number_of(projected(&plan, "Rent", "matching")), Some(2.0));
+}
+
+#[test]
 fn a_formula_with_a_text_criterion_column_can_be_copied() {
     let mut runtime = open_fixture();
     published(

@@ -768,10 +768,17 @@ impl<V: ValueStore> Evaluation<'_, V> {
             (ComparisonOperator::NotEqual, None) => {
                 Ok(CriterionTest::blank(ComparisonOperator::NotEqual))
             }
-            (ComparisonOperator::Equal, Some(Expression::Reference(reference))) => {
-                self.reference_criterion_test(reference)
-            }
-            (ComparisonOperator::Equal, Some(Expression::SameRowReference(field))) => self
+            (
+                ComparisonOperator::Equal,
+                Some(Expression::Reference(reference) | Expression::AnchoredReference(reference)),
+            ) => self.reference_criterion_test(reference),
+            (
+                ComparisonOperator::Equal,
+                Some(
+                    Expression::SameRowReference(field)
+                    | Expression::AnchoredSameRowReference(field),
+                ),
+            ) => self
                 .reference_criterion_test(&FieldRef::new(self.owner.entity.clone(), field.clone())),
             (_, Some(Expression::Number(number))) => {
                 Ok(CriterionTest::number(criterion.operator, number.get()))
