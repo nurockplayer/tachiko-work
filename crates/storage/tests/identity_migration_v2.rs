@@ -179,6 +179,9 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
             "op": "is_blank",
             "args": expression_json(expression)
         }),
+        Expression::AnchoredReference(_) | Expression::AnchoredSameRowReference(_) => {
+            panic!("anchored references are not representable in the frozen formats")
+        }
         Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
             panic!("conditional aggregates are not representable in the frozen formats")
         }

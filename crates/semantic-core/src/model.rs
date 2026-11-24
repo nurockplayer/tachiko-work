@@ -1086,6 +1086,15 @@ impl Expression {
     #[must_use]
     pub fn expression_type(&self) -> Option<FormulaExpressionType> {
         use FormulaExpressionType::{Condition, Number};
+        let is_reference = |value: &Self| {
+            matches!(
+                value,
+                Self::Reference(_)
+                    | Self::SameRowReference(_)
+                    | Self::AnchoredReference(_)
+                    | Self::AnchoredSameRowReference(_)
+            )
+        };
         match self {
             Self::Number(_)
             | Self::Reference(_)
@@ -1144,48 +1153,14 @@ impl Expression {
             | Self::RoundDown { value, digits } => {
                 (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
             }
-            Self::DatePart { operand, .. } => matches!(
-                operand.as_ref(),
-                Self::Reference(_)
-                    | Self::SameRowReference(_)
-                    | Self::AnchoredReference(_)
-                    | Self::AnchoredSameRowReference(_)
-            )
-            .then_some(Number),
+            Self::DatePart { operand, .. } => is_reference(operand.as_ref()).then_some(Number),
             Self::Weekday {
                 operand,
                 return_type,
-            } => ((1..=3).contains(return_type)
-                && matches!(
-                    operand.as_ref(),
-                    Self::Reference(_)
-                        | Self::SameRowReference(_)
-                        | Self::AnchoredReference(_)
-                        | Self::AnchoredSameRowReference(_)
-                ))
-            .then_some(Number),
-            Self::Days { end, start } => (matches!(
-                end.as_ref(),
-                Self::Reference(_)
-                    | Self::SameRowReference(_)
-                    | Self::AnchoredReference(_)
-                    | Self::AnchoredSameRowReference(_)
-            ) && matches!(
-                start.as_ref(),
-                Self::Reference(_)
-                    | Self::SameRowReference(_)
-                    | Self::AnchoredReference(_)
-                    | Self::AnchoredSameRowReference(_)
-            ))
-            .then_some(Number),
-            Self::IsBlank(value) => matches!(
-                value.as_ref(),
-                Self::Reference(_)
-                    | Self::SameRowReference(_)
-                    | Self::AnchoredReference(_)
-                    | Self::AnchoredSameRowReference(_)
-            )
-            .then_some(Condition),
+            } => ((1..=3).contains(return_type) && is_reference(operand.as_ref())).then_some(Number),
+            Self::Days { end, start } => (is_reference(end.as_ref()) && is_reference(start.as_ref()))
+                .then_some(Number),
+            Self::IsBlank(value) => is_reference(value.as_ref()).then_some(Condition),
         }
     }
 
@@ -1223,7 +1198,7 @@ impl Expression {
         while let Some((node, numeric)) = pending.pop() {
             match node {
                 Self::Reference(reference) | Self::AnchoredReference(reference) => {
-                    uses.push((reference.clone(), numeric))
+                    uses.push((reference.clone(), numeric));
                 }
                 Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     uses.push((FieldRef::new(owner.entity.clone(), field.clone()), numeric));
