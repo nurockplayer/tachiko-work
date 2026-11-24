@@ -5399,13 +5399,7 @@ fn export_in(
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::AnchoredSameRowReference(field) => addresses
             .get(&FieldRef::new(owner.entity.clone(), field.clone()))
-            .map(|cell| {
-                if cell.legacy_relative_column {
-                    format!("${}", cell.relative())
-                } else {
-                    cell.relative()
-                }
-            })
+            .map(|cell| format!("${}", cell.relative()))
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::AnchoredReference(reference) => addresses
             .get(reference)

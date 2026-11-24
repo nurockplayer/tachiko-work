@@ -436,8 +436,14 @@ fn inserting_a_row_counts_it_in_the_projection() {
     assert_eq!(summary_value(&mut runtime), Some(11.0));
     let plan = table(&mut runtime, "plan");
     assert_eq!(plan.rows.len(), 4);
-    assert_eq!(number_of(projected(&plan, "Food", "matching")), Some(5.0));
-    assert_eq!(number_of(projected(&plan, "Food", "copied")), None);
+    let matching = projected(&plan, "Food", "matching");
+    assert_eq!(number_of(matching), Some(5.0));
+    let food = plan
+        .rows
+        .iter()
+        .find(|row| row.id == matching.target.entity)
+        .unwrap();
+    assert!(food.blank_fields.contains(&column_id(&plan, "copied")));
 }
 
 #[test]

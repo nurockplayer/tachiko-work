@@ -2038,6 +2038,29 @@ fn native_xlsx_relative_and_absolute_references_export_side_by_side() {
     );
 }
 
+#[test]
+fn native_xlsx_preserves_column_anchors() {
+    let mut document = same_row_formula_document();
+    document.entities.get_mut("calc-r000").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::AnchoredSameRowReference("a".into())),
+            right: Box::new(Expression::AnchoredReference(FieldRef::new(
+                "calc-r000",
+                "a",
+            ))),
+        }),
+    );
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "calc", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains("<f>($A2+&apos;Calculated&apos;!$A$2)</f><v>4</v>"),
+        "{sheet}"
+    );
+}
+
 /// A fixed reference to the owner's own entity stays an absolute,
 /// sheet-qualified address, so a fill-down keeps pointing at that entity.
 #[test]

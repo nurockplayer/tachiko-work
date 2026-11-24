@@ -313,7 +313,8 @@ geometry and returns `a1_translation` with A1 text in `source` and empty `notes`
 It is read-only and revision-pinned. Same-row references render relatively;
 legacy fixed identities render with an absolute row and relative column, matching
 their sideways-copy behavior. Stored column anchors render with `$` before the
-column letter. Whole-column aggregates
+column letter. XLSX export also preserves stored column anchors, such as `$A2`
+and `$A$2`, and retains the existing spelling of legacy references. Whole-column aggregates
 render over the supplied complete data rows, starting at row 1 when `header_row`
 is zero. References outside the geometry refuse with `out_of_bounds`.
 

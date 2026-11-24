@@ -605,6 +605,36 @@ fn workbook_fixture() -> (SourceWorkbook, ImportSelection) {
     (workbook, selection)
 }
 
+#[test]
+fn imported_workbook_xlsx_preserves_column_anchors() {
+    use tachiko_designer_runtime::interop_adapter::{export_xlsx, import_xlsx};
+
+    let (source, selection) = workbook_fixture();
+    let (mut runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let DesignerResponse::Published(published) = runtime
+        .handle(DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".into(),
+            target: FieldTarget {
+                entity: sheet.rows[0].entity_id.clone(),
+                field: sheet.columns[2].field_id.clone(),
+            },
+            source: "[.$column_1]+[sheet_1_row_1.$column_1]".into(),
+        })
+        .unwrap()
+    else {
+        panic!("updating a formula publishes");
+    };
+    let exported = runtime
+        .export_workbook(&published.resulting_revision, &imported.metadata)
+        .unwrap();
+    let reopened = import_xlsx(&export_xlsx(&exported).unwrap()).unwrap();
+    assert_eq!(
+        reopened.sheets[0].rows[0][2].formula.as_deref(),
+        Some("($A2+'Data'!$A$2)")
+    );
+}
+
 fn extremum_fixture(formula: &str) -> (SourceWorkbook, ImportSelection) {
     let workbook = SourceWorkbook {
         ledger: vec![],
