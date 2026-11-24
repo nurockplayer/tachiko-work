@@ -477,7 +477,7 @@ impl DesignerRuntime {
                                         .fields
                                         .get(field_id.as_str()),
                                 ),
-                                field.field_type == FieldType::Date && !field.required,
+                                !field.required,
                             )
                         });
                 }

@@ -149,6 +149,62 @@ fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
 }
 
 #[test]
+fn render_a1_lookup_guards_optional_text_and_number_keys() {
+    for (field, cell, column, text_key) in [("name", "A3", "A", true), ("qty", "B3", "B", false)] {
+        let mut document = fixture_document();
+        document
+            .schemas
+            .get_mut("Items")
+            .unwrap()
+            .fields
+            .get_mut(field)
+            .unwrap()
+            .required = false;
+        document
+            .entities
+            .get_mut("r2")
+            .unwrap()
+            .fields
+            .remove(field);
+        let mut runtime = Some(
+            DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000000")
+                .unwrap(),
+        );
+        let source = format!("LOOKUP([.{field}],[items.{field}:column],[items.price:column],42)");
+        let mut update: Json = serde_json::from_str(
+            r#"{"type":"formula_update","expected_revision":"resident/0","target":{"entity":"r2","field":"total"},"source":""}"#,
+        ).unwrap();
+        update["source"] = source.clone().into();
+        let updated = call(&mut runtime, &update);
+        assert_eq!(updated["status"], "ok", "{updated}");
+        let revision = updated["response"]["payload"]["resulting_revision"].clone();
+        let mut render = request("");
+        render["type"] = "render_a1_formula".into();
+        render["expected_revision"] = revision.clone();
+        render.as_object_mut().unwrap().remove("text");
+        let rendered = call(&mut runtime, &render);
+        assert_eq!(rendered["status"], "ok", "{rendered}");
+        let guard = format!("IF(ISBLANK({cell}),1/0,{cell})");
+        let key = if text_key {
+            format!(
+                "SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({guard},\"~\",\"~~\"),\"*\",\"~*\"),\"?\",\"~?\")"
+            )
+        } else {
+            guard
+        };
+        assert_eq!(
+            rendered["response"]["payload"]["source"],
+            format!("IFNA(INDEX($C$2:$C$4,MATCH({key},${column}$2:${column}$4,0)),42)"),
+        );
+        let mut translation = request(rendered["response"]["payload"]["source"].as_str().unwrap());
+        translation["expected_revision"] = revision;
+        let rebound = call(&mut runtime, &translation);
+        assert_eq!(rebound["status"], "ok", "{rebound}");
+        assert_eq!(rebound["response"]["payload"]["source"], source);
+    }
+}
+
+#[test]
 fn headerless_cross_sheet_a1_starts_at_row_one() {
     let mut document = fixture_document();
     document.schemas.get_mut("Items").unwrap().headerless = true;
