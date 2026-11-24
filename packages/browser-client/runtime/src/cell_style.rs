@@ -51,6 +51,28 @@ fn deserialize_fill_color<'de, D: serde::Deserializer<'de>>(
 }
 
 impl DesignerRuntime {
+    pub(super) fn set_cell_style_range(
+        &mut self,
+        expected: &str,
+        collection: &str,
+        row: usize,
+        row_count: usize,
+        fields: &[String],
+        changes: &[CellStyleChange],
+    ) -> Result<PublicationProjection, DesignerError> {
+        self.check_revision(expected)?;
+        let spec = self.collection_spec(collection)?;
+        let entities = row
+            .checked_sub(1)
+            .and_then(|start| spec.entities.get(start..))
+            .and_then(|rows| rows.get(..row_count))
+            .ok_or_else(|| table_error("cell style range must be within 1-based stored rows"))?
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        self.set_cell_style(expected, collection, &entities, fields, changes)
+    }
+
     pub(super) fn set_cell_style(
         &mut self,
         expected: &str,

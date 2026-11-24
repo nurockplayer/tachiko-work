@@ -18,7 +18,7 @@ it("sends the rectangular cell style command through the kit without changing it
       }}}} as MessageEvent);
     },
   } as unknown as Worker;
-  const client: Pick<ExperimentalDesignerClient, "setCellStyle"> = new WorkerDesignerClient(() => worker);
+  const client: Pick<ExperimentalDesignerClient, "setCellStyle" | "setCellStyleRange"> = new WorkerDesignerClient(() => worker);
   const changes: CellStyleChange[] = [
     {kind: "toggle_bold"}, {kind: "italic", value: true}, {kind: "fill", color: "#FFFF00"},
     {kind: "border", target: "outline", value: true},
@@ -30,9 +30,11 @@ it("sends the rectangular cell style command through the kit without changing it
   const publication = await client.setCellStyle("resident/0", "rows", ["r2", "r3", "r4"], ["b", "c"], changes);
   const clear: CellStyleChange[] = [{kind: "bold", value: false}, {kind: "toggle_italic"}, {kind: "fill", color: null}, {kind: "border", target: "all", value: false}];
   await client.setCellStyle("resident/1", "rows", ["r2"], ["c"], clear);
+  await client.setCellStyleRange("resident/2", "rows", 1, 5000, ["c", "b"], changes);
   expect(sent).toEqual([
     {type: "set_cell_style", expected_revision: "resident/0", collection: "rows", entities: ["r2", "r3", "r4"], fields: ["b", "c"], changes},
     {type: "set_cell_style", expected_revision: "resident/1", collection: "rows", entities: ["r2"], fields: ["c"], changes: clear},
+    {type: "set_cell_style_range", expected_revision: "resident/2", collection: "rows", row: 1, row_count: 5000, fields: ["c", "b"], changes},
   ] satisfies TrackerCommand[]);
   expect(publication.resulting_revision).toBe("resident/1");
   expect(publication.many).toBe(true);
