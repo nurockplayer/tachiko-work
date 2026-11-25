@@ -20,6 +20,7 @@ use crate::interop_adapter::{
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
     import_csv_profile, import_xlsx_profile,
 };
+use crate::interop_document::import_workbook_working_size_candidate;
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
@@ -32,7 +33,6 @@ use crate::{
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
-    import_workbook_working_size_candidate,
 };
 
 /// The browser request arena's spreadsheet metadata limit. The crate constant
