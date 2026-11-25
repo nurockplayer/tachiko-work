@@ -512,7 +512,7 @@ fn worksheet_move_round_trips_through_history_save_and_xlsx() {
         .add_table("resident/0", "Second", &columns())
         .unwrap();
     let before = runtime.bootstrap_projection().collections;
-    assert!(before[0].id < before[1].id);
+    assert!(before[0].key < before[1].key);
     let first = &before[0].key;
     let DesignerResponse::Published(moved) = runtime
         .handle(DesignerRequest::MoveCollection {

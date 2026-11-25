@@ -1597,6 +1597,9 @@ impl BinaryArgumentsV3 {
 
 impl ManifestV3 {
     fn from_semantic(document: &Document, order: &[SchemaId]) -> Self {
+        let custom_order = order
+            .windows(2)
+            .any(|pair| document.schemas[&pair[0]].key > document.schemas[&pair[1]].key);
         Self {
             format: "tachiko.roproj".to_owned(),
             format_version: ROPROJ_V3_FORMAT_VERSION,
@@ -1604,8 +1607,7 @@ impl ManifestV3 {
                 id: document.id.to_string(),
                 title: document.title.clone(),
             },
-            collection_order: (!order.is_empty() && order.iter().ne(document.schemas.keys()))
-                .then(|| order.iter().map(ToString::to_string).collect()),
+            collection_order: custom_order.then(|| order.iter().map(ToString::to_string).collect()),
         }
     }
 }

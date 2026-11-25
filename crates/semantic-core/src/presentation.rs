@@ -608,13 +608,13 @@ fn active_collection_order(order: &[SchemaId], document: &Document) -> Vec<Schem
         .cloned()
         .collect::<Vec<_>>();
     let listed = order.iter().cloned().collect::<BTreeSet<_>>();
-    order.extend(
-        document
-            .schemas
-            .keys()
-            .filter(|id| !listed.contains(*id))
-            .cloned(),
-    );
+    let mut unlisted = document
+        .schemas
+        .values()
+        .filter(|schema| !listed.contains(&schema.id))
+        .collect::<Vec<_>>();
+    unlisted.sort_unstable_by(|left, right| left.key.cmp(&right.key));
+    order.extend(unlisted.into_iter().map(|schema| schema.id.clone()));
     order
 }
 

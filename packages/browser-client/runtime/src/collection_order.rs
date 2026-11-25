@@ -23,7 +23,7 @@ impl DesignerRuntime {
             position(&left.id)
                 .unwrap_or(usize::MAX)
                 .cmp(&position(&right.id).unwrap_or(usize::MAX))
-                .then_with(|| left.id.cmp(&right.id))
+                .then_with(|| left.key.cmp(&right.key))
         });
     }
 
@@ -32,7 +32,7 @@ impl DesignerRuntime {
             && self
                 .collections
                 .windows(2)
-                .any(|pair| pair[0].id > pair[1].id)
+                .any(|pair| pair[0].key > pair[1].key)
     }
 
     pub(super) fn validate_saved_collection_order(

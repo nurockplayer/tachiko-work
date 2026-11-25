@@ -208,11 +208,11 @@ fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
     let mut document = document();
     let mut products = document.schemas["orders"].clone();
     products.id = "products".into();
-    products.key = "products".into();
+    products.key = "inventory".into();
     document.schemas.insert(products.id.clone(), products);
     let plain = encode_roproj_v3(&document).unwrap();
     let mut presentation = PresentationStore {
-        collection_order: vec!["orders".into(), "products".into()],
+        collection_order: vec!["products".into(), "orders".into()],
         ..PresentationStore::default()
     };
     let default = encode_roproj_v3_with_presentation(&document, &presentation).unwrap();
@@ -224,7 +224,7 @@ fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
     assert!(
         std::str::from_utf8(manifest)
             .unwrap()
-            .ends_with("  },\n  \"collection_order\": [\"products\", \"orders\"]\n}\n")
+            .ends_with("  },\n  \"collection_order\": [\"orders\", \"products\"]\n}\n")
     );
     let moved = CanonicalRoProjectV3::try_from_files(files(&moved)).unwrap();
     assert_eq!(
@@ -235,14 +235,14 @@ fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
     for invalid in [
         "[]",
         "null",
-        "[\"orders\", \"products\"]",
+        "[\"products\", \"orders\"]",
         "[\"orders\", \"orders\"]",
         "[\"orders\", \"unknown\"]",
     ] {
         let mut noncanonical = files(&moved);
         noncanonical[0].1 = std::str::from_utf8(manifest)
             .unwrap()
-            .replace("[\"products\", \"orders\"]", invalid)
+            .replace("[\"orders\", \"products\"]", invalid)
             .into_bytes();
         refused(noncanonical);
     }

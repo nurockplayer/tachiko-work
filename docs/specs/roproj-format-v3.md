@@ -82,11 +82,12 @@ unsupported, or non-lexical version fails closed.
 `collection_order` is a Work-owned worksheet presentation order. When present,
 it is a JSON array of stable Schema IDs and lists every schema exactly once.
 The writer emits this member only for a permutation that differs from ascending
-Schema ID order. Absence gives that default, and leaves existing canonical
-bytes unchanged. Imported sessions continue to use their source order from the
+collection-key order. Absence gives that native default and preserves existing
+canonical bytes. Imported sessions continue to use their source order from the
 import companion until a worksheet move. A companion supplied with an explicit
 saved order must list worksheets in that order. Pre-amendment strict v3 readers
-refuse manifests containing this member.
+refuse manifests containing this member. This compatibility break is accepted
+for files that carry a custom order.
 
 ## Schema and field definition
 

@@ -3578,11 +3578,10 @@ impl DesignerRuntime {
         let document = validated.document();
         let collection_specs = collection_specs(document);
         let default_collection = select_default_collection(&collection_specs)?;
-        let mut collections = collection_specs
+        let collections = collection_specs
             .values()
             .map(|collection| collection.summary.clone())
             .collect::<Vec<_>>();
-        collections.sort_unstable_by(|left, right| left.id.cmp(&right.id));
         let title = document.title.clone();
         let document_scope = document_scope(occurrence_id, document)?;
         ensure_static_profile(

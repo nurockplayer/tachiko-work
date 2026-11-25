@@ -96,7 +96,7 @@ same; pre-amendment readers refuse headerless documents as required by §4.
 
 The [#953 owner decision](https://github.com/nurockplayer/tachiko-work/issues/953#issuecomment-7170488701)
 adds the optional `collection_order` manifest member for non-default worksheet
-order. It contains stable Schema IDs and defaults to ascending Schema ID
+order. It contains stable Schema IDs and defaults to ascending collection-key
 order. This is presentation state, so it has no semantic delta or merge
 facet. Its omission preserves existing canonical bytes and pinned seeds.
 Pre-amendment strict readers follow §4.
