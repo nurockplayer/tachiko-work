@@ -527,9 +527,9 @@ impl ResidentWorkspaceSession {
                 Value::Formula(_) => {
                     match retained_calculation_for(&self.retained.calculation_state, target) {
                         FormulaCalculationOutcome::Value(number) => numbers.push(number.get()),
+                        FormulaCalculationOutcome::Text(_)
+                        | FormulaCalculationOutcome::Boolean(_) => {}
                         FormulaCalculationOutcome::Date(_)
-                        | FormulaCalculationOutcome::Text(_)
-                        | FormulaCalculationOutcome::Boolean(_)
                         | FormulaCalculationOutcome::CellFailure(_)
                         | FormulaCalculationOutcome::Failure(_)
                         | FormulaCalculationOutcome::Unavailable => error_count += 1,

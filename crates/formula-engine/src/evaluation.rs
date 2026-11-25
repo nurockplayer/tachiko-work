@@ -139,12 +139,28 @@ impl ColumnCache {
         if self.lookup_indexes.contains_key(column) {
             return;
         }
+        let auto =
+            document.schemas[&column.schema].fields[&column.field].field_type == FieldType::Auto;
         let mut index = BTreeMap::new();
         for (entity_id, entity) in &document.entities {
             if entity.schema != column.schema {
                 continue;
             }
+            let calculated;
             let cell = match entity.fields.get(&column.field) {
+                Some(Value::Formula(_)) if auto => {
+                    let reference = FieldRef::new(entity_id.clone(), column.field.clone());
+                    let Some(value) = values.calculated_value(&reference) else {
+                        continue;
+                    };
+                    calculated = value;
+                    match &calculated {
+                        CalculatedValue::Number(number) => CriterionCell::Number(number.get()),
+                        CalculatedValue::Text(text) => CriterionCell::Text(text),
+                        CalculatedValue::Boolean(value) => CriterionCell::Boolean(*value),
+                        CalculatedValue::Date(value) => CriterionCell::Date(*value),
+                    }
+                }
                 Some(Value::Number(_) | Value::Formula(_)) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
                     let Some(value) = values.number_value(&reference) else {
