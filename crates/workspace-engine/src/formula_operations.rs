@@ -68,6 +68,7 @@ impl FormulaQueryContext {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FormulaCalculationOutcome {
     Value(Number),
+    Date(tachiko_semantic_core::Date),
     Failure(CalculationFailure),
     Unavailable,
 }
@@ -296,6 +297,7 @@ pub struct FormulaInverseRestoreRequest {
     base_revision: SemanticRevision,
     target: FieldRef,
     value: Number,
+    restored_value: Option<Value>,
     originator: PrincipalId,
 }
 
@@ -313,8 +315,15 @@ impl FormulaInverseRestoreRequest {
             base_revision,
             target,
             value,
+            restored_value: None,
             originator,
         }
+    }
+
+    #[must_use]
+    pub fn with_restored_value(mut self, value: Value) -> Self {
+        self.restored_value = Some(value);
+        self
     }
 }
 
@@ -676,11 +685,13 @@ impl PatchLifecycle {
             };
         }
         self.require_query_for_admission(&request.originator, &disclosure, now)?;
-        formula_inverse_restore_candidate(document, &request.target, request.value).map_err(
-            |source| PatchLifecycleError::CommandRejected {
+        let restored_value = request
+            .restored_value
+            .unwrap_or(Value::Number(request.value));
+        formula_inverse_restore_candidate(document, &request.target, restored_value.clone())
+            .map_err(|source| PatchLifecycleError::CommandRejected {
                 source: Box::new(source),
-            },
-        )?;
+            })?;
         self.propose(
             document_scope,
             document,
@@ -689,7 +700,8 @@ impl PatchLifecycle {
                 request.proposal_id,
                 request.base_revision,
                 SemanticPatchBody::command(SemanticCommand::FormulaInverseRestore(
-                    FormulaInverseRestoreCommand::new(request.target, request.value),
+                    FormulaInverseRestoreCommand::new(request.target, request.value)
+                        .with_restored_value(restored_value),
                 )),
                 request.originator,
             ),
@@ -1113,9 +1125,16 @@ pub(crate) fn calculation_for(
     target: &FieldRef,
 ) -> FormulaCalculationOutcome {
     match outcome {
-        CalculationOutcome::Complete(calculation) => calculation.value(target).map_or(
+        CalculationOutcome::Complete(calculation) => calculation.calculated_value(target).map_or(
             FormulaCalculationOutcome::Unavailable,
-            FormulaCalculationOutcome::Value,
+            |value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    FormulaCalculationOutcome::Value(number)
+                }
+                tachiko_formula_engine::CalculatedValue::Date(date) => {
+                    FormulaCalculationOutcome::Date(date)
+                }
+            },
         ),
         CalculationOutcome::Failed(failures) => failures
             .failures()

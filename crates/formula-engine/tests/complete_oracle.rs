@@ -622,10 +622,8 @@ fn generated_acyclic_and_cyclic_graphs_match_an_independent_reachability_oracle(
             assert_eq!(&calculation.dependencies(), &dependencies, "graph {graph}");
             assert_eq!(calculation.values().len(), FIELD_COUNT, "graph {graph}");
             assert!(
-                calculation
-                    .values()
-                    .values()
-                    .all(|value| *value == Number::new(1.0).unwrap()),
+                calculation.values().values().all(|value| *value
+                    == tachiko_formula_engine::CalculatedValue::Number(Number::new(1.0).unwrap())),
                 "graph {graph}"
             );
             continue;

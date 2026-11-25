@@ -4,6 +4,11 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Formula calculations retain Date results for Date references and whole-day
+  addition and subtraction, and publish their Date tag to browser clients (#860).
+  Date differences compose with numeric functions; impact previews, field
+  explanations, native-table row authoring and CSV/XLSX export retain calculated Dates.
+
 - Add `set_cell_style_range` for compact formatting requests over stored rows
   and selected fields, with one Undo/Redo step for the whole range (#922).
 

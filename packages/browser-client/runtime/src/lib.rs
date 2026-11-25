@@ -1658,8 +1658,19 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value, .. } => Some(*value),
-            Self::Failure { .. } | Self::Unavailable => None,
+            Self::Value {
+                result: Some(StoredValueProjection::Number { value }),
+                ..
+            }
+            | Self::Value {
+                value,
+                result: None,
+            } => Some(*value),
+            Self::Value {
+                result: Some(_), ..
+            }
+            | Self::Failure { .. }
+            | Self::Unavailable => None,
         }
     }
 }
@@ -2634,7 +2645,7 @@ enum HistoryAction {
     },
     FormulaInverseRestore {
         target: FieldTarget,
-        value: Number,
+        value: Value,
     },
 }
 
@@ -2888,6 +2899,7 @@ fn view_value(
     }
     match &field.calculated_value {
         Some(FormulaCalculationOutcome::Value(number)) => Some(ViewValue::Number(number.get())),
+        Some(FormulaCalculationOutcome::Date(date)) => Some(ViewValue::Date(*date)),
         Some(FormulaCalculationOutcome::Failure(_) | FormulaCalculationOutcome::Unavailable)
         | None => None,
     }
@@ -7512,6 +7524,7 @@ impl DesignerRuntime {
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         let mut inverse = None;
+        let source = source.strip_prefix('=').unwrap_or(source);
         let (publication, forward) =
             self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
         let inverse =
@@ -7543,7 +7556,11 @@ impl DesignerRuntime {
         match previous {
             Value::Number(value) => Ok(HistoryAction::FormulaInverseRestore {
                 target: target.clone(),
-                value: *value,
+                value: Value::Number(*value),
+            }),
+            Value::Date(value) => Ok(HistoryAction::FormulaInverseRestore {
+                target: target.clone(),
+                value: Value::Date(*value),
             }),
             Value::Formula(_) => Ok(HistoryAction::FormulaUpdate {
                 target: target.clone(),
@@ -7725,7 +7742,7 @@ impl DesignerRuntime {
         &mut self,
         expected_revision: &str,
         target: &FieldTarget,
-        value: Number,
+        value: Value,
     ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
         let mut lifecycle = designer_lifecycle(
@@ -7742,9 +7759,13 @@ impl DesignerRuntime {
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
                 target.as_field_ref(),
-                value,
+                match &value {
+                    Value::Number(number) => *number,
+                    _ => Number::new(0.0).expect("finite zero"),
+                },
                 self.principal.clone(),
-            ),
+            )
+            .with_restored_value(value.clone()),
             self.clock.tick(),
         )?;
         designer_preview(
@@ -7762,7 +7783,7 @@ impl DesignerRuntime {
             .entities
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
-        entity.fields.insert(field.field, Value::Number(value));
+        entity.fields.insert(field.field, value);
         let mut working_admission = None;
         match self.profile {
             // Working size never rebuilds the occurrence; it re-proves only its
@@ -8941,7 +8962,7 @@ impl DesignerRuntime {
                 .publish_formula_update(expected, target, source, None)
                 .map(|(publication, _)| publication),
             HistoryAction::FormulaInverseRestore { target, value } => {
-                self.restore_formula_inverse(expected, target, *value)
+                self.restore_formula_inverse(expected, target, value.clone())
             }
         }?;
         if entry.imported.is_some()
@@ -9613,10 +9634,22 @@ impl NumberTotal {
 
     fn add(&mut self, field: &FieldProjection) {
         match (&field.calculated, &field.stored) {
-            (Some(CalculationProjection::Value { value, .. }), _)
+            (
+                Some(CalculationProjection::Value {
+                    value,
+                    result: None,
+                }),
+                _,
+            )
             | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
             (
-                Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
+                Some(
+                    CalculationProjection::Value {
+                        result: Some(_), ..
+                    }
+                    | CalculationProjection::Failure { .. }
+                    | CalculationProjection::Unavailable,
+                ),
                 _,
             )
             | (None, Some(_) | None) => self.complete = false,
@@ -9824,6 +9857,13 @@ fn field_display_text(
 ) -> Option<String> {
     let (number_format, date_format) =
         auto_input::cell_formats(presentation, column, &field.target.entity);
+    if let Some(CalculationProjection::Value {
+        result: Some(StoredValueProjection::Date { value }),
+        ..
+    }) = &field.calculated
+    {
+        return Some(display_text::format_date(*value, date_format));
+    }
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
         return Some(display_text::format_date(*value, date_format));
@@ -12867,6 +12907,10 @@ fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationPro
             value: value.get(),
             result: None,
         },
+        FormulaCalculationOutcome::Date(date) => CalculationProjection::Value {
+            value: f64::from(tachiko_formula_engine::days_from_civil(*date)),
+            result: Some(StoredValueProjection::Date { value: *date }),
+        },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),
             message: calculation_failure_message(failure).to_owned(),
@@ -13306,7 +13350,7 @@ fn has_scalar_row_authoring_shape(
                                 ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
-                                    | (FieldType::Date, Value::Date(_))
+                                    | (FieldType::Date, Value::Date(_) | Value::Formula(_))
                             )
                         })
                     })

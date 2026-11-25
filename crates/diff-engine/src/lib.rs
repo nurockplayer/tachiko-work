@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_formula_engine::{
-    Calculation, CalculationError, calculate, project_expression, project_expression_with_index,
+    CalculatedValue, Calculation, CalculationError, calculate, project_expression,
+    project_expression_with_index,
 };
 use tachiko_semantic_core::{
     AddressIndex, Document, DocumentId, Entity, EntityId, EntityKey, FieldDefinition, FieldId,
@@ -99,8 +100,8 @@ pub enum SemanticChange {
     },
     FormulaImpact {
         field: FieldRef,
-        before: Number,
-        after: Number,
+        before: CalculatedValue,
+        after: CalculatedValue,
         causes: Vec<FieldRef>,
     },
 }
@@ -418,7 +419,7 @@ pub fn diff_changes_scoped(
 /// Cross-checks the partition-aware value diff against a scan of every formula.
 #[cfg(test)]
 fn assert_matches_full_value_scan(
-    impacted: &[(FieldRef, Number, Number)],
+    impacted: &[(FieldRef, CalculatedValue, CalculatedValue)],
     before_calculation: &Calculation,
     after_calculation: &Calculation,
 ) {
@@ -430,8 +431,8 @@ fn assert_matches_full_value_scan(
     let old_impacted = formulas
         .into_iter()
         .filter_map(|formula| {
-            let before = before_calculation.value(&formula)?;
-            let after = after_calculation.value(&formula)?;
+            let before = before_calculation.calculated_value(&formula)?;
+            let after = after_calculation.calculated_value(&formula)?;
             (before != after).then_some((formula, before, after))
         })
         .collect::<Vec<_>>();
@@ -454,8 +455,8 @@ fn push_formula_impacts(
     let impacted = formulas
         .into_iter()
         .filter_map(|formula| {
-            let before_value = before_calculation.value(&formula)?;
-            let after_value = after_calculation.value(&formula)?;
+            let before_value = before_calculation.calculated_value(&formula)?;
+            let after_value = after_calculation.calculated_value(&formula)?;
             (before_value != after_value).then_some((formula, before_value, after_value))
         })
         .collect::<Vec<_>>();
@@ -470,7 +471,7 @@ fn push_formula_impacts(
 }
 
 fn push_changed_formula_impacts(
-    impacted: Vec<(FieldRef, Number, Number)>,
+    impacted: Vec<(FieldRef, CalculatedValue, CalculatedValue)>,
     before_calculation: &Calculation,
     after_calculation: &Calculation,
     changed_fields: &BTreeSet<FieldRef>,
@@ -901,8 +902,14 @@ fn render_change(
         } => format!(
             "affected {}: {} -> {}",
             field_key(after_document, field),
-            format_number(*before),
-            format_number(*after)
+            match before {
+                CalculatedValue::Number(number) => format_number(*number),
+                CalculatedValue::Date(date) => date.to_string(),
+            },
+            match after {
+                CalculatedValue::Number(number) => format_number(*number),
+                CalculatedValue::Date(date) => date.to_string(),
+            }
         ),
     }
 }

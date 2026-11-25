@@ -102,15 +102,19 @@ fn run_case(rows: usize) -> Duration {
     let CalculationOutcome::Complete(calculation) = outcome else {
         panic!("lookup calculation must succeed");
     };
-    let values = calculation.values();
     for index in [0, rows / 2, rows - 1] {
         assert_eq!(
-            values[&FieldRef::new(format!("orders-{index:05}"), "price")],
-            price(product_index(index, rows))
+            calculation.value(&FieldRef::new(format!("orders-{index:05}"), "price")),
+            Some(price(product_index(index, rows)))
         );
     }
     let actual_sum: f64 = (0..rows)
-        .map(|index| values[&FieldRef::new(format!("orders-{index:05}"), "price")].get())
+        .map(|index| {
+            calculation
+                .value(&FieldRef::new(format!("orders-{index:05}"), "price"))
+                .unwrap()
+                .get()
+        })
         .sum();
     let expected_sum: f64 = (0..rows)
         .map(|index| price(product_index(index, rows)).get())

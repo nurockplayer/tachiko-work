@@ -5,8 +5,8 @@ use tachiko_semantic_core::{
     Value,
 };
 use tachiko_workspace_engine::{
-    FieldAddress, RuntimeValue, WorkspaceError, runtime_export, set_scalar, validate,
-    validate_field_value_suggestion,
+    FieldAddress, RuntimeValue, WorkspaceError, calculate_fields, explain_field, runtime_export,
+    set_scalar, validate, validate_field_value_suggestion,
 };
 use tachiko_workspace_engine::{
     patch_lifecycle::DocumentScopeId, resident_session::ResidentWorkspaceSession,
@@ -52,6 +52,70 @@ fn date_document(value: &str) -> Document {
         )]),
         keyed_grouped_sum_definitions: BTreeMap::new(),
     }
+}
+
+#[test]
+fn stored_dates_are_not_calculation_results() {
+    let document = date_document("2026-01-02");
+    assert_eq!(calculate_fields(&document).unwrap(), []);
+    let session = ResidentWorkspaceSession::new(DocumentScopeId::from("dates"), document);
+    assert_eq!(session.calculate_fields().unwrap().value().as_slice(), []);
+}
+
+#[test]
+fn runtime_export_carries_calculated_date() {
+    let mut document = date_document("2026-01-02");
+    let mut definition = document.schemas["event"].fields["published"].clone();
+    definition.id = "later".into();
+    definition.key = "later".into();
+    document
+        .schemas
+        .get_mut("event")
+        .unwrap()
+        .fields
+        .insert("later".into(), definition);
+    let owner = FieldRef::new("launch", "later");
+    let expression = tachiko_formula_engine::bind_expression(
+        &document,
+        &owner,
+        &tachiko_formula_engine::parse_expression("[.published] + 7").unwrap(),
+    )
+    .unwrap();
+    document
+        .entities
+        .get_mut("launch")
+        .unwrap()
+        .fields
+        .insert("later".into(), Value::Formula(expression));
+    assert_eq!(
+        runtime_export(&document).unwrap().entities["launch"].fields["later"],
+        RuntimeValue::Date("2026-01-09".parse().unwrap())
+    );
+    let explanation = explain_field(&document, &FieldAddress::new("launch", "later")).unwrap();
+    assert_eq!(explanation.display_value, "2026-01-09");
+    let source = explain_field(&document, &FieldAddress::new("launch", "published")).unwrap();
+    assert_eq!(source.affected_formulas.len(), 1);
+    assert_eq!(source.affected_formulas[0].display_value, "2026-01-09");
+    let expected = tachiko_workspace_engine::CalculatedValue::Date("2026-01-09".parse().unwrap());
+    let analysis = tachiko_workspace_engine::analyze_field(&document, "dates", &owner).unwrap();
+    assert_eq!(analysis.calculated_value, Some(expected));
+    let source = tachiko_workspace_engine::analyze_field(
+        &document,
+        "dates",
+        &FieldRef::new("launch", "published"),
+    )
+    .unwrap();
+    assert_eq!(source.downstream_impacts.len(), 1);
+    assert_eq!(source.downstream_impacts[0].value, expected);
+    let tagged = serde_json::json!({"kind": "date", "value": "2026-01-09"});
+    assert_eq!(
+        serde_json::to_value(analysis).unwrap()["calculated_value"],
+        tagged
+    );
+    assert_eq!(
+        serde_json::to_value(source).unwrap()["downstream_impacts"][0]["value"],
+        tagged
+    );
 }
 
 #[test]

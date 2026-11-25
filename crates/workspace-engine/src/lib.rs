@@ -15,14 +15,14 @@ pub use tachiko_diff_engine::{
 };
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
+pub use tachiko_formula_engine::{
+    CalculatedValue, CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
+    ColumnFailure, ExpressionComplexityError, FormulaBindError, ReferenceFailure,
+};
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
     calculate, calculate_complete, parse_expression, project_expression,
     project_expression_with_index, validate_expression_structure,
-};
-pub use tachiko_formula_engine::{
-    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
-    ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
     ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,
@@ -412,7 +412,8 @@ pub struct EntityInspection {
 pub struct DownstreamImpact {
     pub field: FieldRef,
     pub address: FieldAddress,
-    pub value: Number,
+    #[serde(serialize_with = "serialize_calculated_value")]
+    pub value: CalculatedValue,
 }
 
 /// Provider-independent facts for one stable field in one identified snapshot.
@@ -422,11 +423,34 @@ pub struct FieldAnalysis {
     pub field: FieldRef,
     pub address: FieldAddress,
     pub stored_value: Value,
-    pub calculated_value: Option<Number>,
+    #[serde(serialize_with = "serialize_optional_calculated_value")]
+    pub calculated_value: Option<CalculatedValue>,
     pub formula_source: Option<String>,
     pub direct_dependencies: Vec<FieldRef>,
     pub upstream_dependencies: Vec<FieldRef>,
     pub downstream_impacts: Vec<DownstreamImpact>,
+}
+
+fn serialize_calculated_value<S: Serializer>(
+    value: &CalculatedValue,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        CalculatedValue::Number(number) => number.serialize(serializer),
+        CalculatedValue::Date(date) => Value::Date(*date).serialize(serializer),
+    }
+}
+
+#[allow(clippy::ref_option)] // serde `serialize_with` passes the field as `&Option<T>`.
+fn serialize_optional_calculated_value<S: Serializer>(
+    value: &Option<CalculatedValue>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(CalculatedValue::Number(number)) => serializer.serialize_some(number),
+        Some(CalculatedValue::Date(date)) => serializer.serialize_some(&Value::Date(*date)),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Semantic comparison plus deterministic stable-ID affected-area projection.
@@ -924,16 +948,32 @@ pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, Wor
     let mut fields = calculation
         .values()
         .iter()
+        .filter(|(field, _)| {
+            matches!(
+                document.entities[&field.entity].fields.get(&field.field),
+                Some(Value::Formula(_) | Value::Number(_))
+            )
+        })
         .map(|(field, value)| {
             Ok(CalculatedField {
                 field: field.clone(),
                 address: index.field_address(document, field)?,
-                value: *value,
+                value: calculated_field_number(*value),
             })
         })
         .collect::<Result<Vec<_>, WorkspaceError>>()?;
     fields.sort_by(|left, right| left.address.cmp(&right.address));
     Ok(fields)
+}
+
+fn calculated_field_number(value: tachiko_formula_engine::CalculatedValue) -> Number {
+    match value {
+        tachiko_formula_engine::CalculatedValue::Number(number) => number,
+        tachiko_formula_engine::CalculatedValue::Date(date) => {
+            Number::new(f64::from(tachiko_formula_engine::days_from_civil(date)))
+                .expect("date day number is finite")
+        }
+    }
 }
 
 /// Compare two semantic snapshots through the shared diff orchestration.
@@ -1097,7 +1137,11 @@ pub fn analyze_field(
     let downstream_impacts = calculation
         .affected_by(field)
         .into_iter()
-        .filter_map(|affected| calculation.value(&affected).map(|value| (affected, value)))
+        .filter_map(|affected| {
+            calculation
+                .calculated_value(&affected)
+                .map(|value| (affected, value))
+        })
         .map(|(affected, value)| {
             Ok(DownstreamImpact {
                 address: index.field_address(document, &affected)?,
@@ -1112,7 +1156,7 @@ pub fn analyze_field(
         field: field.clone(),
         address,
         stored_value,
-        calculated_value: calculation.value(field),
+        calculated_value: calculation.calculated_value(field),
         formula_source,
         direct_dependencies,
         upstream_dependencies,
@@ -1576,9 +1620,13 @@ pub fn explain_field(
     let calculation = require_validated_calculation(document)?;
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
-    let display_value = calculation
-        .value(&field)
-        .map_or_else(|| format_value(document, value), format_number);
+    let display_value = calculation.calculated_value(&field).map_or_else(
+        || format_value(document, value),
+        |value| match value {
+            CalculatedValue::Number(number) => format_number(number),
+            CalculatedValue::Date(date) => date.to_string(),
+        },
+    );
     let expression = match value {
         Value::Formula(expression) => Some(
             project_expression(document, &field, expression).map_err(|source| {
@@ -1600,11 +1648,14 @@ pub fn explain_field(
         .collect::<Result<Vec<_>, _>>()?;
     let mut affected_formulas = Vec::new();
     for affected in calculation.affected_by(&field) {
-        if let Some(value) = calculation.value(&affected) {
+        if let Some(value) = calculation.calculated_value(&affected) {
             affected_formulas.push(AffectedFormula {
                 address: index.field_address(document, &affected)?,
                 field: affected,
-                display_value: format_number(value),
+                display_value: match value {
+                    CalculatedValue::Number(number) => format_number(number),
+                    CalculatedValue::Date(date) => date.to_string(),
+                },
             });
         }
     }
@@ -2307,9 +2358,11 @@ pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &Fie
         (
             SemanticValueKind::Number | SemanticValueKind::Formula,
             FieldType::Number
+        ) | (
+            SemanticValueKind::Formula | SemanticValueKind::Date,
+            FieldType::Date
         ) | (SemanticValueKind::Text, FieldType::Text)
             | (SemanticValueKind::Boolean, FieldType::Boolean)
-            | (SemanticValueKind::Date, FieldType::Date)
             | (SemanticValueKind::Reference, FieldType::Reference { .. })
             | (
                 SemanticValueKind::Number
@@ -2391,7 +2444,7 @@ pub(crate) fn formula_update_target_rule(
             field: field.clone(),
         });
     }
-    if definition.field_type != FieldType::Number {
+    if !matches!(definition.field_type, FieldType::Number | FieldType::Date) {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
@@ -2407,31 +2460,41 @@ pub(crate) fn formula_update_target_rule(
 pub(crate) fn formula_inverse_restore_candidate(
     document: &Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
 ) -> Result<Document, WorkspaceError> {
     let mut planning = FieldEditPlanning::new();
-    check_formula_inverse_restore_candidate(document, field, &mut planning)?;
+    check_formula_inverse_restore_candidate(document, field, &value, &mut planning)?;
     let mut candidate = document.clone();
-    insert_number_value(&mut candidate, field, value)?;
+    insert_restored_value(&mut candidate, field, value)?;
     Ok(candidate)
 }
 
 pub(crate) fn formula_inverse_restore_candidate_in_place(
     candidate: &mut Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
     planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
-    check_formula_inverse_restore_candidate(candidate, field, planning)?;
-    insert_number_value(candidate, field, value)
+    check_formula_inverse_restore_candidate(candidate, field, &value, planning)?;
+    insert_restored_value(candidate, field, value)
 }
 
 fn check_formula_inverse_restore_candidate(
     document: &Document,
     field: &FieldRef,
+    value: &Value,
     planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
     formula_update_target_rule(document, field)?;
+    if !value_matches_type(
+        semantic_value_kind(value),
+        &field_definition(document, field)?.field_type,
+    ) || matches!(value, Value::Formula(_))
+    {
+        return Err(WorkspaceError::TypeMismatch {
+            field: field.clone(),
+        });
+    }
     let entity =
         document
             .entities
@@ -2448,10 +2511,10 @@ fn check_formula_inverse_restore_candidate(
     Ok(())
 }
 
-fn insert_number_value(
+fn insert_restored_value(
     candidate: &mut Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
 ) -> Result<(), WorkspaceError> {
     candidate
         .entities
@@ -2460,7 +2523,7 @@ fn insert_number_value(
             entity: field.entity.clone(),
         })?
         .fields
-        .insert(field.field.clone(), Value::Number(value));
+        .insert(field.field.clone(), value);
     Ok(())
 }
 
@@ -2505,7 +2568,7 @@ fn check_formula_restore_candidate(
                 entity: field.entity.clone(),
             })?;
     let definition = field_definition(document, field)?;
-    if definition.field_type != FieldType::Number {
+    if !matches!(definition.field_type, FieldType::Number | FieldType::Date) {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
@@ -3623,8 +3686,13 @@ fn runtime_value(
             })
         }
         Value::Formula(_) => calculation
-            .value(field)
-            .map(RuntimeValue::Number)
+            .calculated_value(field)
+            .map(|value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    RuntimeValue::Number(number)
+                }
+                tachiko_formula_engine::CalculatedValue::Date(date) => RuntimeValue::Date(date),
+            })
             .ok_or_else(|| WorkspaceError::MissingCalculation {
                 field: field.clone(),
             }),

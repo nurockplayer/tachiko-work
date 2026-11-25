@@ -206,8 +206,8 @@ fn explain_impact_projects_direct_changes_and_derived_formula_impacts() {
         change,
         SemanticChange::FormulaImpact { field, before, after, causes }
             if field == &FieldRef::new("sword", "dps")
-                && (before.get() - 80.0).abs() < 1e-9
-                && (after.get() - 96.0).abs() < 1e-9
+                && *before == tachiko_workspace_engine::CalculatedValue::Number(Number::new(80.0).unwrap())
+                && *after == tachiko_workspace_engine::CalculatedValue::Number(Number::new(96.0).unwrap())
                 && causes == &vec![FieldRef::new("sword", "damage")]
     )));
 }
@@ -452,7 +452,12 @@ fn provider_free_semantic_analyst_uses_shared_structured_results() {
 
     assert_eq!(inspection.source.source_label, "main@base");
     assert_eq!(field.source, inspection.source);
-    assert_eq!(field.calculated_value, Some(Number::new(80.0).unwrap()));
+    assert_eq!(
+        field.calculated_value,
+        Some(tachiko_workspace_engine::CalculatedValue::Number(
+            Number::new(80.0).unwrap()
+        ))
+    );
     assert_eq!(
         field.direct_dependencies,
         [

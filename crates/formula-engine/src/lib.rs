@@ -25,13 +25,13 @@ use std::sync::Arc;
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Document, Expression, FieldAddress, FieldRef, FieldType,
+    ConditionalAggregate, Date, Document, Expression, FieldAddress, FieldRef, FieldType,
     FormulaExpressionType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
 // Shared arithmetic only; this does not evaluate formulas.
-pub use evaluation::{average as numeric_average, exact_sum as numeric_sum};
+pub use evaluation::{average as numeric_average, days_from_civil, exact_sum as numeric_sum};
 
 pub use parser::{
     ExpressionComplexityError, FormulaParseError, UnboundColumnCriterion,
@@ -174,7 +174,7 @@ fn bind_numeric_reference(
     address: &FieldAddress,
 ) -> Result<FieldRef, FormulaBindError> {
     let (reference, field_type) = resolve_reference_target(document, index, address)?;
-    if field_type != FieldType::Number {
+    if !matches!(field_type, FieldType::Number | FieldType::Date) {
         return Err(FormulaBindError::NonNumericTarget {
             address: address.clone(),
             reference,
@@ -1124,9 +1124,25 @@ pub fn extract_dependencies(
     dependencies
 }
 
+/// A successful, runtime-only formula result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CalculatedValue {
+    Number(Number),
+    Date(Date),
+}
+
+impl CalculatedValue {
+    fn number(&self) -> Option<&Number> {
+        match self {
+            Self::Number(number) => Some(number),
+            Self::Date(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
     graph: DependencyGraph,
 }
 
@@ -1181,7 +1197,7 @@ pub struct IncrementalCalculationTransition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RetainedNodeProjection {
-    Value(Number),
+    Value(CalculatedValue),
     Failure(CalculationFailure),
     Unavailable,
 }
@@ -1195,7 +1211,7 @@ struct DirtyCalculationImpact {
 
 struct FullCalculationParts {
     nodes: PartitionedSet<FieldRef>,
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
     failures: FailureMap,
     graph: DependencyGraph,
 }
@@ -1518,14 +1534,22 @@ impl RetainedCalculationState {
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
         self.failures
             .is_empty()
-            .then(|| self.calculation.values.get(field).copied())
+            .then(|| self.calculation.value(field))
+            .flatten()
+    }
+
+    #[must_use]
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.failures
+            .is_empty()
+            .then(|| self.calculation.calculated_value(field))
             .flatten()
     }
 
     /// Return the complete published value map only for an atomic successful
     /// outcome.
     #[must_use]
-    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, Number>> {
+    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, CalculatedValue>> {
         self.failures.is_empty().then_some(&self.calculation.values)
     }
 
@@ -1851,11 +1875,19 @@ pub enum ColumnFailure {
 impl Calculation {
     #[must_use]
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
+        self.values
+            .get(field)
+            .and_then(CalculatedValue::number)
+            .copied()
+    }
+
+    #[must_use]
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
         self.values.get(field).copied()
     }
 
     #[must_use]
-    pub fn values(&self) -> &PartitionedMap<FieldRef, Number> {
+    pub fn values(&self) -> &PartitionedMap<FieldRef, CalculatedValue> {
         &self.values
     }
 
@@ -1864,7 +1896,10 @@ impl Calculation {
     /// A key must be a formula in either calculation and have a value in both.
     /// Shared immutable value partitions are skipped without reading entries.
     #[must_use]
-    pub fn changed_formula_values(&self, after: &Self) -> Vec<(FieldRef, Number, Number)> {
+    pub fn changed_formula_values(
+        &self,
+        after: &Self,
+    ) -> Vec<(FieldRef, CalculatedValue, CalculatedValue)> {
         self.values
             .differing_entries(&after.values)
             .into_iter()
@@ -2012,7 +2047,7 @@ fn collect_calculation_nodes(
     let mut formulas = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
-            if matches!(value, Value::Number(_) | Value::Formula(_)) {
+            if matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)) {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
@@ -2033,7 +2068,7 @@ fn calculation_value<'document>(
         .entities
         .get(&field.entity)
         .and_then(|entity| entity.fields.get(&field.field))
-        .filter(|value| matches!(value, Value::Number(_) | Value::Formula(_)))
+        .filter(|value| matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)))
 }
 
 /// The cells and columns one formula reads, from a document snapshot.
@@ -2662,14 +2697,20 @@ fn assign_cycle_failures(
     }
 }
 
-fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<FieldRef, Number> {
+fn initial_values(
+    nodes: &ValueNodes<'_>,
+    failures: &FailureMap,
+) -> BTreeMap<FieldRef, CalculatedValue> {
     // Valid stored numbers are the initial ready values. Failed stored nodes
     // remain primary failures but never become partial published state.
     nodes
         .iter()
         .filter_map(|(field, value)| match value {
             Value::Number(number) if !failures.contains_key(field) => {
-                Some((field.clone(), *number))
+                Some((field.clone(), CalculatedValue::Number(*number)))
+            }
+            Value::Date(date) if !failures.contains_key(field) => {
+                Some((field.clone(), CalculatedValue::Date(*date)))
             }
             _ => None,
         })
@@ -2719,18 +2760,32 @@ fn remaining_counts(
     (dependency_counts, column_counts)
 }
 
-trait ValueStore: tachiko_semantic_core::FormulaValueLookup {
-    fn put(&mut self, field: FieldRef, value: Number);
+trait ValueStore {
+    fn number_value(&self, field: &FieldRef) -> Option<&Number>;
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue>;
+    fn put(&mut self, field: FieldRef, value: CalculatedValue);
 }
 
-impl ValueStore for BTreeMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for BTreeMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).copied()
+    }
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
 
-impl ValueStore for PartitionedMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for PartitionedMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).copied()
+    }
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
@@ -2779,9 +2834,19 @@ fn evaluate_remaining_formulas<V: ValueStore>(
         };
         let failed_dependencies = evaluation.failed_required_references(expression, failures);
         if failed_dependencies.is_empty() {
-            match evaluation.number(expression) {
+            match evaluation.calculated(expression) {
                 Ok(value) => {
-                    values.put(formula.clone(), value);
+                    let entity = &document.entities[&formula.entity];
+                    let kind = &document.schemas[&entity.schema].fields[&formula.field].field_type;
+                    if matches!(
+                        (kind, value),
+                        (FieldType::Number, CalculatedValue::Number(_))
+                            | (FieldType::Date, CalculatedValue::Date(_))
+                    ) {
+                        values.put(formula.clone(), value);
+                    } else {
+                        failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
+                    }
                 }
                 Err(failure) => {
                     failures.insert(formula.clone(), failure);
@@ -2892,7 +2957,8 @@ fn structural_reference_failure(
     else {
         return Some(ReferenceFailure::Missing);
     };
-    (numeric && definition.field_type != FieldType::Number).then_some(ReferenceFailure::NonNumeric)
+    (numeric && !matches!(definition.field_type, FieldType::Number | FieldType::Date))
+        .then_some(ReferenceFailure::NonNumeric)
 }
 
 fn reference_failure(
@@ -2909,8 +2975,8 @@ fn reference_failure(
     let entity = &document.entities[&field.entity];
     let definition = &document.schemas[&entity.schema].fields[&field.field];
     match entity.fields.get(&field.field) {
-        Some(Value::Number(_) | Value::Formula(_)) => None,
-        Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {
+        Some(Value::Number(_) | Value::Date(_) | Value::Formula(_)) => None,
+        Some(Value::Text(_) | Value::Boolean(_) | Value::Reference(_)) => {
             Some(ReferenceFailure::NonNumeric)
         }
         None if !definition.required => None,
@@ -3093,8 +3159,8 @@ mod causal_visits {
     }
 }
 
-impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, Number> {
+impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, CalculatedValue> {
     fn formula_value(&self, field: &FieldRef) -> Option<&Number> {
-        self.get(field)
+        self.get(field).and_then(CalculatedValue::number)
     }
 }
