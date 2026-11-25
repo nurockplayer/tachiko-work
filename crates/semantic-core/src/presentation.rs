@@ -148,6 +148,7 @@ pub struct PresentationStore {
 }
 
 impl PresentationStore {
+    /// Whether the optional JSONL member has records. Worksheet order lives in the manifest.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.styles.is_empty()

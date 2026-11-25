@@ -530,6 +530,12 @@ with its names and Redo restores both. Omitting `columnNames` or passing `{}`
 keeps the source names. An imported CSV or XLSX table has no stored names; pass
 the header text to give the copy its headers.
 
+`moveCollection(expectedRevision, collection, toIndex)` moves an existing
+worksheet identified by its collection key. Read the new order from
+`bootstrap().collections`. This edit is one history step and is carried by v3
+and portable `.ro` saves and native-table or imported-workbook XLSX export. The
+kit manifest advertises the `moveCollection` capability.
+
 Table columns always project `required: boolean`. Each row's `fields` array
 contains **only present values**. `blank_fields?: string[]` names absent declared
 FieldIds in column order; omission means `[]`. Join by stable ID rather than
