@@ -737,7 +737,7 @@ the [Semantic API specification](../specs/semantic-api.md), and the
 
 ## Recovering imported worksheet mappings
 
-After losing an imported worksheet add/rename/delete or Undo/Redo reply, call
+After losing an imported worksheet add/rename/delete/move or Undo/Redo reply, call
 `inspectCurrentProject()`. It sends the resident `inspect_project` command
 through the ordinary native/WASM request bridge and returns a
 `ProjectInspectionProjection`: the current `revision` and optional

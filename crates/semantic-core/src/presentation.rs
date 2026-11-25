@@ -139,6 +139,8 @@ pub struct ConditionalRule {
 /// Stored presentation records, keyed by their stable identity.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PresentationStore {
+    /// Explicit worksheet order, keyed by stable schema identity.
+    pub collection_order: Vec<SchemaId>,
     pub styles: BTreeMap<StyleId, CellStyle>,
     pub tables: BTreeMap<SchemaId, TablePresentation>,
     pub rules: BTreeMap<RuleId, ConditionalRule>,
@@ -587,11 +589,32 @@ pub fn prune_presentation(store: &PresentationStore, document: &Document) -> Pre
         .collect();
 
     PresentationStore {
+        collection_order: active_collection_order(&store.collection_order, document),
         styles,
         tables,
         rules,
         cells,
     }
+}
+
+fn active_collection_order(order: &[SchemaId], document: &Document) -> Vec<SchemaId> {
+    if order.is_empty() {
+        return Vec::new();
+    }
+    let mut order = order
+        .iter()
+        .filter(|id| document.schemas.contains_key(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let listed = order.iter().cloned().collect::<BTreeSet<_>>();
+    order.extend(
+        document
+            .schemas
+            .keys()
+            .filter(|id| !listed.contains(*id))
+            .cloned(),
+    );
+    order
 }
 
 fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {

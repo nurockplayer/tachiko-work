@@ -47,20 +47,7 @@ impl DesignerRuntime {
             metadata: metadata.clone(),
             lifecycle_changed: false,
         });
-        self.order_imported_collections();
-    }
-
-    pub(super) fn order_imported_collections(&mut self) {
-        if let Some(state) = self.imported.as_ref() {
-            self.collections.sort_by_key(|collection| {
-                state
-                    .metadata
-                    .sheets
-                    .iter()
-                    .position(|sheet| sheet.schema_id == collection.id)
-                    .unwrap_or(usize::MAX)
-            });
-        }
+        self.order_collections();
     }
 
     /// Run the existing publisher against an independent occurrence before

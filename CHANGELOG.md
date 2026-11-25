@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Move worksheets with `moveCollection`, with one-step Undo and Redo.
+  V3 and portable `.ro` saves and XLSX round trips retain worksheet order.
+  V3 emits the order only when it differs from stable Schema ID order (#953).
+
 - Evaluate formulas in Auto cells, including blank workbooks. Publish tagged
   results and per-cell calculation errors, restore prior cells with one Undo,
   and recalculate saved formulas when reopening v3 or portable `.ro` (#949).

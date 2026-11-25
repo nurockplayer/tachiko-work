@@ -67,6 +67,7 @@ Only these constructs may enter v3 during the window.
 | Presentation member: cell styles, per-cell display, footer, title | 5, 6 | Presentation |
 | Column Date format | 5 | Presentation |
 | A stored construct for conditional formatting, if rules need one | 5 | Presentation |
+| Manifest: optional worksheet order | #953 | Worksheet order amendment below |
 
 Anything else needs an amendment to this ADR. The numeric and conditional
 functions already in the Expression vocabulary stay as they are, and further
@@ -90,6 +91,15 @@ concurrently creating unequal schema subjects conflicts, with complete header
 state in subject evidence. Frozen v1 delta/conflict and older storage writers
 refuse headerless state. The v3/package profiles and absence hashes stay the
 same; pre-amendment readers refuse headerless documents as required by §4.
+
+### Worksheet order amendment (#953)
+
+The [#953 owner decision](https://github.com/nurockplayer/tachiko-work/issues/953#issuecomment-7170488701)
+adds the optional `collection_order` manifest member for non-default worksheet
+order. It contains stable Schema IDs and defaults to ascending Schema ID
+order. This is presentation state, so it has no semantic delta or merge
+facet. Its omission preserves existing canonical bytes and pinned seeds.
+Pre-amendment strict readers follow §4.
 
 ### 3. This ADR grants no shape
 

@@ -315,9 +315,11 @@ describe("duplicate collection column names", () => {
     const columns = [{name: "Name", field_type: "text", required: true}];
     await expect(client.addTable("resident/0", "New", columns)).resolves.toEqual(duplicated);
     await expect(client.deleteTable("resident/1", "new")).resolves.toEqual(publication);
+    await expect(client.moveCollection("resident/2", "items", 0)).resolves.toEqual(publication);
     expect(requests).toEqual([
       {type: "add_table", expected_revision: "resident/0", name: "New", columns},
       {type: "delete_table", expected_revision: "resident/1", collection: "new"},
+      {type: "move_collection", expected_revision: "resident/2", collection: "items", to_index: 0},
     ]);
   });
 
