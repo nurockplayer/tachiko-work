@@ -954,18 +954,20 @@ fn validate_lookup(
         .and_then(|schema| schema.fields.get(&key_column.field))
         .map(|field| &field.field_type);
     let key_type = match key {
-        Expression::Reference(reference) => document
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => document
             .entities
             .get(&reference.entity)
             .and_then(|entity| document.schemas.get(&entity.schema))
             .and_then(|schema| schema.fields.get(&reference.field))
             .map(|field| &field.field_type),
-        Expression::SameRowReference(field) => document
-            .entities
-            .get(&owner.entity)
-            .and_then(|entity| document.schemas.get(&entity.schema))
-            .and_then(|schema| schema.fields.get(field))
-            .map(|field| &field.field_type),
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            document
+                .entities
+                .get(&owner.entity)
+                .and_then(|entity| document.schemas.get(&entity.schema))
+                .and_then(|schema| schema.fields.get(field))
+                .map(|field| &field.field_type)
+        }
         _ => Some(&FieldType::Number),
     };
     if key_column.schema != result_column.schema || key_type != column_type {
@@ -1022,7 +1024,10 @@ fn validate_column_conditional(
             (ComparisonOperator::Equal, Some(expression)) => {
                 matches!(
                     expression,
-                    Expression::Reference(_) | Expression::SameRowReference(_)
+                    Expression::Reference(_)
+                        | Expression::SameRowReference(_)
+                        | Expression::AnchoredReference(_)
+                        | Expression::AnchoredSameRowReference(_)
                 ) || expression.expression_type() == Some(FormulaExpressionType::Number)
             }
             (_, Some(_) | None) => false,
@@ -1105,8 +1110,12 @@ fn validate_date_operand(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let reference = match operand {
-        Expression::Reference(reference) => reference.clone(),
-        Expression::SameRowReference(field) => FieldRef::new(owner.entity.clone(), field.clone()),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            reference.clone()
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            FieldRef::new(owner.entity.clone(), field.clone())
+        }
         _ => return,
     };
     let definition = document
@@ -1814,6 +1823,15 @@ mod issue_175_research {
         diagnostics: &mut Vec<Diagnostic>,
         cancelled: &mut impl FnMut() -> bool,
     ) -> ValidationControl {
+        let is_bare_reference = |expression: &Expression| {
+            matches!(
+                expression,
+                Expression::Reference(_)
+                    | Expression::SameRowReference(_)
+                    | Expression::AnchoredReference(_)
+                    | Expression::AnchoredSameRowReference(_)
+            )
+        };
         let mut pending = vec![(expression, true)];
         let mut nodes = 0usize;
         while let Some((node, numeric)) = pending.pop() {
@@ -1822,15 +1840,18 @@ mod issue_175_research {
             }
             nodes += 1;
             match node {
-                Expression::Reference(reference) => validate_formula_reference(
-                    document,
-                    owner,
-                    reference,
-                    numeric,
-                    path,
-                    diagnostics,
-                ),
-                Expression::SameRowReference(field) => validate_formula_reference(
+                Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                    validate_formula_reference(
+                        document,
+                        owner,
+                        reference,
+                        numeric,
+                        path,
+                        diagnostics,
+                    );
+                }
+                Expression::SameRowReference(field)
+                | Expression::AnchoredSameRowReference(field) => validate_formula_reference(
                     document,
                     owner,
                     &FieldRef::new(owner.entity.clone(), field.clone()),
@@ -1856,11 +1877,7 @@ mod issue_175_research {
                         path,
                         diagnostics,
                     );
-                    let bare = matches!(
-                        key.as_ref(),
-                        Expression::Reference(_) | Expression::SameRowReference(_)
-                    );
-                    pending.push((key, !bare));
+                    pending.push((key, !is_bare_reference(key)));
                     if let Some(value) = if_missing {
                         pending.push((value, true));
                     }
@@ -1879,11 +1896,7 @@ mod issue_175_research {
                     );
                     for criterion in criteria {
                         if let Some(expression) = &criterion.value {
-                            let bare = matches!(
-                                expression.as_ref(),
-                                Expression::Reference(_) | Expression::SameRowReference(_)
-                            );
-                            pending.push((expression, !bare));
+                            pending.push((expression, !is_bare_reference(expression)));
                         }
                     }
                 }

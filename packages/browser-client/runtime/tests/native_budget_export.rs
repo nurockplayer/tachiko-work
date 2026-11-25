@@ -194,7 +194,7 @@ fn native_budget_xlsx_omits_empty_cols_and_preserves_formulas_and_typed_dates() 
     assert!(!items.contains("<cols"));
     assert!(!summary.contains("<cols"));
     assert!(items.contains(
-        "<c r=\"E2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!$A$2-&apos;Budget Items&apos;!$D$2)</f><v>0</v></c>"
+        "<c r=\"E2\" s=\"0\" t=\"n\"><f>(&apos;Budget Items&apos;!A$2-&apos;Budget Items&apos;!D$2)</f><v>0</v></c>"
     ));
     assert!(items.contains("<c r=\"B2\" s=\"1\" t=\"d\"><v>2026-09-01</v></c>"));
     assert!(summary.contains("<c r=\"C2\" s=\"1\" t=\"d\"><v>2026-09-01</v></c>"));

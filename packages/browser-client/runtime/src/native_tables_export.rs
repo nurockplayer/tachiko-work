@@ -181,23 +181,19 @@ fn write_formulas(
                 ExportColumn::new(range, Some(column.field_type.clone())),
             );
             for (i, entity) in spec.entities.iter().enumerate() {
+                let value = document.entities[entity].fields.get(&column.id);
                 addresses.insert(
                     FieldRef::new(entity.clone(), column.id.clone()),
                     ExportCell::new(
                         quoted.clone(),
                         letters.clone(),
                         i + 2,
-                        criterion_type(
-                            Some(&column.field_type),
-                            document.entities[entity].fields.get(&column.id),
-                        ),
+                        criterion_type(Some(&column.field_type), value),
                         column.field_type == FieldType::Date && !column.required,
-                    ),
+                    )
+                    .with_collection(&spec.summary.id),
                 );
-                count += usize::from(matches!(
-                    document.entities[entity].fields.get(&column.id),
-                    Some(Value::Formula(_))
-                ));
+                count += usize::from(matches!(value, Some(Value::Formula(_))));
             }
         }
         formula_counts.push(count);

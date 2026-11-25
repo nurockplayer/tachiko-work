@@ -16,6 +16,9 @@ All notable changes to Tachiko Work are documented in this file.
 - Add `set_cell_style_range` for compact formatting requests over stored rows
   and selected fields, with one Undo/Redo step for the whole range (#922).
 
+- Preserve A1 column anchors in formula editing, sideways copy, and XLSX export.
+  Rendering shows a relative column for legacy fixed-row references (#921).
+
 - Translate and render headerless A1 formulas with row 1 as the first data row.
   Add `render_a1_formula` and atomic `paste_cells_at`: positional block paste
   allocates sparse rows and generated Auto columns like `write_cell_at`, with

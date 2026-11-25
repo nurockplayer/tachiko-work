@@ -667,8 +667,12 @@ fn expression_approx_bytes(expression: &Expression) -> usize {
 /// Heap owned directly by one expression node, without its child nodes.
 fn expression_node_approx_bytes(node: &Expression) -> usize {
     match node {
-        Expression::Reference(field) => field_approx_bytes(field),
-        Expression::SameRowReference(field) => field.as_str().len(),
+        Expression::Reference(field) | Expression::AnchoredReference(field) => {
+            field_approx_bytes(field)
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            field.as_str().len()
+        }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             column_ref_approx_bytes(column)
         }

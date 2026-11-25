@@ -290,8 +290,9 @@ impl A1Geometry for GridGeometry<'_> {
             .cells
             .insert(FieldRef::new(entity_id.clone(), field_id.clone()));
         Ok(format!(
-            "[{}.{}]",
+            "[{}.{}{}]",
             if same_row { "" } else { entity.key.as_str() },
+            if address.starts_with('$') { "$" } else { "" },
             field.key.as_str()
         ))
     }
@@ -479,6 +480,8 @@ impl DesignerRuntime {
                                 ),
                                 !field.required,
                             )
+                            .with_collection(&grid.collection_id)
+                            .with_legacy_relative_column()
                         });
                 }
             }

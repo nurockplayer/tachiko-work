@@ -270,6 +270,21 @@ fn edit_text(runtime: &mut DesignerRuntime, expected: &str, target: &str, value:
 }
 
 #[test]
+fn anchored_text_criteria_keep_reference_semantics() {
+    let mut runtime = open_fixture();
+    published(
+        &mut runtime,
+        DesignerRequest::FormulaUpdate {
+            expected_revision: "resident/0".to_owned(),
+            target: "rent.matching".into(),
+            source: "COUNTIFS([plan.category:column], [settings.$criterion], [plan.category:column], [.$category])".to_owned(),
+        },
+    );
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(number_of(projected(&plan, "Rent", "matching")), Some(2.0));
+}
+
+#[test]
 fn a_formula_with_a_text_criterion_column_can_be_copied() {
     let mut runtime = open_fixture();
     published(
@@ -374,7 +389,21 @@ fn a_criterion_column_cannot_be_removed_or_retyped() {
 
 #[test]
 fn inserting_a_row_counts_it_in_the_projection() {
-    let mut runtime = open_fixture();
+    let mut document = fixture();
+    for id in ["rent", "ads", "tools"] {
+        let row = document.entities.get_mut(id).unwrap();
+        row.fields.insert(
+            "matching".into(),
+            Value::Formula(Expression::AnchoredReference(FieldRef::new(id, "quantity"))),
+        );
+        row.fields.insert(
+            "copied".into(),
+            Value::Formula(Expression::AnchoredReference(FieldRef::new(
+                "rent", "quantity",
+            ))),
+        );
+    }
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
     let inserted = published(
         &mut runtime,
         DesignerRequest::InsertRow {
@@ -405,7 +434,16 @@ fn inserting_a_row_counts_it_in_the_projection() {
     );
     assert_eq!(inserted, "resident/1");
     assert_eq!(summary_value(&mut runtime), Some(11.0));
-    assert_eq!(table(&mut runtime, "plan").rows.len(), 4);
+    let plan = table(&mut runtime, "plan");
+    assert_eq!(plan.rows.len(), 4);
+    let matching = projected(&plan, "Food", "matching");
+    assert_eq!(number_of(matching), Some(5.0));
+    let food = plan
+        .rows
+        .iter()
+        .find(|row| row.id == matching.target.entity)
+        .unwrap();
+    assert!(food.blank_fields.contains(&column_id(&plan, "copied")));
 }
 
 #[test]

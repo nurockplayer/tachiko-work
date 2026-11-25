@@ -332,15 +332,17 @@ fn formula_history(document: Document, expected_source: &str) {
 
 #[test]
 fn same_row_formula_move_keeps_original_source_row() {
-    let mut doc = document(5);
-    set(
-        &mut doc,
-        "r0.n",
-        Some(Value::Formula(Expression::SameRowReference(FieldId::from(
-            "dep",
-        )))),
-    );
-    formula_history(doc, "[r0.dep]");
+    for (source, expected) in [
+        (Expression::SameRowReference("dep".into()), "[r0.dep]"),
+        (
+            Expression::AnchoredSameRowReference("dep".into()),
+            "[r0.$dep]",
+        ),
+    ] {
+        let mut doc = document(5);
+        set(&mut doc, "r0.n", Some(Value::Formula(source)));
+        formula_history(doc, expected);
+    }
 }
 
 #[test]

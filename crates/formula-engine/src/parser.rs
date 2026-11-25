@@ -32,6 +32,8 @@ pub enum UnboundExpression {
     Reference(FieldAddress),
     // `[.field]`: the field on the entity that owns the formula.
     SameRowReference(FieldKey),
+    AnchoredReference(FieldAddress),
+    AnchoredSameRowReference(FieldKey),
     // `[schema.field:total]`: the sum of one Number column over a schema.
     ColumnTotal(ColumnAddress),
     ColumnAggregate {
@@ -207,6 +209,10 @@ pub fn format_unbound_expression(expression: &UnboundExpression) -> String {
             format!("[{}.{}]", reference.entity, reference.field)
         }
         UnboundExpression::SameRowReference(field) => format!("[.{field}]"),
+        UnboundExpression::AnchoredReference(reference) => {
+            format!("[{}.${}]", reference.entity, reference.field)
+        }
+        UnboundExpression::AnchoredSameRowReference(field) => format!("[.${field}]"),
         UnboundExpression::ColumnTotal(column) => {
             format!("[{}.{}:total]", column.schema, column.field)
         }
@@ -515,6 +521,8 @@ fn push_children<'expression>(
         UnboundExpression::Number(_)
         | UnboundExpression::Reference(_)
         | UnboundExpression::SameRowReference(_)
+        | UnboundExpression::AnchoredReference(_)
+        | UnboundExpression::AnchoredSameRowReference(_)
         | UnboundExpression::ColumnTotal(_)
         | UnboundExpression::ColumnAggregate { .. } => {}
     }
@@ -748,6 +756,8 @@ impl<'input> Parser<'input> {
         // `[.field]` is the owner's own field. Any other dot is still an
         // entity/field separator, so a same-row reference admits exactly one.
         if let Some(field) = inner.strip_prefix('.') {
+            let anchored = field.starts_with('$');
+            let field = field.strip_prefix('$').unwrap_or(field);
             if field.contains('.') {
                 self.position = close;
                 return Err(self.error("reference must contain exactly one '.'"));
@@ -758,7 +768,11 @@ impl<'input> Parser<'input> {
             }
             self.position = close + 1;
             self.record_node(start)?;
-            return Ok(UnboundExpression::SameRowReference(FieldKey::from(field)));
+            return Ok(if anchored {
+                UnboundExpression::AnchoredSameRowReference(FieldKey::from(field))
+            } else {
+                UnboundExpression::SameRowReference(FieldKey::from(field))
+            });
         }
 
         // `[schema.field:total]` keeps the column identity so the total never
@@ -790,6 +804,8 @@ impl<'input> Parser<'input> {
 
         let entity = &inner[..dot];
         let field = &inner[dot + 1..];
+        let anchored = column.is_none() && field.starts_with('$');
+        let field = &field[usize::from(anchored)..];
         if !is_valid_identifier(entity) {
             self.position = invalid_identifier_position(entity, inner_start);
             return Err(self.error("invalid reference entity key"));
@@ -807,6 +823,9 @@ impl<'input> Parser<'input> {
                 function,
                 column: ColumnAddress::new(entity, field),
             },
+            None if anchored => {
+                UnboundExpression::AnchoredReference(FieldAddress::new(entity, field))
+            }
             None => UnboundExpression::Reference(FieldAddress::new(entity, field)),
         })
     }

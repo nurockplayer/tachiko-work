@@ -369,6 +369,21 @@ fn bind_criterion_value(
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     match expression {
+        UnboundExpression::AnchoredReference(address) => Ok(Expression::AnchoredReference(
+            bind_scalar_reference(document, index, address)?,
+        )),
+        UnboundExpression::AnchoredSameRowReference(field) => {
+            let normal = bind_criterion_value(
+                document,
+                index,
+                owner,
+                &UnboundExpression::SameRowReference(field.clone()),
+            )?;
+            let Expression::SameRowReference(field) = normal else {
+                unreachable!()
+            };
+            Ok(Expression::AnchoredSameRowReference(field))
+        }
         UnboundExpression::Reference(address) => Ok(Expression::Reference(bind_scalar_reference(
             document, index, address,
         )?)),
@@ -397,8 +412,12 @@ fn lookup_key_type<'a>(
     key: &Expression,
 ) -> Option<&'a FieldType> {
     let (entity, field) = match key {
-        Expression::Reference(reference) => (&reference.entity, &reference.field),
-        Expression::SameRowReference(field) => (&owner.entity, field),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            (&reference.entity, &reference.field)
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            (&owner.entity, field)
+        }
         _ => {
             return (key.expression_type() == Some(FormulaExpressionType::Number))
                 .then_some(&FieldType::Number);
@@ -424,6 +443,21 @@ fn bind_node(
 ) -> Result<Expression, FormulaBindError> {
     Ok(match expression {
         UnboundExpression::Number(number) => Expression::Number(*number),
+        UnboundExpression::AnchoredReference(address) => {
+            Expression::AnchoredReference(bind_numeric_reference(document, index, address)?)
+        }
+        UnboundExpression::AnchoredSameRowReference(field) => {
+            let normal = bind_node(
+                document,
+                index,
+                owner,
+                &UnboundExpression::SameRowReference(field.clone()),
+            )?;
+            let Expression::SameRowReference(field) = normal else {
+                unreachable!()
+            };
+            Expression::AnchoredSameRowReference(field)
+        }
         UnboundExpression::Reference(address) => {
             Expression::Reference(bind_numeric_reference(document, index, address)?)
         }
@@ -640,7 +674,10 @@ fn bind_date_reference(
 ) -> Result<Expression, FormulaBindError> {
     if !matches!(
         expression,
-        UnboundExpression::Reference(_) | UnboundExpression::SameRowReference(_)
+        UnboundExpression::Reference(_)
+            | UnboundExpression::SameRowReference(_)
+            | UnboundExpression::AnchoredReference(_)
+            | UnboundExpression::AnchoredSameRowReference(_)
     ) {
         return Err(FormulaBindError::TypeMismatch {
             message: format!("{name} requires a Date field reference"),
@@ -648,8 +685,12 @@ fn bind_date_reference(
     }
     let bound = bind_blank_reference(document, index, owner, expression)?;
     let reference = match &bound {
-        Expression::Reference(reference) => reference.clone(),
-        Expression::SameRowReference(field) => FieldRef::new(owner.entity.clone(), field.clone()),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            reference.clone()
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            FieldRef::new(owner.entity.clone(), field.clone())
+        }
         _ => unreachable!(),
     };
     let is_date = document
@@ -672,10 +713,16 @@ fn bind_blank_reference(
     owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
+    let anchored = matches!(
+        expression,
+        UnboundExpression::AnchoredReference(_) | UnboundExpression::AnchoredSameRowReference(_)
+    );
     let (address, same_row) =
         match expression {
-            UnboundExpression::Reference(address) => (address.clone(), false),
-            UnboundExpression::SameRowReference(field) => {
+            UnboundExpression::Reference(address)
+            | UnboundExpression::AnchoredReference(address) => (address.clone(), false),
+            UnboundExpression::SameRowReference(field)
+            | UnboundExpression::AnchoredSameRowReference(field) => {
                 let entity = document.entities.get(&owner.entity).ok_or_else(|| {
                     FormulaBindError::Index {
                         source: Box::new(AddressIndexError::MissingBoundEntity {
@@ -698,10 +745,11 @@ fn bind_blank_reference(
                 address,
                 source: Box::new(source),
             })?;
-    Ok(if same_row {
-        Expression::SameRowReference(reference.field)
-    } else {
-        Expression::Reference(reference)
+    Ok(match (same_row, anchored) {
+        (true, true) => Expression::AnchoredSameRowReference(reference.field),
+        (true, false) => Expression::SameRowReference(reference.field),
+        (false, true) => Expression::AnchoredReference(reference),
+        (false, false) => Expression::Reference(reference),
     })
 }
 
@@ -824,6 +872,14 @@ fn render_bound(
         Expression::SameRowReference(field) => {
             let reference = FieldRef::new(owner.entity.clone(), field.clone());
             format!("[.{}]", addresses[&reference].field)
+        }
+        Expression::AnchoredReference(reference) => {
+            let address = &addresses[reference];
+            format!("[{}.${}]", address.entity, address.field)
+        }
+        Expression::AnchoredSameRowReference(field) => {
+            let reference = FieldRef::new(owner.entity.clone(), field.clone());
+            format!("[.${}]", addresses[&reference].field)
         }
         Expression::ColumnTotal(column) => {
             let address = &columns[column];

@@ -1,4 +1,4 @@
-use serde_json::Value as Json;
+use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{DesignerRuntime, process_wire_request};
 use tachiko_workspace_engine::{
@@ -83,6 +83,127 @@ fn fixture() -> DesignerRuntime {
         .unwrap()
 }
 
+fn column_anchor_copy(
+    header_row: usize,
+    text: &str,
+    expected_display: Option<&str>,
+    destination_row: &str,
+) -> (String, Vec<Json>) {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    schema.headerless = header_row == 0;
+    schema.field_order = Some(["qty", "price", "total", "name"].map(Into::into).to_vec());
+    schema.fields.get_mut("price").unwrap().key = "adjustment".into();
+    document.entities.get_mut("r1").unwrap().key = "row_0001".into();
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000921").unwrap(),
+    );
+    let geometry = json!({
+        "header_row": header_row,
+        "rows": ["r1", "r2", "r3"],
+        "columns": ["qty", "price", "total", "name"]
+    });
+    let source_cell = json!({"entity": "r1", "field": "price"});
+    let destination = json!({"entity": destination_row, "field": "total"});
+    let a1_request = json!({
+        "type": "translate_a1_formula",
+        "expected_revision": "resident/0",
+        "collection_id": "Items",
+        "row_entity_id": "r1",
+        "target_field_id": "price",
+        "text": text,
+        "geometry": geometry
+    });
+    let translated = call(&mut runtime, &a1_request);
+    assert_eq!(translated["status"], "ok", "{translated}");
+    let source = translated["response"]["payload"]["source"]
+        .as_str()
+        .unwrap();
+    let updated = call(
+        &mut runtime,
+        &json!({
+            "type": "formula_update",
+            "expected_revision": "resident/0",
+            "target": source_cell,
+            "source": source
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    if let Some(display) = expected_display {
+        let mut render = a1_request;
+        render["type"] = "render_a1_formula".into();
+        render["expected_revision"] = "resident/1".into();
+        render.as_object_mut().unwrap().remove("text");
+        let rendered = call(&mut runtime, &render);
+        assert_eq!(rendered["status"], "ok", "{rendered}");
+        assert_eq!(rendered["response"]["payload"]["source"], display);
+    }
+    let copied = call(
+        &mut runtime,
+        &json!({
+            "type": "copy_formula",
+            "expected_revision": "resident/1",
+            "source": source_cell,
+            "destinations": [destination],
+            "fixed_references": [],
+            "relative_rows": false,
+            "relative_columns": true
+        }),
+    );
+    assert_eq!(copied["status"], "ok", "{copied}");
+    let explanation = call(
+        &mut runtime,
+        &json!({
+            "type": "explain_field",
+            "expected_revision": "resident/2",
+            "target": destination
+        }),
+    );
+    assert_eq!(explanation["status"], "ok", "{explanation}");
+    let dependencies = explanation["response"]["payload"]["direct_dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|dependency| dependency["target"].clone())
+        .collect();
+    (source.to_owned(), dependencies)
+}
+
+#[test]
+fn a1_column_anchor_issue_921_sideways_copy() {
+    let (_, dependencies) = column_anchor_copy(1, "A2+$A$2", None, "r1");
+    assert_eq!(
+        dependencies,
+        [
+            json!({"entity": "r1", "field": "price"}),
+            json!({"entity": "r1", "field": "qty"}),
+        ]
+    );
+}
+
+#[test]
+fn a1_column_anchor_four_combinations_in_both_geometries() {
+    for header_row in [0, 1] {
+        let row = header_row + 1;
+        let mut sources = Vec::new();
+        for (text, entity, field) in [
+            (format!("A{row}"), "r2", "price"),
+            (format!("$A{row}"), "r2", "qty"),
+            (format!("A${row}"), "r1", "price"),
+            (format!("$A${row}"), "r1", "qty"),
+        ] {
+            let (source, dependencies) = column_anchor_copy(header_row, &text, Some(&text), "r2");
+            assert_eq!(
+                dependencies,
+                [json!({"entity": entity, "field": field})],
+                "{text}"
+            );
+            assert!(!sources.contains(&source), "{text} reuses {source}");
+            sources.push(source);
+        }
+    }
+}
+
 #[test]
 fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
     for (headerless, header_row) in [(true, 0), (false, 1)] {
@@ -90,7 +211,7 @@ fn headerless_and_headered_a1_cells_and_ranges_translate_and_render() {
             (
                 format!("A{}", header_row + 1),
                 "[r1.qty]",
-                format!("$A${}", header_row + 1),
+                format!("A${}", header_row + 1),
             ),
             (
                 format!("A{}", header_row + 2),
@@ -280,8 +401,8 @@ fn translate_a1_steward_acceptance() {
         &["relative_copy_semantics_changed"],
     );
     ok(&mut rt, "B$3*C3", "[r2.qty]*[.price]", &[]);
-    ok(&mut rt, "$B3*C3", "[.qty]*[.price]", &[]);
-    ok(&mut rt, "$B$3*C3", "[r2.qty]*[.price]", &[]);
+    ok(&mut rt, "$B3*C3", "[.$qty]*[.price]", &[]);
+    ok(&mut rt, "$B$3*C3", "[r2.$qty]*[.price]", &[]);
     for text in ["SUM(B2:B4)", "SUM(B1:B4)"] {
         ok(
             &mut rt,
@@ -496,7 +617,7 @@ fn translate_a1_existing_formula_and_indirect_cycle() {
 #[test]
 fn translate_a1_qualified_current_collection_keeps_relative_row() {
     let mut rt = Some(fixture());
-    for (text, source) in [("Items!B3", "[.qty]"), ("Items!$B$3", "[r2.qty]")] {
+    for (text, source) in [("Items!B3", "[.qty]"), ("Items!$B$3", "[r2.$qty]")] {
         let mut input = request(text);
         input["geometry"]["sheets"] = serde_json::from_str(
             r#"{"Items":{"collection_id":"Items","header_row":1,"rows":["r1","r2","r3"],"columns":["name","qty","price","total"]}}"#,
@@ -646,7 +767,7 @@ fn translate_a1_conditional_aggregates_translate_whole_columns() {
         ),
         (
             "SUMIF($B$2:$B$4,$B$3,$C$2:$C$4)",
-            "SUMIF([items.qty:column],[r2.qty],[items.price:column])",
+            "SUMIF([items.qty:column],[r2.$qty],[items.price:column])",
         ),
         (
             "SUMIF(B2:B4,B$3,C2:C4)",

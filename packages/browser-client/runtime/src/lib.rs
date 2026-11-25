@@ -7884,11 +7884,11 @@ impl DesignerRuntime {
         let mut reference_probe = expression.clone();
         map_copy_references(
             &mut reference_probe,
-            &mut |reference, _| {
+            &mut |reference, _, _| {
                 references.insert(reference.clone());
                 Ok(())
             },
-            &mut |_| Ok(()),
+            &mut |_, _| Ok(()),
         )?;
         if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
             return Err(tracker_error(
@@ -7911,14 +7911,18 @@ impl DesignerRuntime {
             let mut copied = expression.clone();
             map_copy_references(
                 &mut copied,
-                &mut |reference, numeric| {
+                &mut |reference, numeric, anchored| {
                     if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
                         return require_copy_reference(document, reference, numeric);
                     }
                     let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
                     let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
-                    let shifted_column =
-                        copy_index(reference_column, source_column, column, relative_columns)?;
+                    let shifted_column = copy_index(
+                        reference_column,
+                        source_column,
+                        column,
+                        relative_columns && !anchored,
+                    )?;
                     *reference = FieldRef::new(
                         spec.entities.get(shifted_row).cloned().ok_or_else(|| {
                             tracker_error("relative reference row is outside the collection")
@@ -7932,8 +7936,8 @@ impl DesignerRuntime {
                     );
                     require_copy_reference(document, reference, numeric)
                 },
-                &mut |field| {
-                    if relative_columns {
+                &mut |field, anchored| {
+                    if relative_columns && !anchored {
                         let reference = FieldRef::new(source.entity.clone(), field.clone());
                         let (_, reference_column) = copy_position(spec, &rows, &reference)?;
                         let shifted = copy_index(reference_column, source_column, column, true)
@@ -11484,11 +11488,12 @@ fn require_copy_column_number(
 
 fn map_copy_references(
     expression: &mut Expression,
-    visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
-    visit_same_row: &mut impl FnMut(&mut FieldId) -> Result<(), DesignerError>,
+    visit: &mut impl FnMut(&mut FieldRef, bool, bool) -> Result<(), DesignerError>,
+    visit_same_row: &mut impl FnMut(&mut FieldId, bool) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        Expression::SameRowReference(field) => visit_same_row(field),
+        Expression::SameRowReference(field) => visit_same_row(field, false),
+        Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
         Expression::Number(_) | Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
             Ok(())
         }
@@ -11499,38 +11504,47 @@ fn map_copy_references(
             for criterion in criteria {
                 if let Some(expression) = &mut criterion.value {
                     match expression.as_mut() {
-                        Expression::Reference(reference) => visit(reference, false)?,
-                        Expression::SameRowReference(field) => visit_same_row(field)?,
+                        Expression::Reference(reference) => visit(reference, false, false)?,
+                        Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                        Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                        Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                         other => map_copy_references(other, visit, visit_same_row)?,
                     }
                 }
             }
             Ok(())
         }
-        Expression::Reference(reference) => visit(reference, true),
+        Expression::Reference(reference) => visit(reference, true, false),
+        Expression::AnchoredReference(reference) => visit(reference, true, true),
         Expression::DatePart {
             operand: reference, ..
         }
         | Expression::Weekday {
             operand: reference, ..
         } => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(field) => visit_same_row(field),
+            Expression::Reference(reference) => visit(reference, false, false),
+            Expression::AnchoredReference(reference) => visit(reference, false, true),
+            Expression::SameRowReference(field) => visit_same_row(field, false),
+            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
             _ => unreachable!("date function has a bound reference child"),
         },
         Expression::Days { end, start } => {
             for operand in [end, start] {
                 match operand.as_mut() {
-                    Expression::Reference(reference) => visit(reference, false)?,
-                    Expression::SameRowReference(field) => visit_same_row(field)?,
+                    Expression::Reference(reference) => visit(reference, false, false)?,
+                    Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                    Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                    Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                     _ => unreachable!("date function has a bound reference child"),
                 }
             }
             Ok(())
         }
         Expression::IsBlank(reference) => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(field) => visit_same_row(field),
+            Expression::Reference(reference) => visit(reference, false, false),
+            Expression::AnchoredReference(reference) => visit(reference, false, true),
+            Expression::SameRowReference(field) => visit_same_row(field, false),
+            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
             _ => unreachable!("ISBLANK has a bound reference child"),
         },
         // A bare key reference is compared by its own type, like a criterion;
@@ -11539,8 +11553,10 @@ fn map_copy_references(
             key, if_missing, ..
         } => {
             match key.as_mut() {
-                Expression::Reference(reference) => visit(reference, false)?,
-                Expression::SameRowReference(field) => visit_same_row(field)?,
+                Expression::Reference(reference) => visit(reference, false, false)?,
+                Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                 other => map_copy_references(other, visit, visit_same_row)?,
             }
             if let Some(fallback) = if_missing {
@@ -11640,7 +11656,7 @@ fn map_duplicate_expression(
 ) -> Result<(), DesignerError> {
     match expression {
         Expression::Number(_) => Ok(()),
-        Expression::Reference(reference) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
             if let Some(entity) = entities.get(&reference.entity) {
                 reference.entity = entity.clone();
                 reference.field = fields.get(&reference.field).cloned().ok_or_else(|| {
@@ -11652,7 +11668,7 @@ fn map_duplicate_expression(
             }
             Ok(())
         }
-        Expression::SameRowReference(field) => {
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             // The copy has its own field IDs; the reference follows its row.
             *field = fields.get(field).cloned().ok_or_else(|| {
                 table_error(&format!(
@@ -12453,7 +12469,7 @@ fn ensure_formula_reference_profile(
             });
         }
         match expression {
-            Expression::Reference(reference) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                 ensure_profile_string(
                     profile_string_bytes,
                     "formula reference entity identity",
@@ -12465,7 +12481,7 @@ fn ensure_formula_reference_profile(
                     reference.field.as_str(),
                 )?;
             }
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 ensure_profile_string(
                     profile_string_bytes,
                     "formula same-row field identity",
@@ -13208,17 +13224,22 @@ fn column_fill_formulas(
 }
 
 fn row_relative_formula(expression: &mut Expression, owner: &EntityId) -> bool {
-    if let Expression::Reference(reference) = expression {
-        if reference.entity != *owner {
-            return false;
+    *expression = match expression {
+        Expression::Reference(reference) if reference.entity == *owner => {
+            Expression::SameRowReference(reference.field.clone())
         }
-        *expression = Expression::SameRowReference(reference.field.clone());
-        return true;
-    }
-    expression
-        .children_mut()
-        .into_iter()
-        .all(|child| row_relative_formula(child, owner))
+        Expression::AnchoredReference(reference) if reference.entity == *owner => {
+            Expression::AnchoredSameRowReference(reference.field.clone())
+        }
+        Expression::Reference(_) | Expression::AnchoredReference(_) => return false,
+        _ => {
+            return expression
+                .children_mut()
+                .into_iter()
+                .all(|child| row_relative_formula(child, owner));
+        }
+    };
+    true
 }
 
 /// Fill new cells where possible without making an otherwise valid addition fail.
@@ -13424,10 +13445,10 @@ fn expression_references(
 ) {
     match expression {
         Expression::Number(_) => {}
-        Expression::Reference(reference) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
             references.insert(reference.clone());
         }
-        Expression::SameRowReference(field) => {
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
@@ -16594,11 +16615,11 @@ mod tests {
         let mut visited = Vec::new();
         super::map_copy_references(
             &mut expression,
-            &mut |reference, numeric| {
+            &mut |reference, numeric, _| {
                 visited.push((reference.field.as_str().to_owned(), numeric));
                 Ok(())
             },
-            &mut |_| Ok(()),
+            &mut |_, _| Ok(()),
         )
         .expect("the lookup copy walk succeeds");
         assert_eq!(

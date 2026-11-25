@@ -638,7 +638,7 @@ fn ranked_native_and_imported_xlsx_csv_keep_identity_styles_and_addresses() {
     );
     assert_eq!(
         native.sheets[0].rows[0][1].formula.as_deref(),
-        Some("'rows'!$A$3")
+        Some("'rows'!A$3")
     );
     assert_eq!(
         native.sheets[0].rows[0][1].value,
@@ -791,7 +791,7 @@ fn assert_ranked_budget_export() {
     assert!(workbook.sheets[0].rows[0][0].style.bold);
     assert_eq!(
         workbook.sheets[0].rows[0][1].formula.as_deref(),
-        Some("'Budget'!$A$3")
+        Some("'Budget'!A$3")
     );
     assert_file_encodings(&workbook, OutputProfile::Shared);
     let csv = current
