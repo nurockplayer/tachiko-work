@@ -573,7 +573,10 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
             ..
         }) = calculated
         else {
-            panic!("column {} expected {expected:?}, got {calculated:?}", position + 1);
+            panic!(
+                "column {} expected {expected:?}, got {calculated:?}",
+                position + 1
+            );
         };
         assert_eq!(actual, &expected, "column {}", position + 1);
     }
