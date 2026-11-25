@@ -539,6 +539,8 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
             "=[.column_4]",
             "=[.column_4]+1",
             "=[.column_10]+(1/0)",
+            "=1/0",
+            "=YEAR([.column_12])",
         ]],
     );
     let table = window(&mut runtime);
@@ -573,6 +575,7 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
             })
         );
     }
+    assert_eq!(fields[12].display.as_deref(), Some("#DIV/0!"));
     let revision = runtime.current_revision().to_owned();
     for (portable, bytes) in [
         (false, runtime.export_project_v3(&revision).unwrap().bytes),

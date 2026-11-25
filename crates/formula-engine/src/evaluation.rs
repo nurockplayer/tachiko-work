@@ -467,21 +467,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                                 .cloned(),
                         );
                         if let Some(expression) = &criterion.value {
-                            match expression.as_ref() {
-                                Expression::Reference(reference) => {
-                                    if is_failed(reference) {
-                                        references.insert(reference.clone());
-                                    }
-                                }
-                                Expression::SameRowReference(field) => {
-                                    let reference =
-                                        FieldRef::new(self.owner.entity.clone(), field.clone());
-                                    if is_failed(&reference) {
-                                        references.insert(reference);
-                                    }
-                                }
-                                other => pending.push(other),
-                            }
+                            pending.push(expression);
                         }
                     }
                 }
@@ -962,7 +948,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             .and_then(|entity| entity.fields.get(&reference.field))
         {
             Some(Value::Date(date)) => Ok(*date),
-            None => Err(CalculationFailure::FailedDependencies {
+            Some(Value::Formula(_)) | None => Err(CalculationFailure::FailedDependencies {
                 dependencies: BTreeSet::from([reference]),
             }),
             Some(_) => Err(CalculationFailure::TypeMismatch),

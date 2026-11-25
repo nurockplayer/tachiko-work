@@ -6398,8 +6398,8 @@ fn formula_impacts(changes: &[SemanticChange]) -> Vec<FormulaImpactEvidence> {
                 causes,
             } => Some(FormulaImpactEvidence {
                 field: field.clone(),
-                before: *before,
-                after: *after,
+                before: before.clone(),
+                after: after.clone(),
                 causes: causes.clone(),
             }),
             _ => None,
