@@ -7,7 +7,7 @@ use tachiko_semantic_core::{
     Entity, EntityId, Expression, FieldRef, FieldType, Number, Value,
 };
 
-use crate::{CalculationFailure, FailureMap, ValueStore, column_cells};
+use crate::{CalculatedValue, CalculationFailure, FailureMap, ValueStore, column_cells};
 
 #[cfg(test)]
 use conditional_walks::{bypass_caches, record_row, record_walk};
@@ -109,7 +109,7 @@ impl ColumnCache {
             let cell = match value {
                 Value::Number(_) | Value::Formula(_) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.formula_value(&reference) else {
+                    let Some(value) = values.number_value(&reference) else {
                         // The walk fails at this row whatever its key says.
                         index.scan = true;
                         continue;
@@ -139,15 +139,31 @@ impl ColumnCache {
         if self.lookup_indexes.contains_key(column) {
             return;
         }
+        let auto =
+            document.schemas[&column.schema].fields[&column.field].field_type == FieldType::Auto;
         let mut index = BTreeMap::new();
         for (entity_id, entity) in &document.entities {
             if entity.schema != column.schema {
                 continue;
             }
+            let calculated;
             let cell = match entity.fields.get(&column.field) {
+                Some(Value::Formula(_)) if auto => {
+                    let reference = FieldRef::new(entity_id.clone(), column.field.clone());
+                    let Some(value) = values.calculated_value(&reference) else {
+                        continue;
+                    };
+                    calculated = value;
+                    match &calculated {
+                        CalculatedValue::Number(number) => CriterionCell::Number(number.get()),
+                        CalculatedValue::Text(text) => CriterionCell::Text(text),
+                        CalculatedValue::Boolean(value) => CriterionCell::Boolean(*value),
+                        CalculatedValue::Date(value) => CriterionCell::Date(*value),
+                    }
+                }
                 Some(Value::Number(_) | Value::Formula(_)) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
-                    let Some(value) = values.formula_value(&reference) else {
+                    let Some(value) = values.number_value(&reference) else {
                         continue;
                     };
                     CriterionCell::Number(value.get())
@@ -184,7 +200,7 @@ impl ColumnCache {
             if first_failed.is_none() && failures.contains_key(&reference) {
                 first_failed = Some(reference.clone());
             }
-            match values.formula_value(&reference) {
+            match values.number_value(&reference) {
                 Some(value) => {
                     present.push(value.get());
                     total += value.get();
@@ -221,6 +237,98 @@ pub(crate) struct Evaluation<'a, V: ValueStore> {
 }
 
 impl<V: ValueStore> Evaluation<'_, V> {
+    pub(crate) fn calculated(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<CalculatedValue, CalculationFailure> {
+        match expression {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                self.calculated_reference(reference)
+            }
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+                self.calculated_reference(&FieldRef::new(self.owner.entity.clone(), field.clone()))
+            }
+            Expression::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let condition = self.condition(condition)?;
+                self.calculated(if condition { then_value } else { else_value })
+            }
+            Expression::IfError { value, fallback } => match self.calculated(value) {
+                Err(
+                    CalculationFailure::DivisionByZero
+                    | CalculationFailure::TypeMismatch
+                    | CalculationFailure::NonFiniteResult
+                    | CalculationFailure::EmptyAggregate
+                    | CalculationFailure::LookupMissingKey
+                    | CalculationFailure::FailedDependencies { .. },
+                ) => self.calculated(fallback),
+                result => result,
+            },
+            Expression::Compare { .. }
+            | Expression::And(_)
+            | Expression::Or(_)
+            | Expression::Not(_)
+            | Expression::IsBlank(_) => self.condition(expression).map(CalculatedValue::Boolean),
+            Expression::Add { left, right } | Expression::Subtract { left, right } => {
+                let left = arithmetic_operand(self.calculated(left)?)?;
+                let right = arithmetic_operand(self.calculated(right)?)?;
+                let subtract = matches!(expression, Expression::Subtract { .. });
+                match (left, right) {
+                    (CalculatedValue::Number(a), CalculatedValue::Number(b)) => {
+                        number_result(if subtract {
+                            a.get() - b.get()
+                        } else {
+                            a.get() + b.get()
+                        })
+                        .map(CalculatedValue::Number)
+                    }
+                    (CalculatedValue::Date(a), CalculatedValue::Date(b)) if subtract => {
+                        number_result(f64::from(days_from_civil(a) - days_from_civil(b)))
+                            .map(CalculatedValue::Number)
+                    }
+                    (CalculatedValue::Date(date), CalculatedValue::Number(days)) => {
+                        shift_date(date, if subtract { -days.get() } else { days.get() })
+                            .map(CalculatedValue::Date)
+                    }
+                    (CalculatedValue::Number(days), CalculatedValue::Date(date)) if !subtract => {
+                        shift_date(date, days.get()).map(CalculatedValue::Date)
+                    }
+                    _ => Err(CalculationFailure::TypeMismatch),
+                }
+            }
+            _ => self
+                .number_expression(expression)
+                .map(CalculatedValue::Number),
+        }
+    }
+
+    fn calculated_reference(
+        &self,
+        reference: &FieldRef,
+    ) -> Result<CalculatedValue, CalculationFailure> {
+        if let Some(value) = self.values.calculated_value(reference) {
+            Ok(value)
+        } else if super::field_type(self.document, reference) == Some(&FieldType::Auto) {
+            match self.document.entities[&reference.entity]
+                .fields
+                .get(&reference.field)
+            {
+                Some(Value::Text(text)) => Ok(CalculatedValue::Text(text.clone())),
+                Some(Value::Boolean(value)) => Ok(CalculatedValue::Boolean(*value)),
+                None => Ok(CalculatedValue::Number(Number::default())),
+                Some(
+                    Value::Formula(_) | Value::Number(_) | Value::Date(_) | Value::Reference(_),
+                ) => Err(CalculationFailure::FailedDependencies {
+                    dependencies: BTreeSet::from([reference.clone()]),
+                }),
+            }
+        } else {
+            self.reference(reference).map(CalculatedValue::Number)
+        }
+    }
     // Static dependencies still govern scheduling, cycles, and invalidation.
     // Failure propagation follows only the branches that are actually read;
     // a column read names its first failed cell in entity order. The
@@ -310,7 +418,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
                     if matches!(
-                        self.number(value),
+                        self.calculated(value),
                         Err(CalculationFailure::DivisionByZero
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult
@@ -336,20 +444,24 @@ impl<V: ValueStore> Evaluation<'_, V> {
         &mut self,
         expression: &Expression,
         failures: &FailureMap,
+        cell_failures: &super::CellFailures,
     ) -> BTreeSet<FieldRef> {
+        let is_failed = |reference: &FieldRef| {
+            failures.contains_key(reference) || cell_failures.contains_key(reference)
+        };
         let mut references = BTreeSet::new();
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
             match node {
                 Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-                    if failures.contains_key(reference) {
+                    if is_failed(reference) {
                         references.insert(reference.clone());
                     }
                 }
                 Expression::SameRowReference(field)
                 | Expression::AnchoredSameRowReference(field) => {
                     let reference = FieldRef::new(self.owner.entity.clone(), field.clone());
-                    if failures.contains_key(&reference) {
+                    if is_failed(&reference) {
                         references.insert(reference);
                     }
                 }
@@ -408,7 +520,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
                     if matches!(
-                        self.number(value),
+                        self.calculated(value),
                         Err(CalculationFailure::DivisionByZero
                             | CalculationFailure::TypeMismatch
                             | CalculationFailure::NonFiniteResult
@@ -427,8 +539,17 @@ impl<V: ValueStore> Evaluation<'_, V> {
         references
     }
 
-    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
     pub(crate) fn number(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
+        match arithmetic_operand(self.calculated(expression)?)? {
+            CalculatedValue::Number(number) => Ok(number),
+            CalculatedValue::Date(_) | CalculatedValue::Text(_) | CalculatedValue::Boolean(_) => {
+                Err(CalculationFailure::TypeMismatch)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // Closed expression dispatch.
+    fn number_expression(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
             Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
@@ -728,7 +849,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
         {
             if entity.fields.contains_key(&column.field) {
                 let reference = FieldRef::new(entity.id.clone(), column.field.clone());
-                let Some(value) = self.values.formula_value(&reference) else {
+                let Some(value) = self.values.number_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -785,7 +906,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             // Excel compares a blank referenced cell as zero.
             None => Ok(CriterionTest::equal_number(0.0)),
             Some(Value::Number(_) | Value::Formula(_)) => {
-                let Some(value) = self.values.formula_value(reference) else {
+                let Some(value) = self.values.number_value(reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference.clone()]),
                     });
@@ -810,7 +931,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             None => Ok(None),
             Some(Value::Number(_) | Value::Formula(_)) => {
                 let reference = FieldRef::new(entity.id.clone(), field.clone());
-                let Some(value) = self.values.formula_value(&reference) else {
+                let Some(value) = self.values.number_value(&reference) else {
                     return Err(CalculationFailure::FailedDependencies {
                         dependencies: BTreeSet::from([reference]),
                     });
@@ -845,6 +966,14 @@ impl<V: ValueStore> Evaluation<'_, V> {
             }
             _ => return Err(CalculationFailure::TypeMismatch),
         };
+        if let Some(value) = self.values.calculated_value(&reference) {
+            return match value {
+                CalculatedValue::Date(date) => Ok(date),
+                CalculatedValue::Number(_)
+                | CalculatedValue::Text(_)
+                | CalculatedValue::Boolean(_) => Err(CalculationFailure::TypeMismatch),
+            };
+        }
         match self
             .document
             .entities
@@ -852,7 +981,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             .and_then(|entity| entity.fields.get(&reference.field))
         {
             Some(Value::Date(date)) => Ok(*date),
-            None => Err(CalculationFailure::FailedDependencies {
+            Some(Value::Formula(_)) | None => Err(CalculationFailure::FailedDependencies {
                 dependencies: BTreeSet::from([reference]),
             }),
             Some(_) => Err(CalculationFailure::TypeMismatch),
@@ -860,7 +989,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
     }
 
     fn reference(&self, reference: &FieldRef) -> Result<Number, CalculationFailure> {
-        if let Some(value) = self.values.formula_value(reference) {
+        if let Some(value) = self.values.number_value(reference) {
             return Ok(*value);
         }
         if self
@@ -893,16 +1022,24 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 left,
                 right,
             } => {
-                let left = self.number(left)?;
-                let right = self.number(right)?;
-                Ok(match operator {
-                    ComparisonOperator::Equal => left == right,
-                    ComparisonOperator::NotEqual => left != right,
-                    ComparisonOperator::Less => left < right,
-                    ComparisonOperator::LessOrEqual => left <= right,
-                    ComparisonOperator::Greater => left > right,
-                    ComparisonOperator::GreaterOrEqual => left >= right,
-                })
+                if super::field_type(self.document, self.owner) == Some(&FieldType::Auto)
+                    || [left, right].into_iter().any(|operand| {
+                        operand
+                            .reference_uses(self.owner)
+                            .into_iter()
+                            .any(|(target, _)| {
+                                super::field_type(self.document, &target) == Some(&FieldType::Auto)
+                            })
+                    })
+                {
+                    let left = self.comparison_operand(left)?;
+                    let right = self.comparison_operand(right)?;
+                    compare(*operator, left.as_ref(), right.as_ref())
+                } else {
+                    let left = self.number(left)?;
+                    let right = self.number(right)?;
+                    compare_order(*operator, Some(left.cmp(&right)))
+                }
             }
             Expression::And(arguments) | Expression::Or(arguments) => {
                 let and = matches!(expression, Expression::And(_));
@@ -931,13 +1068,120 @@ impl<V: ValueStore> Evaluation<'_, V> {
                     .get(&reference.entity)
                     .is_some_and(|entity| !entity.fields.contains_key(&reference.field)))
             }
-            _ => Err(CalculationFailure::TypeMismatch),
+            _ => match self.calculated(expression)? {
+                CalculatedValue::Boolean(value) => Ok(value),
+                CalculatedValue::Number(number) => Ok(number.get() != 0.0),
+                CalculatedValue::Date(_) => Ok(true),
+                CalculatedValue::Text(_) => Err(CalculationFailure::TypeMismatch),
+            },
         }
+    }
+
+    fn comparison_operand(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<Option<CalculatedValue>, CalculationFailure> {
+        let reference = match expression {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+                Some(reference.clone())
+            }
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+                Some(FieldRef::new(self.owner.entity.clone(), field.clone()))
+            }
+            _ => None,
+        };
+        if let Some(reference) = reference {
+            if super::field_type(self.document, &reference) == Some(&FieldType::Auto)
+                && !self.document.entities[&reference.entity]
+                    .fields
+                    .contains_key(&reference.field)
+            {
+                return Ok(None);
+            }
+        }
+        self.calculated(expression).map(Some)
     }
 }
 
+fn arithmetic_operand(value: CalculatedValue) -> Result<CalculatedValue, CalculationFailure> {
+    match value {
+        CalculatedValue::Text(text) => {
+            let text = text.trim_matches(' ');
+            if !text
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'+' | b'-' | b'.' | b'e' | b'E'))
+            {
+                return Err(CalculationFailure::TypeMismatch);
+            }
+            let number = text
+                .parse::<f64>()
+                .map_err(|_| CalculationFailure::TypeMismatch)?;
+            number_result(number).map(CalculatedValue::Number)
+        }
+        CalculatedValue::Boolean(value) => {
+            number_result(f64::from(u8::from(value))).map(CalculatedValue::Number)
+        }
+        CalculatedValue::Date(_) | CalculatedValue::Number(_) => Ok(value),
+    }
+}
+
+fn compare(
+    operator: ComparisonOperator,
+    left: Option<&CalculatedValue>,
+    right: Option<&CalculatedValue>,
+) -> Result<bool, CalculationFailure> {
+    fn blank_order(value: &CalculatedValue) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering::{Equal, Less};
+        match value {
+            CalculatedValue::Number(number) => Some(Number::default().cmp(number)),
+            CalculatedValue::Boolean(value) => Some(false.cmp(value)),
+            CalculatedValue::Text(text) => Some(if text.is_empty() { Equal } else { Less }),
+            CalculatedValue::Date(_) => None,
+        }
+    }
+    let ordering = match (left, right) {
+        (None, None) => Some(std::cmp::Ordering::Equal),
+        (None, Some(right)) => blank_order(right),
+        (Some(left), None) => blank_order(left).map(std::cmp::Ordering::reverse),
+        (Some(CalculatedValue::Number(left)), Some(CalculatedValue::Number(right))) => {
+            Some(left.cmp(right))
+        }
+        (Some(CalculatedValue::Boolean(left)), Some(CalculatedValue::Boolean(right))) => {
+            Some(left.cmp(right))
+        }
+        (Some(CalculatedValue::Date(left)), Some(CalculatedValue::Date(right))) => {
+            Some(left.cmp(right))
+        }
+        (Some(CalculatedValue::Text(_)), Some(CalculatedValue::Text(_))) => {
+            return Err(CalculationFailure::TypeMismatch);
+        }
+        (Some(_), Some(_)) => None,
+    };
+    compare_order(operator, ordering)
+}
+
+fn compare_order(
+    operator: ComparisonOperator,
+    order: Option<std::cmp::Ordering>,
+) -> Result<bool, CalculationFailure> {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    Ok(match operator {
+        ComparisonOperator::Equal => order == Some(Equal),
+        ComparisonOperator::NotEqual => order != Some(Equal),
+        ComparisonOperator::Less => order.ok_or(CalculationFailure::TypeMismatch)? == Less,
+        ComparisonOperator::LessOrEqual => {
+            order.ok_or(CalculationFailure::TypeMismatch)? != Greater
+        }
+        ComparisonOperator::Greater => order.ok_or(CalculationFailure::TypeMismatch)? == Greater,
+        ComparisonOperator::GreaterOrEqual => {
+            order.ok_or(CalculationFailure::TypeMismatch)? != Less
+        }
+    })
+}
+
 // Howard Hinnant's civil-date algorithm, with an arbitrary 1970-01-01 epoch.
-fn days_from_civil(date: Date) -> i32 {
+#[must_use]
+pub fn days_from_civil(date: Date) -> i32 {
     let mut year = i32::from(date.year());
     let month = i32::from(date.month());
     if month <= 2 {
@@ -949,6 +1193,34 @@ fn days_from_civil(date: Date) -> i32 {
     let day_of_year = (153 * shifted_month + 2) / 5 + i32::from(date.day()) - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
+}
+
+fn shift_date(date: Date, offset: f64) -> Result<Date, CalculationFailure> {
+    if offset.fract() != 0.0 {
+        return Err(CalculationFailure::TypeMismatch);
+    }
+    let day = f64::from(days_from_civil(date)) + offset;
+    if !(-719_162.0..=2_932_896.0).contains(&day) {
+        return Err(CalculationFailure::NonFiniteResult);
+    }
+    #[allow(clippy::cast_possible_truncation)] // Integral and bounded above.
+    let day = day as i32 + 719_468;
+    let era = day.div_euclid(146_097);
+    let day_of_era = day - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i32::from(month <= 2);
+    Date::new(
+        u16::try_from(year).map_err(|_| CalculationFailure::NonFiniteResult)?,
+        u8::try_from(month).map_err(|_| CalculationFailure::NonFiniteResult)?,
+        u8::try_from(day).map_err(|_| CalculationFailure::NonFiniteResult)?,
+    )
+    .map_err(|_| CalculationFailure::NonFiniteResult)
 }
 
 /// The first cell of `column`, in entity order, that already carries a failure.

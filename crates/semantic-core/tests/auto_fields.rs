@@ -124,14 +124,9 @@ fn auto_required_constraint_and_reference_are_refused() {
 }
 
 #[test]
-fn auto_formula_is_explicitly_unsupported() {
+fn auto_admits_an_existing_bound_formula_value() {
     let formula = Value::Formula(Expression::Number(Number::new(1.0).unwrap()));
-    let diagnostics = validate_document_core(&auto_document(Some(formula)));
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("Auto formulas are unsupported"))
-    );
+    assert_eq!(validate_document_core(&auto_document(Some(formula))), []);
 }
 
 #[test]

@@ -129,6 +129,65 @@ fn date_functions_calculate_and_compose() {
 }
 
 #[test]
+fn date_subtraction_composes_with_numeric_operators_and_functions() {
+    for (source, expected) in [
+        ("([r.end] - [r.d]) * 2", 38.0),
+        ("ROUND([r.end] - [r.d], 0)", 19.0),
+        ("IFERROR([r.end] - [r.d], 0)", 19.0),
+        ("ABS([r.d] - [r.end])", 19.0),
+        ("IF([r.end] - [r.d] = 19, 1, 0)", 1.0),
+    ] {
+        let CalculationOutcome::Complete(result) = calculate(source) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(
+            result.value(&FieldRef::new("r", "output")).unwrap().get(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn date_functions_accept_calculated_dates() {
+    for (source, expected) in [
+        ("MONTH([.later])", 11.0),
+        ("WEEKDAY([.later])", 5.0),
+        ("DAYS([.later], [.d])", 7.0),
+    ] {
+        let mut document = document();
+        document
+            .schemas
+            .get_mut("schema")
+            .unwrap()
+            .fields
+            .insert("later".into(), definition("later", FieldType::Date, true));
+        let later = FieldRef::new("r", "later");
+        let expression =
+            bind_expression(&document, &later, &parse_expression("[.d] + 7").unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("later".into(), Value::Formula(expression));
+        let owner = FieldRef::new("r", "output");
+        let expression =
+            bind_expression(&document, &owner, &parse_expression(source).unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("output".into(), Value::Formula(expression));
+        let CalculationOutcome::Complete(result) = calculate_complete(&document) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(result.value(&owner).unwrap().get(), expected, "{source}");
+    }
+}
+
+#[test]
 fn date_arguments_are_restricted_and_projection_round_trips() {
     let document = document();
     let owner = FieldRef::new("r", "output");
@@ -245,4 +304,127 @@ fn same_row_date_edits_recalculate_through_retained_state() {
     };
     assert_eq!(calculation.value(&owner).unwrap().get(), 2027.0);
     assert!(calculation.dependencies()[&owner].contains(&FieldRef::new("r", "d")));
+}
+
+#[test]
+fn date_outcomes_recalculate_through_date_references() {
+    use std::collections::BTreeSet;
+    use tachiko_formula_engine::{CalculatedValue, RetainedCalculationState};
+
+    let mut doc = document();
+    for (field, source) in [
+        ("end", "[r.d] + 7"),
+        ("sunday", "[r.end]"),
+        ("output", "[r.end] - [r.d]"),
+    ] {
+        let owner = FieldRef::new("r", field);
+        let expression = bind_expression(&doc, &owner, &parse_expression(source).unwrap()).unwrap();
+        doc.entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from(field), Value::Formula(expression));
+    }
+    let (mut retained, _) = RetainedCalculationState::rebuild(&doc);
+    assert_eq!(
+        retained.calculated_value(&FieldRef::new("r", "sunday")),
+        Some(CalculatedValue::Date(Date::parse("2026-11-19").unwrap()))
+    );
+    assert_eq!(
+        retained.value(&FieldRef::new("r", "output")),
+        Some(Number::new(7.0).unwrap())
+    );
+    doc.entities.get_mut("r").unwrap().fields.insert(
+        FieldId::from("d"),
+        Value::Date(Date::parse("2026-12-26").unwrap()),
+    );
+    let _ = retained.update(&doc, &BTreeSet::from([FieldRef::new("r", "d")]));
+    assert_eq!(
+        retained.calculated_value(&FieldRef::new("r", "sunday")),
+        Some(CalculatedValue::Date(Date::parse("2027-01-02").unwrap()))
+    );
+    assert_eq!(retained.outcome(), calculate_complete(&doc));
+}
+
+#[test]
+fn date_arithmetic_uses_whole_days_and_checks_range() {
+    use tachiko_formula_engine::{CalculatedValue, CalculationFailure};
+
+    for (source, expected) in [
+        ("[r.d] - 7", "2026-11-05"),
+        ("7 + [r.d]", "2026-11-19"),
+        ("[r.leap_start] + 1", "2024-02-29"),
+    ] {
+        let mut doc = document();
+        let owner = FieldRef::new("r", "end");
+        let expression = bind_expression(&doc, &owner, &parse_expression(source).unwrap()).unwrap();
+        doc.entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from("end"), Value::Formula(expression));
+        let CalculationOutcome::Complete(calculation) = calculate_complete(&doc) else {
+            panic!("{source} must calculate")
+        };
+        assert_eq!(
+            calculation.calculated_value(&owner),
+            Some(CalculatedValue::Date(Date::parse(expected).unwrap()))
+        );
+    }
+    for (source, expected) in [
+        ("[r.d] + 0.5", CalculationFailure::TypeMismatch),
+        ("[r.max] + 1", CalculationFailure::NonFiniteResult),
+        ("[r.min] - 1", CalculationFailure::NonFiniteResult),
+    ] {
+        let mut doc = document();
+        let owner = FieldRef::new("r", "end");
+        let expression = bind_expression(&doc, &owner, &parse_expression(source).unwrap()).unwrap();
+        doc.entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert(FieldId::from("end"), Value::Formula(expression));
+        let CalculationOutcome::Failed(failures) = calculate_complete(&doc) else {
+            panic!("{source} must fail")
+        };
+        assert_eq!(failures.failures().get(&owner), Some(&expected));
+    }
+}
+
+#[test]
+fn iferror_selects_tagged_dates_before_declared_type_checks() {
+    for (source, expected) in [
+        ("IFERROR([r.d] + 7, [r.d])", "2026-11-19"),
+        ("IFERROR([r.d] + 0.5, [r.d])", "2026-11-12"),
+        ("IFERROR([r.d], [r.d] + 0.5)", "2026-11-12"),
+    ] {
+        let mut document = document();
+        let owner = FieldRef::new("r", "end");
+        let expression =
+            bind_expression(&document, &owner, &parse_expression(source).unwrap()).unwrap();
+        document
+            .entities
+            .get_mut("r")
+            .unwrap()
+            .fields
+            .insert("end".into(), Value::Formula(expression));
+        let CalculationOutcome::Complete(result) = calculate_complete(&document) else {
+            panic!("calculation failed: {source}");
+        };
+        assert_eq!(
+            result.calculated_value(&owner),
+            Some(tachiko_formula_engine::CalculatedValue::Date(
+                expected.parse().unwrap()
+            ))
+        );
+        let (retained, _) = tachiko_formula_engine::RetainedCalculationState::rebuild(&document);
+        assert_eq!(retained.outcome(), CalculationOutcome::Complete(result));
+    }
+    let CalculationOutcome::Failed(result) = calculate("IFERROR([r.d], 0)") else {
+        panic!("a successful Date must not be replaced with numeric fallback");
+    };
+    assert_eq!(
+        result.failures()[&FieldRef::new("r", "output")],
+        tachiko_formula_engine::CalculationFailure::TypeMismatch
+    );
 }

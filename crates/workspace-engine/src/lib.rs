@@ -15,14 +15,15 @@ pub use tachiko_diff_engine::{
 };
 #[cfg(feature = "issue-175-research")]
 pub use tachiko_formula_engine::CalculationOutcome as Issue175CalculationOutcome;
+pub use tachiko_formula_engine::{
+    CalculatedValue, CalculationError, CalculationFailure, CanonicalAuthoringProjectionError,
+    CellFailure, CellFailureCode, ColumnFailure, ExpressionComplexityError, FormulaBindError,
+    ReferenceFailure,
+};
 use tachiko_formula_engine::{
     Calculation, CalculationOutcome, FormulaParseError, RetainedCalculationState, bind_expression,
     calculate, calculate_complete, parse_expression, project_expression,
     project_expression_with_index, validate_expression_structure,
-};
-pub use tachiko_formula_engine::{
-    CalculationError, CalculationFailure, CanonicalAuthoringProjectionError, ColumnFailure,
-    ExpressionComplexityError, FormulaBindError, ReferenceFailure,
 };
 pub use tachiko_merge_engine::{
     ConflictFacet, ConflictFacetV2, ConflictFact, ConflictFactV2, ConflictKind, ConflictTarget,
@@ -412,7 +413,8 @@ pub struct EntityInspection {
 pub struct DownstreamImpact {
     pub field: FieldRef,
     pub address: FieldAddress,
-    pub value: Number,
+    #[serde(serialize_with = "serialize_calculated_value")]
+    pub value: CalculatedValue,
 }
 
 /// Provider-independent facts for one stable field in one identified snapshot.
@@ -422,11 +424,38 @@ pub struct FieldAnalysis {
     pub field: FieldRef,
     pub address: FieldAddress,
     pub stored_value: Value,
-    pub calculated_value: Option<Number>,
+    #[serde(serialize_with = "serialize_optional_calculated_value")]
+    pub calculated_value: Option<CalculatedValue>,
     pub formula_source: Option<String>,
     pub direct_dependencies: Vec<FieldRef>,
     pub upstream_dependencies: Vec<FieldRef>,
     pub downstream_impacts: Vec<DownstreamImpact>,
+}
+
+fn serialize_calculated_value<S: Serializer>(
+    value: &CalculatedValue,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        CalculatedValue::Number(number) => number.serialize(serializer),
+        CalculatedValue::Date(date) => Value::Date(*date).serialize(serializer),
+        CalculatedValue::Text(text) => Value::Text(text.clone()).serialize(serializer),
+        CalculatedValue::Boolean(value) => Value::Boolean(*value).serialize(serializer),
+    }
+}
+
+#[allow(clippy::ref_option)] // serde `serialize_with` passes the field as `&Option<T>`.
+fn serialize_optional_calculated_value<S: Serializer>(
+    value: &Option<CalculatedValue>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(CalculatedValue::Number(number)) => serializer.serialize_some(number),
+        Some(CalculatedValue::Date(date)) => serializer.serialize_some(&Value::Date(*date)),
+        Some(CalculatedValue::Text(text)) => serializer.serialize_some(&Value::Text(text.clone())),
+        Some(CalculatedValue::Boolean(value)) => serializer.serialize_some(&Value::Boolean(*value)),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Semantic comparison plus deterministic stable-ID affected-area projection.
@@ -499,6 +528,7 @@ pub enum RuntimeValue {
     Boolean(bool),
     Date(Date),
     Reference { reference: String },
+    Error { error: &'static str },
 }
 
 /// Stage-0 evidence for one supplied name in an ordered semantic request.
@@ -924,16 +954,36 @@ pub fn calculate_fields(document: &Document) -> Result<Vec<CalculatedField>, Wor
     let mut fields = calculation
         .values()
         .iter()
+        .filter_map(|(field, value)| {
+            matches!(
+                document.entities[&field.entity].fields.get(&field.field),
+                Some(Value::Formula(_) | Value::Number(_))
+            )
+            .then(|| calculated_field_number(value))
+            .flatten()
+            .map(|number| (field, number))
+        })
         .map(|(field, value)| {
             Ok(CalculatedField {
                 field: field.clone(),
                 address: index.field_address(document, field)?,
-                value: *value,
+                value,
             })
         })
         .collect::<Result<Vec<_>, WorkspaceError>>()?;
     fields.sort_by(|left, right| left.address.cmp(&right.address));
     Ok(fields)
+}
+
+fn calculated_field_number(value: &CalculatedValue) -> Option<Number> {
+    match value {
+        CalculatedValue::Number(number) => Some(*number),
+        CalculatedValue::Date(date) => Some(
+            Number::new(f64::from(tachiko_formula_engine::days_from_civil(*date)))
+                .expect("date day number is finite"),
+        ),
+        CalculatedValue::Text(_) | CalculatedValue::Boolean(_) => None,
+    }
 }
 
 /// Compare two semantic snapshots through the shared diff orchestration.
@@ -1097,7 +1147,11 @@ pub fn analyze_field(
     let downstream_impacts = calculation
         .affected_by(field)
         .into_iter()
-        .filter_map(|affected| calculation.value(&affected).map(|value| (affected, value)))
+        .filter_map(|affected| {
+            calculation
+                .calculated_value(&affected)
+                .map(|value| (affected, value))
+        })
         .map(|(affected, value)| {
             Ok(DownstreamImpact {
                 address: index.field_address(document, &affected)?,
@@ -1112,7 +1166,7 @@ pub fn analyze_field(
         field: field.clone(),
         address,
         stored_value,
-        calculated_value: calculation.value(field),
+        calculated_value: calculation.calculated_value(field),
         formula_source,
         direct_dependencies,
         upstream_dependencies,
@@ -1576,9 +1630,19 @@ pub fn explain_field(
     let calculation = require_validated_calculation(document)?;
     let field = document.resolve_field(address)?;
     let value = field_value(document, &field)?;
-    let display_value = calculation
-        .value(&field)
-        .map_or_else(|| format_value(document, value), format_number);
+    let display_value = if let Some(failure) = calculation.cell_failure(&field) {
+        format!("{} (from {})", failure.code.display(), failure.origin)
+    } else {
+        calculation.calculated_value(&field).map_or_else(
+            || format_value(document, value),
+            |value| match value {
+                CalculatedValue::Number(number) => format_number(number),
+                CalculatedValue::Date(date) => date.to_string(),
+                CalculatedValue::Text(text) => text,
+                CalculatedValue::Boolean(value) => value.to_string(),
+            },
+        )
+    };
     let expression = match value {
         Value::Formula(expression) => Some(
             project_expression(document, &field, expression).map_err(|source| {
@@ -1600,11 +1664,16 @@ pub fn explain_field(
         .collect::<Result<Vec<_>, _>>()?;
     let mut affected_formulas = Vec::new();
     for affected in calculation.affected_by(&field) {
-        if let Some(value) = calculation.value(&affected) {
+        if let Some(value) = calculation.calculated_value(&affected) {
             affected_formulas.push(AffectedFormula {
                 address: index.field_address(document, &affected)?,
                 field: affected,
-                display_value: format_number(value),
+                display_value: match value {
+                    CalculatedValue::Number(number) => format_number(number),
+                    CalculatedValue::Date(date) => date.to_string(),
+                    CalculatedValue::Text(text) => text,
+                    CalculatedValue::Boolean(value) => value.to_string(),
+                },
             });
         }
     }
@@ -1645,7 +1714,11 @@ pub fn set_scalar(
             field: field.clone(),
         })?;
     let value = parse_scalar(document, &field, input, &definition.field_type)?;
-    let edited = field_value_candidate(document, &field, &value)?;
+    let edited = if let Value::Formula(expression) = &value {
+        formula_update_candidate(document, &field, expression)?
+    } else {
+        field_value_candidate(document, &field, &value)?
+    };
     finalize_edit(document, edited)
 }
 
@@ -1661,7 +1734,8 @@ pub fn set_formula(
     input: &str,
 ) -> Result<EditPreview, WorkspaceError> {
     let field = document.resolve_field(address)?;
-    let expression = bind_formula_update(document, &field, input)?;
+    let expression =
+        bind_formula_update(document, &field, input.strip_prefix('=').unwrap_or(input))?;
     let edited = formula_update_candidate(document, &field, &expression)?;
     finalize_edit(document, edited)
 }
@@ -2308,15 +2382,18 @@ pub(crate) fn value_matches_type(value_kind: SemanticValueKind, field_type: &Fie
         (
             SemanticValueKind::Number | SemanticValueKind::Formula,
             FieldType::Number
+        ) | (
+            SemanticValueKind::Formula | SemanticValueKind::Date,
+            FieldType::Date
         ) | (SemanticValueKind::Text, FieldType::Text)
             | (SemanticValueKind::Boolean, FieldType::Boolean)
-            | (SemanticValueKind::Date, FieldType::Date)
             | (SemanticValueKind::Reference, FieldType::Reference { .. })
             | (
                 SemanticValueKind::Number
                     | SemanticValueKind::Text
                     | SemanticValueKind::Boolean
-                    | SemanticValueKind::Date,
+                    | SemanticValueKind::Date
+                    | SemanticValueKind::Formula,
                 FieldType::Auto
             )
     )
@@ -2392,7 +2469,10 @@ pub(crate) fn formula_update_target_rule(
             field: field.clone(),
         });
     }
-    if definition.field_type != FieldType::Number {
+    if !matches!(
+        definition.field_type,
+        FieldType::Auto | FieldType::Number | FieldType::Date
+    ) {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
@@ -2408,31 +2488,41 @@ pub(crate) fn formula_update_target_rule(
 pub(crate) fn formula_inverse_restore_candidate(
     document: &Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
 ) -> Result<Document, WorkspaceError> {
     let mut planning = FieldEditPlanning::new();
-    check_formula_inverse_restore_candidate(document, field, &mut planning)?;
+    check_formula_inverse_restore_candidate(document, field, &value, &mut planning)?;
     let mut candidate = document.clone();
-    insert_number_value(&mut candidate, field, value)?;
+    insert_restored_value(&mut candidate, field, value)?;
     Ok(candidate)
 }
 
 pub(crate) fn formula_inverse_restore_candidate_in_place(
     candidate: &mut Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
     planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
-    check_formula_inverse_restore_candidate(candidate, field, planning)?;
-    insert_number_value(candidate, field, value)
+    check_formula_inverse_restore_candidate(candidate, field, &value, planning)?;
+    insert_restored_value(candidate, field, value)
 }
 
 fn check_formula_inverse_restore_candidate(
     document: &Document,
     field: &FieldRef,
+    value: &Value,
     planning: &mut FieldEditPlanning,
 ) -> Result<(), WorkspaceError> {
     formula_update_target_rule(document, field)?;
+    if !value_matches_type(
+        semantic_value_kind(value),
+        &field_definition(document, field)?.field_type,
+    ) || matches!(value, Value::Formula(_))
+    {
+        return Err(WorkspaceError::TypeMismatch {
+            field: field.clone(),
+        });
+    }
     let entity =
         document
             .entities
@@ -2449,10 +2539,10 @@ fn check_formula_inverse_restore_candidate(
     Ok(())
 }
 
-fn insert_number_value(
+fn insert_restored_value(
     candidate: &mut Document,
     field: &FieldRef,
-    value: Number,
+    value: Value,
 ) -> Result<(), WorkspaceError> {
     candidate
         .entities
@@ -2461,7 +2551,7 @@ fn insert_number_value(
             entity: field.entity.clone(),
         })?
         .fields
-        .insert(field.field.clone(), Value::Number(value));
+        .insert(field.field.clone(), value);
     Ok(())
 }
 
@@ -2506,7 +2596,10 @@ fn check_formula_restore_candidate(
                 entity: field.entity.clone(),
             })?;
     let definition = field_definition(document, field)?;
-    if definition.field_type != FieldType::Number {
+    if !matches!(
+        definition.field_type,
+        FieldType::Auto | FieldType::Number | FieldType::Date
+    ) {
         return Err(WorkspaceError::NonNumericFormulaField {
             field: field.clone(),
         });
@@ -2839,7 +2932,9 @@ pub(crate) fn validation_report_for_calculation(
 ) -> ValidationReport {
     let failures = match calculation {
         CalculationOutcome::Complete(_) => None,
-        CalculationOutcome::Failed(failures) => Some(failures.failures()),
+        CalculationOutcome::Failed(failures) => {
+            Some((failures.failures(), failures.cell_failures()))
+        }
     };
     let mut report = validation_report_for_failures(document, failures);
     if let CalculationOutcome::Complete(calculation) = calculation {
@@ -2857,7 +2952,9 @@ pub(crate) fn validation_report_for_retained_calculation(
 ) -> ValidationReport {
     let mut report = validation_report_for_failures(
         document,
-        calculation.is_failed().then_some(calculation.failures()),
+        calculation
+            .is_failed()
+            .then_some((calculation.failures(), calculation.cell_failures())),
     );
     if let Some(values) = calculation.complete_values() {
         report.extend(validate_complete_formula_constraints(document, values));
@@ -2865,14 +2962,24 @@ pub(crate) fn validation_report_for_retained_calculation(
     report
 }
 
+type FormulaFailureMaps<'a> = (
+    &'a BTreeMap<FieldRef, CalculationFailure>,
+    &'a BTreeMap<FieldRef, CellFailure>,
+);
+
 fn validation_report_for_failures(
     document: &Document,
-    failures: Option<&BTreeMap<FieldRef, CalculationFailure>>,
+    failures: Option<FormulaFailureMaps<'_>>,
 ) -> ValidationReport {
     let mut diagnostics = validate_document_core(document);
     let core_diagnostics = diagnostics.clone();
-    if let Some(failures) = failures {
-        diagnostics.extend(formula_diagnostics(document, failures, &core_diagnostics));
+    if let Some((failures, cell_failures)) = failures {
+        diagnostics.extend(formula_diagnostics(
+            document,
+            failures,
+            cell_failures,
+            &core_diagnostics,
+        ));
     }
     ValidationReport::new(diagnostics)
 }
@@ -2947,10 +3054,11 @@ const FORMULA_PROVIDER: DiagnosticProvider = DiagnosticProvider::new("tachiko.fo
 fn formula_diagnostics(
     document: &Document,
     failures: &BTreeMap<FieldRef, CalculationFailure>,
+    cell_failures: &BTreeMap<FieldRef, CellFailure>,
     core_diagnostics: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let mut surviving_failures = BTreeSet::new();
+    let mut surviving_failures: BTreeSet<_> = cell_failures.keys().cloned().collect();
     let mut pending_failed_dependencies = Vec::new();
     let blockers = formula_prerequisite_blockers(core_diagnostics);
     let address_index = AddressIndex::build(document).ok();
@@ -3047,9 +3155,13 @@ fn formula_diagnostics(
 
     propagate_surviving_failed_dependencies(&pending_failed_dependencies, &mut surviving_failures);
     for (formula, path, dependencies) in pending_failed_dependencies {
-        if let Some(diagnostic) =
-            project_failed_dependency_diagnostic(formula, &path, dependencies, &surviving_failures)
-        {
+        if let Some(diagnostic) = project_failed_dependency_diagnostic(
+            formula,
+            &path,
+            dependencies,
+            &surviving_failures,
+            cell_failures,
+        ) {
             diagnostics.push(diagnostic);
         }
     }
@@ -3126,6 +3238,7 @@ fn project_failed_dependency_diagnostic(
     path: &str,
     dependencies: &BTreeSet<FieldRef>,
     surviving_failures: &BTreeSet<FieldRef>,
+    cell_failures: &BTreeMap<FieldRef, CellFailure>,
 ) -> Option<Diagnostic> {
     let dependencies = dependencies
         .intersection(surviving_failures)
@@ -3139,7 +3252,11 @@ fn project_failed_dependency_diagnostic(
             diagnostic_codes::FORMULA_FAILED_DEPENDENCY,
             vec![SemanticSubject::EntityField(formula.clone())],
             path.to_owned(),
-            format!("formula '{formula}' directly depends on failed values"),
+            if dependencies.iter().any(|field| cell_failures.contains_key(field)) {
+                format!("Declared formula '{formula}' depends on a failed Auto cell. Use an Auto column to publish the failure in the cell.")
+            } else {
+                format!("formula '{formula}' directly depends on failed values")
+            },
         )
         .with_related_subjects(
             dependencies
@@ -3575,8 +3692,8 @@ fn parse_scalar(
             tachiko_semantic_core::ClassifiedInput::Blank => {
                 Err(invalid("Auto scalar; use unset for blank"))
             }
-            tachiko_semantic_core::ClassifiedInput::FormulaSource(_) => {
-                Err(invalid("Auto formulas are unsupported"))
+            tachiko_semantic_core::ClassifiedInput::FormulaSource(source) => {
+                bind_formula_update(document, field, &source[1..]).map(Value::Formula)
             }
         },
         FieldType::Number => input
@@ -3625,9 +3742,23 @@ fn runtime_value(
                 reference: target.key.to_string(),
             })
         }
+        Value::Formula(_) if calculation.cell_failure(field).is_some() => Ok(RuntimeValue::Error {
+            error: calculation
+                .cell_failure(field)
+                .expect("published cell failure")
+                .code
+                .display(),
+        }),
         Value::Formula(_) => calculation
-            .value(field)
-            .map(RuntimeValue::Number)
+            .calculated_value(field)
+            .map(|value| match value {
+                tachiko_formula_engine::CalculatedValue::Number(number) => {
+                    RuntimeValue::Number(number)
+                }
+                CalculatedValue::Date(date) => RuntimeValue::Date(date),
+                CalculatedValue::Text(text) => RuntimeValue::Text(text),
+                CalculatedValue::Boolean(value) => RuntimeValue::Boolean(value),
+            })
             .ok_or_else(|| WorkspaceError::MissingCalculation {
                 field: field.clone(),
             }),

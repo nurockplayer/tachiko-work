@@ -84,8 +84,8 @@ fn a_thousand_lookup_formulas_share_one_index_each_pass() {
         };
         for index in 0..1_000 {
             assert_eq!(
-                calculation.values()[&FieldRef::new(format!("lookup-{index:04}"), "result")],
-                Number::new(f64::from(index)).unwrap()
+                calculation.value(&FieldRef::new(format!("lookup-{index:04}"), "result")),
+                Some(Number::new(f64::from(index)).unwrap())
             );
         }
         assert_eq!(LOOKUP_INDEX_BUILDS.with(|builds| builds.replace(0)), 1);

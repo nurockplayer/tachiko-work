@@ -135,6 +135,32 @@ fn selection_statistics_empty_and_nonnumeric_selections() {
 }
 
 #[test]
+fn selection_statistics_ignores_nonnumeric_auto_formula_results() {
+    let doc = document(vec![
+        ("number", FieldType::Number, Some(number(100.0))),
+        ("flag", FieldType::Auto, Some(Value::Boolean(true))),
+        ("text", FieldType::Auto, Some(Value::Text("12".into()))),
+        (
+            "boolean_formula",
+            FieldType::Auto,
+            Some(Value::Formula(Expression::SameRowReference("flag".into()))),
+        ),
+        (
+            "text_formula",
+            FieldType::Auto,
+            Some(Value::Formula(Expression::SameRowReference("text".into()))),
+        ),
+    ]);
+    for field in ["boolean_formula", "text_formula"] {
+        let stats = query(doc.clone(), &["number", field]);
+        assert_eq!(stats.count, 2);
+        assert_eq!(stats.numerical_count, 1);
+        assert_eq!(stats.error_count, 0, "{field}");
+        assert_eq!(aggregates(&stats), [Some(100.0); 4]);
+    }
+}
+
+#[test]
 fn selection_statistics_failure_and_unavailable_null_all_aggregates() {
     let doc = document(vec![
         (

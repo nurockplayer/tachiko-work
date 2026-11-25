@@ -458,7 +458,11 @@ impl ResidentWorkspaceSession {
                         FormulaCalculationOutcome::Value(value) => {
                             fold[position].0 += value.get();
                         }
-                        FormulaCalculationOutcome::Failure(_)
+                        FormulaCalculationOutcome::Date(_)
+                        | FormulaCalculationOutcome::Text(_)
+                        | FormulaCalculationOutcome::Boolean(_)
+                        | FormulaCalculationOutcome::CellFailure(_)
+                        | FormulaCalculationOutcome::Failure(_)
                         | FormulaCalculationOutcome::Unavailable => fold[position].1 = false,
                     },
                     Value::Number(value) => fold[position].0 += value.get(),
@@ -523,7 +527,11 @@ impl ResidentWorkspaceSession {
                 Value::Formula(_) => {
                     match retained_calculation_for(&self.retained.calculation_state, target) {
                         FormulaCalculationOutcome::Value(number) => numbers.push(number.get()),
-                        FormulaCalculationOutcome::Failure(_)
+                        FormulaCalculationOutcome::Text(_)
+                        | FormulaCalculationOutcome::Boolean(_) => {}
+                        FormulaCalculationOutcome::Date(_)
+                        | FormulaCalculationOutcome::CellFailure(_)
+                        | FormulaCalculationOutcome::Failure(_)
                         | FormulaCalculationOutcome::Unavailable => error_count += 1,
                     }
                 }
@@ -844,11 +852,20 @@ impl ResidentDerivedState {
             .map_err(|source| WorkspaceError::from(source.clone()))?;
         let mut fields = values
             .iter()
+            .filter_map(|(field, value)| {
+                matches!(
+                    document.entities[&field.entity].fields.get(&field.field),
+                    Some(Value::Formula(_) | Value::Number(_))
+                )
+                .then(|| super::calculated_field_number(value))
+                .flatten()
+                .map(|number| (field, number))
+            })
             .map(|(field, value)| {
                 Ok(CalculatedField {
                     field: field.clone(),
                     address: index.field_address(document, field)?,
-                    value: *value,
+                    value,
                 })
             })
             .collect::<Result<Vec<_>, WorkspaceError>>()?;
@@ -1870,9 +1887,9 @@ fn retained_calculation_for(
                 FormulaCalculationOutcome::Failure(failure.clone())
             })
     } else {
-        calculation.value(target).map_or(
-            FormulaCalculationOutcome::Unavailable,
-            FormulaCalculationOutcome::Value,
+        crate::formula_operations::published_calculation(
+            calculation.calculated_value(target),
+            calculation.cell_failure(target),
         )
     }
 }

@@ -807,8 +807,18 @@ fn field_change_output(change: &SemanticChange) -> serde_json::Value {
         } => json!({
             "kind": "formula_impact",
             "field": field,
-            "before": before,
-            "after": after,
+            "before": match before {
+                tachiko_workspace_engine::CalculatedValue::Number(number) => json!(number),
+                tachiko_workspace_engine::CalculatedValue::Date(date) => json!(tachiko_workspace_engine::Value::Date(*date)),
+                tachiko_workspace_engine::CalculatedValue::Text(text) => json!(tachiko_workspace_engine::Value::Text(text.clone())),
+                tachiko_workspace_engine::CalculatedValue::Boolean(value) => json!(tachiko_workspace_engine::Value::Boolean(*value)),
+            },
+            "after": match after {
+                tachiko_workspace_engine::CalculatedValue::Number(number) => json!(number),
+                tachiko_workspace_engine::CalculatedValue::Date(date) => json!(tachiko_workspace_engine::Value::Date(*date)),
+                tachiko_workspace_engine::CalculatedValue::Text(text) => json!(tachiko_workspace_engine::Value::Text(text.clone())),
+                tachiko_workspace_engine::CalculatedValue::Boolean(value) => json!(tachiko_workspace_engine::Value::Boolean(*value)),
+            },
             "causes": causes,
         }),
         _ => unreachable!("field change adapter called for non-field change"),
@@ -961,6 +971,12 @@ fn override_failure_output(failure: &ScenarioOverrideFailure) -> serde_json::Val
 fn calculation_output(outcome: &FormulaCalculationOutcome) -> serde_json::Value {
     match outcome {
         FormulaCalculationOutcome::Value(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::Date(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::Text(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::Boolean(value) => json!({ "kind": "value", "value": value }),
+        FormulaCalculationOutcome::CellFailure(failure) => {
+            json!({ "kind": "failure", "code": failure.code.code(), "origin": failure.origin })
+        }
         FormulaCalculationOutcome::Failure(failure) => {
             json!({ "kind": "failure", "failure": calculation_failure_output(failure) })
         }
