@@ -6622,6 +6622,19 @@ fn constraint_affected_values(
         .collect()
 }
 
+#[cfg(test)]
+fn formula_projection_document(document: &Document) -> Document {
+    let mut document = document.clone();
+    document.keyed_grouped_sum_definitions.clear();
+    for entity in document.entities.values_mut() {
+        entity.rank = None;
+    }
+    for schema in document.schemas.values_mut() {
+        project_formula_schema(schema);
+    }
+    document
+}
+
 /// The scoped projection for derived formula impacts after complete v2 admission.
 fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) -> Document {
     let mut projection = Document::empty(document.id.clone(), document.title.clone());

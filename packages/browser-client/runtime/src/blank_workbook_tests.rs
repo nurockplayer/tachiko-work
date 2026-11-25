@@ -544,7 +544,13 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
         ]],
     );
     let table = window(&mut runtime);
-    let fields = &table.rows[0].fields;
+    let field_at = |column: usize| {
+        table.rows[0]
+            .fields
+            .iter()
+            .find(|field| field.target.field == table.columns[column].id)
+            .unwrap()
+    };
     for (position, expected) in [
         (5, StoredValueProjection::Number { value: 123.0 }),
         (
@@ -561,21 +567,28 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
             },
         ),
     ] {
-        assert!(matches!(&fields[position].calculated,
-            Some(CalculationProjection::Value { result: Some(actual), .. }) if *actual == expected
-        ));
+        let calculated = &field_at(position).calculated;
+        let Some(CalculationProjection::Value {
+            result: Some(actual),
+            ..
+        }) = calculated
+        else {
+            panic!("column {} expected {expected:?}, got {calculated:?}", position + 1);
+        };
+        assert_eq!(actual, &expected, "column {}", position + 1);
     }
     for position in [9, 10] {
-        assert_eq!(fields[position].display.as_deref(), Some("#VALUE!"));
+        let field = field_at(position);
+        assert_eq!(field.display.as_deref(), Some("#VALUE!"));
         assert_eq!(
-            fields[position].calculated,
+            field.calculated,
             Some(CalculationProjection::Failure {
                 code: "value".into(),
                 message: "#VALUE!".into(),
             })
         );
     }
-    assert_eq!(fields[12].display.as_deref(), Some("#DIV/0!"));
+    assert_eq!(field_at(12).display.as_deref(), Some("#DIV/0!"));
     let revision = runtime.current_revision().to_owned();
     for (portable, bytes) in [
         (false, runtime.export_project_v3(&revision).unwrap().bytes),

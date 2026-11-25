@@ -179,6 +179,14 @@ fn auto_wasm_bridge_publishes_formulas_and_refuses_declared_failures() {
         })
     };
     let window = ok(&mut host, &query("resident/1"));
+    let result_field = |row: usize| {
+        window["rows"][row]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["target"]["field"] == columns[1]["id"])
+            .unwrap()
+    };
     for (row, value) in [
         (0, json!({"kind":"number","value":124})),
         (1, json!({"kind":"date","value":"2026-01-02"})),
@@ -186,8 +194,9 @@ fn auto_wasm_bridge_publishes_formulas_and_refuses_declared_failures() {
         (3, json!({"kind":"text","value":"tea"})),
         (5, json!({"kind":"number","value":1})),
     ] {
-        let result = &window["rows"][row]["fields"][1]["calculated"]["result"];
-        assert_eq!(result["kind"], value["kind"]);
+        let calculated = &result_field(row)["calculated"];
+        let result = &calculated["result"];
+        assert_eq!(result["kind"], value["kind"], "row {row}: {calculated}");
         if let Some(number) = value["value"].as_f64() {
             assert_eq!(result["value"].as_f64(), Some(number));
         } else {
@@ -195,7 +204,7 @@ fn auto_wasm_bridge_publishes_formulas_and_refuses_declared_failures() {
         }
     }
     for (row, code, display) in [(4, "value", "#VALUE!"), (6, "division_by_zero", "#DIV/0!")] {
-        let field = &window["rows"][row]["fields"][1];
+        let field = result_field(row);
         assert_eq!(field["calculated"]["status"], "failure");
         assert_eq!(field["calculated"]["code"], code);
         assert_eq!(field["display"], display);

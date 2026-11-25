@@ -98,7 +98,7 @@ fn runtime_export_carries_calculated_date() {
     assert_eq!(source.affected_formulas[0].display_value, "2026-01-09");
     let expected = tachiko_workspace_engine::CalculatedValue::Date("2026-01-09".parse().unwrap());
     let analysis = tachiko_workspace_engine::analyze_field(&document, "dates", &owner).unwrap();
-    assert_eq!(analysis.calculated_value, Some(expected));
+    assert_eq!(analysis.calculated_value.as_ref(), Some(&expected));
     let source = tachiko_workspace_engine::analyze_field(
         &document,
         "dates",

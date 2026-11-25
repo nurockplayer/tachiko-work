@@ -115,7 +115,7 @@ fn blank_workbook_wasm_and_native_host_requests_preserve_the_atomic_journey() {
         json!({"kind":"number","value":120.0})
     );
     assert_eq!(window["columns"][1]["display_name"], "Column B");
-    for (row, input) in [(10_001, "1"), (3, "=1+1")] {
+    for (row, input) in [(10_001, "1"), (3, "=1+")] {
         let refused = exchange(
             &mut host,
             &json!({"type":"write_cell_at", "expected_revision":revision,

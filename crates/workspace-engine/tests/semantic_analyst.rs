@@ -173,7 +173,7 @@ fn field_analysis_returns_transitive_downstream_impact_trace() {
         analysis
             .downstream_impacts
             .iter()
-            .map(|impact| (impact.field.clone(), impact.value))
+            .map(|impact| (impact.field.clone(), impact.value.clone()))
             .collect::<Vec<_>>(),
         vec![
             (
