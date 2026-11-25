@@ -22,13 +22,44 @@ fn classified(input: &str, order: Option<AutoDateOrder>) -> ClassifiedInput {
     )
 }
 
+pub(super) fn formula_source(input: &ScalarEditInput) -> Option<&str> {
+    match input {
+        ScalarEditInput::Auto { input, .. } => input.strip_prefix('='),
+        ScalarEditInput::Number { .. }
+        | ScalarEditInput::Date { .. }
+        | ScalarEditInput::Text { .. }
+        | ScalarEditInput::Boolean { .. }
+        | ScalarEditInput::Clear => None,
+    }
+}
+
+pub(super) fn inverse_formula(
+    target: &FieldRef,
+    previous: Option<&crate::Value>,
+) -> SemanticCommand {
+    match previous {
+        Some(
+            value @ (crate::Value::Number(_)
+            | crate::Value::Date(_)
+            | crate::Value::Text(_)
+            | crate::Value::Boolean(_)),
+        ) => SemanticCommand::formula_inverse_restore_typed(
+            target.clone(),
+            crate::Number::default(),
+            value.clone(),
+        ),
+        Some(crate::Value::Formula(_)) | None => crate::value_command(target, previous),
+        Some(crate::Value::Reference(_)) => unreachable!("Auto formulas cannot replace References"),
+    }
+}
+
 pub(super) fn value(input: &ScalarEditInput) -> Result<Option<crate::Value>, DesignerError> {
     use crate::Value;
     Ok(match input {
         ScalarEditInput::Auto { input, date_order } => match classified(input, *date_order) {
             ClassifiedInput::Blank => None,
             ClassifiedInput::FormulaSource(_) => {
-                return Err(table_error("Auto formulas are unsupported"));
+                return Err(table_error("Auto formula entry requires a cell target"));
             }
             ClassifiedInput::Number { value, .. } => Some(Value::Number(value)),
             ClassifiedInput::Text(value) => Some(Value::Text(value)),

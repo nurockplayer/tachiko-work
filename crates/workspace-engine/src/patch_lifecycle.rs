@@ -460,6 +460,22 @@ impl SemanticCommand {
         Self::SetFieldValue { field, value }
     }
 
+    /// Bind a host-authored formula against the candidate's existing cell identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns the formula parse, bind, or target admission error.
+    pub fn bind_formula_update(
+        document: &Document,
+        field: FieldRef,
+        source: &str,
+    ) -> Result<Self, WorkspaceError> {
+        let expression = crate::bind_formula_update(document, &field, source)?;
+        Ok(Self::FormulaUpdate(FormulaUpdateCommand::new(
+            document, field, expression,
+        )))
+    }
+
     #[must_use]
     pub fn formula_inverse_restore(field: FieldRef, value: Number) -> Self {
         Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
@@ -5955,13 +5971,24 @@ impl<'a> DisclosureDerivation<'a> {
                 // can only target an optional Number or Date slot through their own
                 // commands.
                 let definition = crate::field_definition(self.before, field)
+                    .or_else(|error| {
+                        if families == BTreeSet::from([OperationFamily::FormulaUpdate]) {
+                            crate::field_definition(self.after, field)
+                                .ok()
+                                .filter(|definition| definition.field_type == FieldType::Auto)
+                                .ok_or(error)
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = self.before.entities[&field.entity].fields.get(&field.field);
-                let formula_restore =
-                    matches!(definition.field_type, FieldType::Number | FieldType::Date)
-                        && !definition.required
-                        && matches!(value, Value::Formula(_))
-                        && families.contains(&OperationFamily::FormulaUpdate);
+                let formula_restore = matches!(
+                    definition.field_type,
+                    FieldType::Auto | FieldType::Number | FieldType::Date
+                ) && !definition.required
+                    && matches!(value, Value::Formula(_))
+                    && families.contains(&OperationFamily::FormulaUpdate);
                 if existing.is_some()
                     || definition.required
                     || (matches!(value, Value::Formula(_)) && !formula_restore)
@@ -6332,6 +6359,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                                         | Value::Text(_)
                                         | Value::Boolean(_)
                                         | Value::Date(_)
+                                        | Value::Formula(_)
                                 ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))

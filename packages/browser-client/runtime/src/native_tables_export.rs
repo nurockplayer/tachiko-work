@@ -403,9 +403,20 @@ fn projected_cell(
             value,
             result: None | Some(crate::StoredValueProjection::Number { .. }),
         }) => crate::interop_adapter::SourceValue::Number { value: *value },
-        Some(crate::CalculationProjection::Value { .. }) => {
-            unreachable!("native formula result must be Number or Date")
-        }
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Text { value }),
+            ..
+        }) => crate::interop_adapter::SourceValue::Text {
+            value: value.clone(),
+        },
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Boolean { value }),
+            ..
+        }) => crate::interop_adapter::SourceValue::Boolean { value: *value },
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Reference { .. }),
+            ..
+        }) => unreachable!("a formula cannot calculate a Reference"),
         Some(crate::CalculationProjection::Failure { code, message }) => {
             return Err(refused(
                 "native_tables_formula_value_unavailable",
