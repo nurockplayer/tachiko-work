@@ -1079,7 +1079,18 @@ impl Expression {
     /// Infer the non-value condition type after structural bounds are checked.
     #[must_use]
     pub fn expression_type(&self) -> Option<FormulaExpressionType> {
+        self.expression_type_with_auto(false)
+    }
+
+    /// Infer expression shape with Auto cells admitting tagged conditions and values.
+    #[must_use]
+    pub fn expression_type_with_auto(&self, auto: bool) -> Option<FormulaExpressionType> {
         use FormulaExpressionType::{Condition, Number};
+        let valid = |operand: &Self, expected| {
+            operand
+                .expression_type_with_auto(auto)
+                .is_some_and(|kind| auto || kind == expected)
+        };
         match self {
             Self::Number(_)
             | Self::Reference(_)
@@ -1088,10 +1099,10 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Some(Number),
             Self::Lookup {
                 key, if_missing, ..
-            } => (key.expression_type() == Some(Number)
+            } => (valid(key, Number)
                 && if_missing
                     .as_deref()
-                    .is_none_or(|value| value.expression_type() == Some(Number)))
+                    .is_none_or(|value| valid(value, Number)))
             .then_some(Number),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
@@ -1099,7 +1110,7 @@ impl Expression {
                     criterion
                         .value
                         .as_deref()
-                        .is_none_or(|expression| expression.expression_type() == Some(Number))
+                        .is_none_or(|expression| valid(expression, Number))
                 })
                 .then_some(Number),
             Self::Add { left, right }
@@ -1107,34 +1118,32 @@ impl Expression {
             | Self::Multiply { left, right }
             | Self::Divide { left, right }
             | Self::Minimum { left, right }
-            | Self::Maximum { left, right } => (left.expression_type() == Some(Number)
-                && right.expression_type() == Some(Number))
-            .then_some(Number),
-            Self::Compare { left, right, .. } => (left.expression_type() == Some(Number)
-                && right.expression_type() == Some(Number))
-            .then_some(Condition),
+            | Self::Maximum { left, right } => {
+                (valid(left, Number) && valid(right, Number)).then_some(Number)
+            }
+            Self::Compare { left, right, .. } => {
+                (valid(left, Number) && valid(right, Number)).then_some(Condition)
+            }
             Self::If {
                 condition,
                 then_value,
                 else_value,
-            } => (condition.expression_type() == Some(Condition)
-                && then_value.expression_type() == Some(Number)
-                && else_value.expression_type() == Some(Number))
+            } => (valid(condition, Condition)
+                && valid(then_value, Number)
+                && valid(else_value, Number))
             .then_some(Number),
             Self::And(arguments) | Self::Or(arguments) => (!arguments.is_empty()
-                && arguments
-                    .iter()
-                    .all(|argument| argument.expression_type() == Some(Condition)))
+                && arguments.iter().all(|argument| valid(argument, Condition)))
             .then_some(Condition),
-            Self::IfError { value, fallback } => (value.expression_type() == Some(Number)
-                && fallback.expression_type() == Some(Number))
-            .then_some(Number),
-            Self::Not(value) => (value.expression_type() == Some(Condition)).then_some(Condition),
-            Self::Abs(value) => (value.expression_type() == Some(Number)).then_some(Number),
+            Self::IfError { value, fallback } => {
+                (valid(value, Number) && valid(fallback, Number)).then_some(Number)
+            }
+            Self::Not(value) => (valid(value, Condition)).then_some(Condition),
+            Self::Abs(value) => (valid(value, Number)).then_some(Number),
             Self::Round { value, digits }
             | Self::RoundUp { value, digits }
             | Self::RoundDown { value, digits } => {
-                (*digits <= 10 && value.expression_type() == Some(Number)).then_some(Number)
+                (*digits <= 10 && valid(value, Number)).then_some(Number)
             }
             Self::DatePart { operand, .. } => matches!(
                 operand.as_ref(),

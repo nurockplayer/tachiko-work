@@ -181,6 +181,40 @@ fn text_keys_fold_case_and_duplicate_keys_choose_first_entity() {
 }
 
 #[test]
+fn lookup_matches_an_auto_formula_text_key() {
+    let mut doc = document();
+    let table = doc.schemas.get_mut("t").unwrap();
+    table.fields.get_mut("k").unwrap().field_type = FieldType::Auto;
+    table
+        .fields
+        .insert("text".into(), field("text", FieldType::Auto));
+    let row = doc.entities.get_mut("a").unwrap();
+    row.fields.insert("text".into(), Value::Text("tea".into()));
+    row.fields.insert("k".into(), Value::Text("tea".into()));
+    row.fields.insert("v".into(), Value::Number(number(100.0)));
+    doc.schemas
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .get_mut("text")
+        .unwrap()
+        .field_type = FieldType::Auto;
+    doc.entities
+        .get_mut("s")
+        .unwrap()
+        .fields
+        .insert("text".into(), Value::Text("tea".into()));
+
+    install(&mut doc, "LOOKUP([s.text], [t.k:column], [t.v:column], 0)");
+    assert_eq!(result(&doc), number(100.0));
+    doc.entities.get_mut("a").unwrap().fields.insert(
+        "k".into(),
+        Value::Formula(Expression::SameRowReference("text".into())),
+    );
+    assert_eq!(result(&doc), number(100.0));
+}
+
+#[test]
 fn typed_keys_and_number_expressions_match_without_text_coercion() {
     let mut doc = document();
     for (key, column) in [

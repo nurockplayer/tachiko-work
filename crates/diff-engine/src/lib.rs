@@ -905,10 +905,14 @@ fn render_change(
             match before {
                 CalculatedValue::Number(number) => format_number(*number),
                 CalculatedValue::Date(date) => date.to_string(),
+                CalculatedValue::Text(text) => text.clone(),
+                CalculatedValue::Boolean(value) => value.to_string(),
             },
             match after {
                 CalculatedValue::Number(number) => format_number(*number),
                 CalculatedValue::Date(date) => date.to_string(),
+                CalculatedValue::Text(text) => text.clone(),
+                CalculatedValue::Boolean(value) => value.to_string(),
             }
         ),
     }

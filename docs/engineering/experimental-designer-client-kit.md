@@ -432,9 +432,16 @@ and the same Undo/Redo action as the value. Raw paste into Auto uses the
 classifier without a date order; typed paste cells may supply `date_order`.
 Raw empty input clears; explicit `{kind: "text", value: ""}` stores empty Text.
 
-Auto formulas, including raw input starting with `=`, return an explicit
-unsupported refusal without publishing or storing Text. Auto retyping and
-aggregates remain separate slices. `exportPortableRo` and v3 exports preserve
+Auto input starting with `=` binds through Work's existing formula source
+grammar. A1 clients can use `translate_a1_formula` for existing references
+before submitting the translated source. The published cell carries its
+formula and a tagged Number, Date, Text or Boolean result. Read the tag in
+`calculated.result`; the numeric `calculated.value` slot uses zero for Text and
+Boolean. Auto evaluation failures publish in `calculated` with status
+`failure`, the error code and its display text, such as `#VALUE!`. A declared
+formula that fails still refuses the edit atomically. The bound formula survives
+v3 and portable `.ro` reopen and is recalculated on admission. Formula authoring
+is one Undo step. Auto retyping and aggregates remain separate slices. `exportPortableRo` and v3 exports preserve
 Auto; frozen legacy project/direct-ro and v1 delta/conflict writers refuse it.
 The v2 evidence contracts preserve Auto fields and their tagged values.
 

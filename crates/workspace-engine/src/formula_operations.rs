@@ -69,6 +69,9 @@ impl FormulaQueryContext {
 pub enum FormulaCalculationOutcome {
     Value(Number),
     Date(tachiko_semantic_core::Date),
+    Text(String),
+    Boolean(bool),
+    CellFailure(Box<tachiko_formula_engine::CellFailure>),
     Failure(CalculationFailure),
     Unavailable,
 }
@@ -1125,16 +1128,9 @@ pub(crate) fn calculation_for(
     target: &FieldRef,
 ) -> FormulaCalculationOutcome {
     match outcome {
-        CalculationOutcome::Complete(calculation) => calculation.calculated_value(target).map_or(
-            FormulaCalculationOutcome::Unavailable,
-            |value| match value {
-                tachiko_formula_engine::CalculatedValue::Number(number) => {
-                    FormulaCalculationOutcome::Value(number)
-                }
-                tachiko_formula_engine::CalculatedValue::Date(date) => {
-                    FormulaCalculationOutcome::Date(date)
-                }
-            },
+        CalculationOutcome::Complete(calculation) => published_calculation(
+            calculation.calculated_value(target),
+            calculation.cell_failure(target),
         ),
         CalculationOutcome::Failed(failures) => failures
             .failures()
@@ -1145,7 +1141,27 @@ pub(crate) fn calculation_for(
     }
 }
 
+pub(crate) fn published_calculation(
+    value: Option<tachiko_formula_engine::CalculatedValue>,
+    failure: Option<&tachiko_formula_engine::CellFailure>,
+) -> FormulaCalculationOutcome {
+    use tachiko_formula_engine::CalculatedValue;
+    if let Some(failure) = failure {
+        return FormulaCalculationOutcome::CellFailure(Box::new(failure.clone()));
+    }
+    match value {
+        Some(CalculatedValue::Number(number)) => FormulaCalculationOutcome::Value(number),
+        Some(CalculatedValue::Date(date)) => FormulaCalculationOutcome::Date(date),
+        Some(CalculatedValue::Text(text)) => FormulaCalculationOutcome::Text(text),
+        Some(CalculatedValue::Boolean(value)) => FormulaCalculationOutcome::Boolean(value),
+        None => FormulaCalculationOutcome::Unavailable,
+    }
+}
+
 fn calculation_evidence_subjects(outcome: &FormulaCalculationOutcome) -> BTreeSet<FieldRef> {
+    if let FormulaCalculationOutcome::CellFailure(failure) = outcome {
+        return BTreeSet::from([failure.origin.clone()]);
+    }
     let FormulaCalculationOutcome::Failure(failure) = outcome else {
         return BTreeSet::new();
     };

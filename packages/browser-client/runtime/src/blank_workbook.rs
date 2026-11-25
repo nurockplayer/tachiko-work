@@ -116,6 +116,7 @@ impl DesignerRuntime {
             .map(|_| native_table_row(document, &spec, &mut row_ids, &mut allocated))
             .collect::<Result<Vec<_>, _>>()?;
         let mut displays = Vec::new();
+        let mut formulas = Vec::new();
         for (r, cells) in rows.iter().enumerate() {
             let position = row - 1 + r;
             let existing = spec.entities.get(position);
@@ -130,6 +131,13 @@ impl DesignerRuntime {
                     }
                     PasteCellInput::Typed(input) => input.clone(),
                 };
+                let target = FieldRef::new(entity_id.clone(), definition.id.clone());
+                if definition.field_type == FieldType::Auto {
+                    if let Some(source) = auto_input::formula_source(&input) {
+                        formulas.push((target, source.to_owned()));
+                        continue;
+                    }
+                }
                 let value = if definition.field_type == FieldType::Auto {
                     auto_input::value(&input)?
                 } else if matches!(input, ScalarEditInput::Clear) {
@@ -137,7 +145,6 @@ impl DesignerRuntime {
                 } else {
                     Some(parse_column_initializer(&definition.field_type, &input)?)
                 };
-                let target = FieldRef::new(entity_id.clone(), definition.id.clone());
                 auto_input::collect_display(&definition.field_type, &target, &input, &mut displays);
                 if existing.is_some() {
                     if schema.fields.contains_key(&definition.id) {
@@ -166,6 +173,8 @@ impl DesignerRuntime {
                 }
             }
         }
+        let formula_commands =
+            positional_formula_commands(document, &schema_id, &added, &new_rows, formulas)?;
         let mut column_forward = Vec::new();
         let mut column_inverse = Vec::new();
         if !added.is_empty() {
@@ -202,6 +211,17 @@ impl DesignerRuntime {
             });
             forward.push(SemanticCommand::AppendEntity { entity });
         }
+        for (target, command) in formula_commands {
+            if let Some(entity) = document.entities.get(&target.entity) {
+                if schema.fields.contains_key(&target.field) {
+                    inverse.push(auto_input::inverse_formula(
+                        &target,
+                        entity.fields.get(&target.field),
+                    ));
+                }
+            }
+            forward.push(command);
+        }
         inverse.reverse();
         let publication = self.record_input_edit(expected, forward, inverse, displays)?;
         self.row_serial = row_ids.serial();
@@ -232,6 +252,15 @@ impl DesignerRuntime {
         let definition = added
             .last()
             .unwrap_or_else(|| &schema.fields[&spec.columns[column - 1].id]);
+        if definition.field_type == FieldType::Auto && auto_input::formula_source(input).is_some() {
+            return self.paste_cells_at(
+                expected,
+                collection,
+                row,
+                column,
+                &[vec![PasteCellInput::Typed(input.clone())]],
+            );
+        }
         let field_id = definition.id.clone();
         let value = if definition.field_type == FieldType::Auto {
             auto_input::value(input)?
@@ -304,6 +333,37 @@ impl DesignerRuntime {
         self.row_serial = row_ids.serial();
         Ok(publication)
     }
+}
+
+fn positional_formula_commands(
+    document: &crate::Document,
+    schema_id: &SchemaId,
+    added: &[FieldDefinition],
+    new_rows: &[crate::Entity],
+    formulas: Vec<(FieldRef, String)>,
+) -> Result<Vec<(FieldRef, SemanticCommand)>, DesignerError> {
+    if formulas.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidate = document.clone();
+    let schema = candidate
+        .schemas
+        .get_mut(schema_id)
+        .expect("positional schema exists");
+    for field in added {
+        schema.insert_field(field.clone());
+    }
+    candidate
+        .entities
+        .extend(new_rows.iter().map(|row| (row.id.clone(), row.clone())));
+    formulas
+        .into_iter()
+        .map(|(target, source)| {
+            let command =
+                SemanticCommand::bind_formula_update(&candidate, target.clone(), &source)?;
+            Ok((target, command))
+        })
+        .collect()
 }
 
 fn added_columns(

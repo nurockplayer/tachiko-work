@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Evaluate formulas in Auto cells, including blank workbooks. Publish tagged
+  results and per-cell calculation errors, restore prior cells with one Undo,
+  and recalculate saved formulas when reopening v3 or portable `.ro` (#949).
+
 - Formula calculations retain Date results for Date references and whole-day
   addition and subtraction, and publish their Date tag to browser clients (#860).
   Date differences compose with numeric functions; impact previews, field
