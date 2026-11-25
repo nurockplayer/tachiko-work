@@ -7,7 +7,8 @@ const {instance: {exports: wasm}} = await WebAssembly.instantiate(await readFile
 const source = await readFile(workbookPath);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const budget = 256 * 1024 * 1024;
+const budget = 64 * 1024 * 1024;
+let peak = wasm.memory.buffer.byteLength;
 const common = {format: "xlsx", csv_options: {delimiter: ",", header: true}};
 
 function run(request) {
@@ -17,6 +18,7 @@ function run(request) {
   }
   wasm.tachiko_designer_spreadsheet_run();
   const memory = wasm.memory.buffer.byteLength;
+  peak = Math.max(peak, memory);
   assert.ok(memory <= budget, `${request.type} linear memory ${memory} exceeds ${budget} bytes`);
   const reply = JSON.parse(decoder.decode(new Uint8Array(wasm.memory.buffer,
     wasm.tachiko_designer_response_ptr(), wasm.tachiko_designer_response_len())));
@@ -34,4 +36,5 @@ const imported = run({type: "import", ...common,
   selection: {column_types: [["text", "text", "text"]], extra_columns: [[]]},
   occurrence_id: "00000000-0000-4000-8000-000000000933", install: true});
 assert.equal(imported.opened.table.rows.length, 8406);
+console.log(`peak linear memory: ${peak} bytes (${(peak / 1024 / 1024).toFixed(2)} MiB)`);
 console.log("admitted XLSX inspect and import stay within 256 MiB: PASS");
