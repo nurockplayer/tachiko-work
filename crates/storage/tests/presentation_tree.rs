@@ -222,7 +222,7 @@ fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
     let moved = encode_roproj_v3_with_presentation(&document, &presentation).unwrap();
     let manifest = moved.file("manifest.json").unwrap();
     assert!(
-        str::from_utf8(manifest)
+        std::str::from_utf8(manifest)
             .unwrap()
             .ends_with("  },\n  \"collection_order\": [\"products\", \"orders\"]\n}\n")
     );
@@ -240,7 +240,7 @@ fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
         "[\"orders\", \"unknown\"]",
     ] {
         let mut noncanonical = files(&moved);
-        noncanonical[0].1 = str::from_utf8(manifest)
+        noncanonical[0].1 = std::str::from_utf8(manifest)
             .unwrap()
             .replace("[\"products\", \"orders\"]", invalid)
             .into_bytes();
