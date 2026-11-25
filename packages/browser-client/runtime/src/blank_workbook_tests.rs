@@ -522,7 +522,7 @@ fn blank_workbook_formulas_publish_tagged_values_and_errors_after_reopen() {
         Some(2.0)
     );
     runtime.history_edit("resident/1", false).unwrap();
-    assert!(window(&mut runtime).rows.is_empty());
+    assert_eq!(window(&mut runtime).rows, []);
     paste(
         &mut runtime,
         1,
@@ -600,7 +600,7 @@ fn blank_workbook_zero_stale_and_malformed_formula_writes_refuse_without_publica
     let revision = runtime.current_revision().to_owned();
     let history = runtime.undo.len();
     for (row, column, input) in [(0, 1, "1"), (1, 0, "1"), (4, 3, "=1+")] {
-        let error = runtime
+        runtime
             .write_cell_at(
                 &revision,
                 "sheet",

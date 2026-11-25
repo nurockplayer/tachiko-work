@@ -71,7 +71,7 @@ pub enum FormulaCalculationOutcome {
     Date(tachiko_semantic_core::Date),
     Text(String),
     Boolean(bool),
-    CellFailure(tachiko_formula_engine::CellFailure),
+    CellFailure(Box<tachiko_formula_engine::CellFailure>),
     Failure(CalculationFailure),
     Unavailable,
 }
@@ -1147,7 +1147,7 @@ pub(crate) fn published_calculation(
 ) -> FormulaCalculationOutcome {
     use tachiko_formula_engine::CalculatedValue;
     if let Some(failure) = failure {
-        return FormulaCalculationOutcome::CellFailure(failure.clone());
+        return FormulaCalculationOutcome::CellFailure(Box::new(failure.clone()));
     }
     match value {
         Some(CalculatedValue::Number(number)) => FormulaCalculationOutcome::Value(number),

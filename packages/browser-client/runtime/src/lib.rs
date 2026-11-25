@@ -2902,8 +2902,11 @@ fn view_value(
         Some(FormulaCalculationOutcome::Date(date)) => Some(ViewValue::Date(*date)),
         Some(FormulaCalculationOutcome::Text(text)) => Some(ViewValue::Text(text.clone())),
         Some(FormulaCalculationOutcome::Boolean(value)) => Some(ViewValue::Boolean(*value)),
-        Some(FormulaCalculationOutcome::CellFailure(_)) => None,
-        Some(FormulaCalculationOutcome::Failure(_) | FormulaCalculationOutcome::Unavailable)
+        Some(
+            FormulaCalculationOutcome::CellFailure(_)
+            | FormulaCalculationOutcome::Failure(_)
+            | FormulaCalculationOutcome::Unavailable,
+        )
         | None => None,
     }
 }
@@ -8025,12 +8028,6 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
         let document_scope = self.session.document_scope().clone();
-        if commands
-            .iter()
-            .any(|command| matches!(command, SemanticCommand::FormulaUpdate(_)))
-        {
-            return Err(tracker_error("unsupported history command"));
-        }
         let body = SemanticPatchBody::atomic_batch(commands.to_vec())?;
         let prepared = self
             .lifecycle

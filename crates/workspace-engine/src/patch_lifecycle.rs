@@ -5097,16 +5097,28 @@ impl PatchLifecycle {
                         source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                     },
                 )?;
-                let formula_projection = super::diff_with_calculations(
-                    &formula_projection_document(base),
-                    &formula_projection_document(candidate),
+                let scope = DiffScope {
+                    schemas: base
+                        .schemas
+                        .keys()
+                        .chain(candidate.schemas.keys())
+                        .cloned()
+                        .collect(),
+                    entities: base
+                        .entities
+                        .keys()
+                        .chain(candidate.entities.keys())
+                        .cloned()
+                        .collect(),
+                };
+                let formula_changes = super::diff_changes_scoped(
+                    &scoped_formula_projection_document(base, &scope),
+                    &scoped_formula_projection_document(candidate, &scope),
                     &base_calculation,
                     &candidate_calculation,
-                )
-                .map_err(|source| PatchLifecycleError::CommandRejected {
-                    source: Box::new(source.into()),
-                })?;
-                (report, delta, formula_projection.changes().to_vec())
+                    &scope,
+                );
+                (report, delta, formula_changes)
             };
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
@@ -6610,24 +6622,7 @@ fn constraint_affected_values(
         .collect()
 }
 
-// Used only for derived formula impacts after complete v2 admission, never direct evidence.
-fn formula_projection_document(document: &Document) -> Document {
-    let mut document = document.clone();
-    document.keyed_grouped_sum_definitions.clear();
-    for entity in document.entities.values_mut() {
-        entity.rank = None;
-    }
-    for schema in document.schemas.values_mut() {
-        project_formula_schema(schema);
-    }
-    document
-}
-
-/// The formula projection of only the schemas and entities `scope` names.
-///
-/// `diff_changes_scoped` reads the document id and title and the scoped schemas
-/// and entities, nothing else, so it reports the same changes on this as on
-/// [`formula_projection_document`] without copying the rest of the document.
+/// The scoped projection for derived formula impacts after complete v2 admission.
 fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) -> Document {
     let mut projection = Document::empty(document.id.clone(), document.title.clone());
     for schema_id in &scope.schemas {
@@ -8402,8 +8397,8 @@ fn calculated_date_formula_impacts_reach_patch_evidence() {
     assert_eq!(
         formula_impacts(&[SemanticChange::FormulaImpact {
             field: field.clone(),
-            before,
-            after,
+            before: before.clone(),
+            after: after.clone(),
             causes: causes.clone(),
         }]),
         vec![FormulaImpactEvidence {

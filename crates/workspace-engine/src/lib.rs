@@ -2961,12 +2961,14 @@ pub(crate) fn validation_report_for_retained_calculation(
     report
 }
 
+type FormulaFailureMaps<'a> = (
+    &'a BTreeMap<FieldRef, CalculationFailure>,
+    &'a BTreeMap<FieldRef, CellFailure>,
+);
+
 fn validation_report_for_failures(
     document: &Document,
-    failures: Option<(
-        &BTreeMap<FieldRef, CalculationFailure>,
-        &BTreeMap<FieldRef, CellFailure>,
-    )>,
+    failures: Option<FormulaFailureMaps<'_>>,
 ) -> ValidationReport {
     let mut diagnostics = validate_document_core(document);
     let core_diagnostics = diagnostics.clone();
