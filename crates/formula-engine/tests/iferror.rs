@@ -95,11 +95,11 @@ fn set_formula(document: &mut Document, source: &str) -> Expression {
     expression
 }
 
-fn value(outcome: &CalculationOutcome) -> f64 {
+fn value(outcome: &CalculationOutcome) -> Number {
     let CalculationOutcome::Complete(calculation) = outcome else {
         panic!("expected successful IFERROR: {outcome:?}");
     };
-    calculation.value(&owner()).unwrap().get()
+    calculation.value(&owner()).unwrap()
 }
 
 #[test]
@@ -126,7 +126,11 @@ fn own_runtime_failures_are_caught_and_fallback_is_lazy() {
                 .remove("blank");
         }
         set_formula(&mut document, source);
-        assert_eq!(value(&calculate_complete(&document)), expected, "{source}");
+        assert_eq!(
+            value(&calculate_complete(&document)),
+            Number::new(expected).unwrap(),
+            "{source}"
+        );
     }
 }
 
@@ -262,7 +266,8 @@ fn retained_edits_switch_between_value_and_fallback_like_a_full_rebuild() {
         let _ = retained.update(&document, &BTreeSet::from([FieldRef::new("r", "b")]));
         let full = calculate_complete(&document);
         assert_eq!(value(&retained.outcome()), value(&full));
-        assert_eq!(value(&full), if denominator == 0.0 { 0.0 } else { 4.0 });
+        let expected = if denominator == 0.0 { 0.0 } else { 4.0 };
+        assert_eq!(value(&full), Number::new(expected).unwrap());
         let CalculationOutcome::Complete(calculation) = full else {
             unreachable!()
         };
