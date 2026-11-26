@@ -149,33 +149,31 @@ pub(super) fn layered_formats<'a>(
     style: Option<&'a CellStyle>,
     number_format: Option<&'a NumberFormat>,
     date_format: Option<&'a DateFormat>,
+    auto: bool,
 ) -> (Option<&'a NumberFormat>, Option<&'a DateFormat>) {
     (
         style
             .and_then(|style| style.number_format.as_ref())
             .or(number_format),
         style
+            .filter(|_| auto)
             .and_then(|style| style.date_format.as_ref())
             .or(date_format),
     )
 }
 
-/// The formats one cell of `column` shows. An Auto cell's implied display
-/// overrides its column's; a declared column shows only its own formats.
+/// A cell's stored number format overrides the column default. Auto cells
+/// can also override the column's date format.
 pub(super) fn cell_formats<'a>(
     store: &'a PresentationStore,
     column: &'a ColumnSpec,
     entity: &str,
 ) -> (Option<&'a NumberFormat>, Option<&'a DateFormat>) {
-    let style = if column.field_type == FieldType::Auto {
-        stored_style(store, entity, &column.id)
-    } else {
-        None
-    };
     layered_formats(
-        style,
+        stored_style(store, entity, &column.id),
         column.number_format.as_ref(),
         column.date_format.as_ref(),
+        column.field_type == FieldType::Auto,
     )
 }
 

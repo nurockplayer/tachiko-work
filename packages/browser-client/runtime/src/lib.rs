@@ -3187,16 +3187,12 @@ fn predicate_matches<'a>(
             auto,
             value,
         } => {
-            let (format, date_format) = auto_input::layered_formats(
-                auto.then(|| style(*ordinal)).flatten(),
-                format.as_ref(),
-                date_format.as_ref(),
-            );
-            let text = display_text::cell_text(
+            let text = display_text::styled_cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
-                format,
-                date_format,
+                style(*ordinal),
+                (format.as_ref(), date_format.as_ref()),
                 *required,
+                *auto,
             );
             text.trim().to_lowercase().contains(value.as_str())
         }
@@ -3208,16 +3204,12 @@ fn predicate_matches<'a>(
             auto,
             values,
         } => {
-            let (format, date_format) = auto_input::layered_formats(
-                auto.then(|| style(*ordinal)).flatten(),
-                format.as_ref(),
-                date_format.as_ref(),
-            );
-            let text = display_text::cell_text(
+            let text = display_text::styled_cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
-                format,
-                date_format,
+                style(*ordinal),
+                (format.as_ref(), date_format.as_ref()),
                 *required,
+                *auto,
             );
             values.contains(&text)
         }
@@ -3700,7 +3692,7 @@ impl DesignerRuntime {
                 })
             })?;
         let new_revision = new_revision.as_str().to_owned();
-        // A cell record can change an Auto cell's display text, which display
+        // A cell record can change the cell's display text, which display
         // filters read; only an unchanged set of cell records keeps the orders.
         if presentation.cells == self.presentation.cells {
             self.view_index.rekey(expected_revision, &new_revision);
@@ -9859,8 +9851,8 @@ fn attach_display_text(
     }
 }
 
-/// The Number or Date a field shows as display text, in its column's format
-/// or an Auto cell's implied one.
+/// The Number or Date a field shows as display text, with cell formats taking
+/// precedence over column defaults for numbers and Auto dates.
 fn field_display_text(
     field: &FieldProjection,
     column: &ColumnSpec,

@@ -1,7 +1,7 @@
 //! Identity-bound cell presentation commands; semantic values never change.
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
-    BorderSide, CellStyle, EntityId, FieldId, PresentationStore, SchemaId,
+    BorderSide, CellStyle, EntityId, FieldId, FieldType, NumberFormat, PresentationStore, SchemaId,
 };
 
 use crate::{
@@ -25,6 +25,9 @@ pub enum CellStyleChange {
     Fill {
         #[serde(deserialize_with = "deserialize_fill_color")]
         color: Option<String>,
+    },
+    NumberFormat {
+        format: NumberFormat,
     },
     Border {
         target: CellBorderTarget,
@@ -95,11 +98,7 @@ impl DesignerRuntime {
         let mut candidate = self.presentation.clone();
         for change in changes {
             let change = resolve_toggle(&candidate, &schema, &entities, &fields, change);
-            if matches!(change, CellStyleChange::Fill { color: None }) {
-                for field in &fields {
-                    self.expand_column_fill(&mut candidate, &schema, field)?;
-                }
-            }
+            self.preserve_inherited_fills(&mut candidate, &schema, &fields, &change)?;
             for (row, entity) in entities.iter().enumerate() {
                 for (column, field) in fields.iter().enumerate() {
                     let mut style = cell_override(&candidate, entity, field);
@@ -107,6 +106,9 @@ impl DesignerRuntime {
                         CellStyleChange::Bold { value } => style.bold = Some(*value),
                         CellStyleChange::Italic { value } => style.italic = Some(*value),
                         CellStyleChange::Fill { color } => style.fill.clone_from(color),
+                        CellStyleChange::NumberFormat { format } => {
+                            style.number_format = Some(format.clone());
+                        }
                         CellStyleChange::Border { target, value } => {
                             let borders = effective_borders(&candidate, &schema, entity, field);
                             style.borders = Some(edit_borders(
@@ -194,8 +196,23 @@ impl DesignerRuntime {
         Ok(schema)
     }
 
-    // ADR-0049 has no explicit "no fill" sentinel. Move an inherited fill to
-    // existing records before clearing a selected cell, preserving its neighbours.
+    // ADR-0049 has no explicit "no fill" sentinel. Move inherited fills to
+    // existing records before clearing selected cells, preserving their neighbours.
+    fn preserve_inherited_fills(
+        &self,
+        store: &mut PresentationStore,
+        schema: &SchemaId,
+        fields: &[FieldId],
+        change: &CellStyleChange,
+    ) -> Result<(), DesignerError> {
+        if matches!(change, CellStyleChange::Fill { color: None }) {
+            for field in fields {
+                self.expand_column_fill(store, schema, field)?;
+            }
+        }
+        Ok(())
+    }
+
     fn expand_column_fill(
         &self,
         store: &mut PresentationStore,
@@ -479,6 +496,11 @@ fn edit_borders(
 
 fn validate_style_changes(changes: &[CellStyleChange]) -> Result<(), DesignerError> {
     for change in changes {
+        if let CellStyleChange::NumberFormat { format } = change {
+            format
+                .validate_for(&FieldType::Number)
+                .map_err(|source| DesignerError::InvalidNumberFormat { source })?;
+        }
         if let CellStyleChange::Fill { color: Some(color) } = change {
             let bytes = color.as_bytes();
             if bytes.len() != 7

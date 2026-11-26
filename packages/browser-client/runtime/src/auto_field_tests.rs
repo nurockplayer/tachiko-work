@@ -781,7 +781,8 @@ fn declared_columns_keep_their_input_meaning_and_saved_bytes_on_refusal() {
     let window = runtime
         .query_table_window(&revision, &collection, &TableView::default(), 0, 10, true)
         .unwrap();
-    assert_eq!(window.rows[0].fields[1].display.as_deref(), Some("123"));
+    // The stored style affects display, while the Number keeps its typed value.
+    assert_eq!(window.rows[0].fields[1].display.as_deref(), Some("12300%"));
     let distinct = runtime
         .query_distinct_values(
             &revision,
@@ -791,7 +792,7 @@ fn declared_columns_keep_their_input_meaning_and_saved_bytes_on_refusal() {
             10,
         )
         .unwrap();
-    assert_eq!(distinct.values, vec!["123"]);
+    assert_eq!(distinct.values, vec!["12300%"]);
     let bytes = runtime.export_portable_ro(&revision).unwrap().bytes;
     let target = FieldTarget {
         entity: table.rows[0].id.clone(),
