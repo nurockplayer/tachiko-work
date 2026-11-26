@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Expose per-collection cell-styling eligibility in full and windowed browser
+  client table projections so Sheet can enable formatting from the same rule
+  the styling commands use (#965, Sheet #586).
+
 - Reduce XLSX inspect and import allocations by borrowing XML text and
   attributes, releasing the decoded source before rebuilding the export proof,
   and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).

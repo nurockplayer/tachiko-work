@@ -14,6 +14,98 @@ use crate::{
 
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000815";
 
+#[test]
+fn cell_styling_projection_agrees_with_command() {
+    let native = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    let tracker = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    let (imported, collection) = imported_styling_fixture();
+    let reference =
+        DesignerRuntime::from_document(reference_styling_fixture(), OCCURRENCE).unwrap();
+    let supported = json!({"status": "supported"});
+    let unsupported = json!({"status": "unsupported", "reason": "read_only_table"});
+
+    assert_styling_capability(native, "rows", &supported);
+    assert_styling_capability(tracker, "tracker", &supported);
+    assert_styling_capability(imported, &collection, &supported);
+    assert_styling_capability(reference, "rows", &unsupported);
+}
+
+fn imported_styling_fixture() -> (DesignerRuntime, String) {
+    use crate::interop_adapter::{ImportOptions, import_csv};
+    use crate::{ImportFieldType, ImportSelection, import_workbook};
+
+    let source = import_csv(b"Name\nExample\n", &ImportOptions::default()).unwrap();
+    let (runtime, imported) = import_workbook(
+        &source,
+        &ImportSelection {
+            column_types: vec![vec![ImportFieldType::Text]],
+            extra_columns: vec![Vec::new()],
+        },
+        OCCURRENCE,
+    )
+    .unwrap();
+    (runtime, imported.opened.table.collection.key)
+}
+
+fn reference_styling_fixture() -> Document {
+    let mut document = fixture();
+    let schema = document.schemas.get_mut(&SchemaId::from("rows")).unwrap();
+    let field = schema.fields.get_mut(&FieldId::from("b")).unwrap();
+    field.field_type = FieldType::Reference {
+        schema: schema.id.clone(),
+    };
+    document
+        .entities
+        .get_mut(&EntityId::from("r1"))
+        .unwrap()
+        .fields
+        .insert(FieldId::from("b"), Value::Reference(EntityId::from("r2")));
+    document
+}
+
+fn assert_styling_capability(
+    mut runtime: DesignerRuntime,
+    collection: &str,
+    expected: &serde_json::Value,
+) {
+    let table = runtime.query_table(collection).unwrap();
+    let window = runtime
+        .query_table_window(
+            &table.revision,
+            collection,
+            &TableView::default(),
+            0,
+            1,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        &serde_json::to_value(window).unwrap()["cell_styling"],
+        expected
+    );
+    assert_eq!(
+        &serde_json::to_value(&table).unwrap()["cell_styling"],
+        expected
+    );
+
+    let request = serde_json::from_value(json!({
+        "type": "set_cell_style", "expected_revision": table.revision,
+        "collection": collection, "entities": [table.rows[0].id], "fields": [table.columns[0].id],
+        "changes": [{"kind": "bold", "value": true}],
+    }))
+    .unwrap();
+    let reply = runtime.handle(request);
+    if let Some(reason) = expected["reason"].as_str() {
+        let error = reply.unwrap_err().failure_projection(&table.revision);
+        assert_eq!(error.code, reason, "{collection}");
+    } else {
+        assert!(
+            matches!(reply, Ok(DesignerResponse::Published(_))),
+            "{collection}: {reply:?}"
+        );
+    }
+}
+
 pub(crate) fn fixture() -> Document {
     let mut document = Document::empty("styles", "Cell styles");
     let fields = ["a", "b", "c"]
