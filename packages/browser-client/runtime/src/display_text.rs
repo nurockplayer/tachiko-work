@@ -10,7 +10,7 @@
 
 use std::cmp::Ordering;
 
-use tachiko_workspace_engine::{Date, DateFormat, NumberFormat, NumberFormatKind};
+use tachiko_workspace_engine::{CellStyle, Date, DateFormat, NumberFormat, NumberFormatKind};
 
 use crate::{CalculationProjection, StoredValueProjection, ViewValue};
 
@@ -152,6 +152,18 @@ pub(crate) fn cell_text(
         Some(value) => display_text(value, format, date_format).unwrap_or_default(),
         None => String::new(),
     }
+}
+
+pub(super) fn styled_cell_text(
+    cell: Option<&ViewValue>,
+    style: Option<&CellStyle>,
+    formats: (Option<&NumberFormat>, Option<&DateFormat>),
+    required: bool,
+    auto: bool,
+) -> String {
+    let (format, date_format) =
+        crate::auto_input::layered_formats(style, formats.0, formats.1, auto);
+    cell_text(cell, format, date_format, required)
 }
 
 /// The Number a cell shows. A calculation decides when one is present, so a

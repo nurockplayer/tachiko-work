@@ -3185,17 +3185,12 @@ fn predicate_matches<'a>(
             auto,
             value,
         } => {
-            let (format, date_format) = auto_input::layered_formats(
-                style(*ordinal),
-                format.as_ref(),
-                date_format.as_ref(),
-                *auto,
-            );
-            let text = display_text::cell_text(
+            let text = display_text::styled_cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
-                format,
-                date_format,
+                style(*ordinal),
+                (format.as_ref(), date_format.as_ref()),
                 *required,
+                *auto,
             );
             text.trim().to_lowercase().contains(value.as_str())
         }
@@ -3207,17 +3202,12 @@ fn predicate_matches<'a>(
             auto,
             values,
         } => {
-            let (format, date_format) = auto_input::layered_formats(
-                style(*ordinal),
-                format.as_ref(),
-                date_format.as_ref(),
-                *auto,
-            );
-            let text = display_text::cell_text(
+            let text = display_text::styled_cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
-                format,
-                date_format,
+                style(*ordinal),
+                (format.as_ref(), date_format.as_ref()),
                 *required,
+                *auto,
             );
             values.contains(&text)
         }

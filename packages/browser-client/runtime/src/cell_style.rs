@@ -98,11 +98,7 @@ impl DesignerRuntime {
         let mut candidate = self.presentation.clone();
         for change in changes {
             let change = resolve_toggle(&candidate, &schema, &entities, &fields, change);
-            if matches!(change, CellStyleChange::Fill { color: None }) {
-                for field in &fields {
-                    self.expand_column_fill(&mut candidate, &schema, field)?;
-                }
-            }
+            self.preserve_inherited_fills(&mut candidate, &schema, &fields, &change)?;
             for (row, entity) in entities.iter().enumerate() {
                 for (column, field) in fields.iter().enumerate() {
                     let mut style = cell_override(&candidate, entity, field);
@@ -200,8 +196,23 @@ impl DesignerRuntime {
         Ok(schema)
     }
 
-    // ADR-0049 has no explicit "no fill" sentinel. Move an inherited fill to
-    // existing records before clearing a selected cell, preserving its neighbours.
+    // ADR-0049 has no explicit "no fill" sentinel. Move inherited fills to
+    // existing records before clearing selected cells, preserving their neighbours.
+    fn preserve_inherited_fills(
+        &self,
+        store: &mut PresentationStore,
+        schema: &SchemaId,
+        fields: &[FieldId],
+        change: &CellStyleChange,
+    ) -> Result<(), DesignerError> {
+        if matches!(change, CellStyleChange::Fill { color: None }) {
+            for field in fields {
+                self.expand_column_fill(store, schema, field)?;
+            }
+        }
+        Ok(())
+    }
+
     fn expand_column_fill(
         &self,
         store: &mut PresentationStore,
