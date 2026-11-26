@@ -9,7 +9,6 @@ args	crates/formula-engine/src/lib.rs	render_bound_binary	6
 args	crates/merge-engine/src/conflict_v2.rs	<MergeConflictV2>::new	6
 args	crates/merge-engine/src/conflict_v2.rs	add_field_subject_conflicts	6
 args	crates/merge-engine/src/conflict_v2.rs	name_conflict	6
-args	crates/merge-engine/src/lib.rs	<MergeConflict>::new	6
 args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
 args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
@@ -671,7 +670,7 @@ file	crates/formula-engine/src/evaluation.rs		1331
 file	crates/formula-engine/src/lib.rs		3298
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		982
-file	crates/merge-engine/src/lib.rs		1118
+file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/presentation.rs		889
 file	crates/semantic-core/src/validation.rs		1925

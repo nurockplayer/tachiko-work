@@ -114,24 +114,22 @@ pub struct MergeConflict {
 
 impl MergeConflict {
     fn new(
-        document: &DocumentId,
-        target: ConflictTarget,
-        facet: ConflictFacet,
+        coordinate: ConflictCoordinate<'_>,
         base: Option<MergeValue>,
         left: Option<MergeValue>,
         right: Option<MergeValue>,
     ) -> Self {
         assert!(
-            target.allows(facet),
+            coordinate.target.allows(coordinate.facet),
             "merge engine emitted an invalid target/facet pair"
         );
         let kind = ConflictKind::classify(base.as_ref(), left.as_ref(), right.as_ref())
             .expect("merge engine emitted facts that are not a Semantic Conflict v1 conflict");
         Self {
             contract: SemanticConflictContract::V1,
-            document: document.clone(),
-            target,
-            facet,
+            document: coordinate.document.clone(),
+            target: coordinate.target,
+            facet: coordinate.facet,
             kind,
             base: ConflictFact::from(base),
             left: ConflictFact::from(left),
@@ -1050,9 +1048,7 @@ fn merge_scalar<T: Clone + PartialEq>(
     let selected = choose(base, ours, theirs);
     if selected.is_none() {
         conflicts.push(MergeConflict::new(
-            coordinate.document,
-            coordinate.target,
-            coordinate.facet,
+            coordinate,
             Some(value(base)),
             Some(value(ours)),
             Some(value(theirs)),
@@ -1072,9 +1068,7 @@ fn merge_optional<T: Clone + PartialEq>(
     let selected = choose_optional(base, ours, theirs);
     if matches!(selected, OptionalChoice::Conflict) {
         conflicts.push(MergeConflict::new(
-            coordinate.document,
-            coordinate.target,
-            coordinate.facet,
+            coordinate,
             base.map(&value),
             ours.map(&value),
             theirs.map(value),
