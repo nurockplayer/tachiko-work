@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Cut and paste with `move_cells` carries stored cell styles and retargets
+  formulas that reference the moved cells. One Undo restores the prior cells,
+  styles and references. Project saves and XLSX exports retain the result (#973).
+
 - Reduce XLSX inspect and import allocations by borrowing XML text and
   attributes, releasing the decoded source before rebuilding the export proof,
   and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).

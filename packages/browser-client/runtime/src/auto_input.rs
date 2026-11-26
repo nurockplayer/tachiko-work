@@ -81,8 +81,8 @@ pub(super) fn value(input: &ScalarEditInput) -> Result<Option<crate::Value>, Des
 
 #[derive(Clone, Debug)]
 pub(super) struct CellDisplay {
-    field: FieldRef,
-    style: Option<CellStyle>,
+    pub(super) field: FieldRef,
+    pub(super) style: Option<CellStyle>,
 }
 
 pub(super) fn collect_display(
@@ -177,7 +177,7 @@ pub(super) fn cell_formats<'a>(
     )
 }
 
-fn cell_style(store: &PresentationStore, field: &FieldRef) -> Option<CellStyle> {
+pub(super) fn cell_style(store: &PresentationStore, field: &FieldRef) -> Option<CellStyle> {
     store
         .cells
         .get(&(field.entity.clone(), field.field.clone()))

@@ -2,10 +2,15 @@
 use std::{collections::BTreeMap, time::Instant};
 
 use serde_json::json;
+use tachiko_designer_runtime::interop_adapter::{
+    CellStyle, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
+    export_xlsx, import_xlsx,
+};
 use tachiko_designer_runtime::{
-    CalculationProjection, CellMove, DesignerRequest, DesignerResponse, DesignerRuntime,
-    DesignerWireReply, FieldProjection, FieldTarget, PublicationProjection, StoredValueProjection,
-    TableProjection, open_project, process_wire_request,
+    CalculationProjection, CellMove, CellStyleChange, DesignerRequest, DesignerResponse,
+    DesignerRuntime, DesignerWireReply, FieldProjection, FieldTarget, ImportFieldType,
+    ImportSelection, PublicationProjection, StoredValueProjection, TableProjection,
+    import_workbook, open_imported_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
     ColumnRef, Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint,
@@ -503,7 +508,7 @@ fn blank_source_moves_absence_and_undo_restores_destination() {
 }
 
 #[test]
-fn destination_keeps_its_number_format() {
+fn column_number_formats_stay_with_their_columns() {
     let mut doc = document(5);
     let fields = &mut doc.schemas.get_mut(&SchemaId::from("rows")).unwrap().fields;
     fields.get_mut(&FieldId::from("n")).unwrap().number_format = Some(NumberFormat {
@@ -525,6 +530,45 @@ fn destination_keeps_its_number_format() {
     assert_eq!(table(&mut runtime, "rows").columns, before);
     history(&mut runtime, 1, false);
     assert_eq!(table(&mut runtime, "rows").columns, before);
+}
+
+#[test]
+fn equal_values_swap_stored_styles_in_one_revision_and_undo() {
+    let mut doc = document(5);
+    set(&mut doc, "r1.n", Some(number(1)));
+    let mut runtime = fixture(doc);
+    for (revision, entity, change) in [
+        ("resident/0", "r0", CellStyleChange::Bold { value: true }),
+        ("resident/1", "r1", CellStyleChange::Italic { value: true }),
+    ] {
+        publish(
+            &mut runtime,
+            DesignerRequest::SetCellStyle {
+                expected_revision: revision.into(),
+                collection: "rows".into(),
+                entities: vec![entity.into()],
+                fields: vec!["n".into()],
+                changes: vec![change],
+            },
+        );
+    }
+    let before = table(&mut runtime, "rows");
+    let publication = publish(
+        &mut runtime,
+        move_request("resident/2", &[("r0.n", "r1.n"), ("r1.n", "r0.n")]),
+    );
+    assert_eq!(publication.resulting_revision, "resident/3");
+    assert_eq!(
+        publication.fields,
+        [FieldTarget::from("r0.n"), FieldTarget::from("r1.n")]
+    );
+    let after = table(&mut runtime, "rows");
+    assert_eq!(after.rows[0].styles, before.rows[1].styles);
+    assert_eq!(after.rows[1].styles, before.rows[0].styles);
+    history(&mut runtime, 3, false);
+    assert_eq!(table(&mut runtime, "rows").rows, before.rows);
+    history(&mut runtime, 4, true);
+    assert_eq!(table(&mut runtime, "rows").rows, after.rows);
 }
 
 #[test]
@@ -757,22 +801,34 @@ fn text_date_and_boolean_moves_preserve_exact_values() {
 }
 
 #[test]
-fn inbound_formula_keeps_existing_target_after_move() {
+fn formulas_follow_moved_cells_and_keep_references_outside_the_move() {
     let mut doc = document(5);
+    for owner in ["r0.dep", "r0.req"] {
+        set(
+            &mut doc,
+            owner,
+            Some(Value::Formula(Expression::SameRowReference("n".into()))),
+        );
+    }
     set(
         &mut doc,
         "r4.dep",
-        Some(Value::Formula(Expression::Reference(FieldRef::new(
-            "r0", "n",
-        )))),
+        Some(Value::Formula(Expression::Add {
+            left: Box::new(Expression::AnchoredReference(FieldRef::new("r0", "n"))),
+            right: Box::new(Expression::Reference(FieldRef::new("r2", "n"))),
+        })),
     );
     let mut runtime = fixture(doc);
+    let before = saved(&runtime, "resident/0");
     publish(
         &mut runtime,
-        move_request("resident/0", &[("r0.n", "r1.n")]),
+        move_request("resident/0", &[("r0.n", "r1.n"), ("r0.dep", "r1.dep")]),
     );
-    // A cleared optional Number reads as zero under the ordinary calculation rule.
-    assert_formula(&mut runtime, 1, "r4.dep", 0.0, "[r0.n]");
+    assert_formula(&mut runtime, 1, "r1.dep", 1.0, "[.n]");
+    assert_formula(&mut runtime, 1, "r0.req", 1.0, "[r1.n]");
+    assert_formula(&mut runtime, 1, "r4.dep", 4.0, "[r1.$n] + [r2.n]");
+    history(&mut runtime, 1, false);
+    assert_eq!(saved(&runtime, "resident/2"), before);
 }
 
 #[test]
@@ -783,7 +839,10 @@ fn calculation_refusal_does_not_publish_partial_move() {
         "r4.dep",
         Some(Value::Formula(Expression::Divide {
             left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
-            right: Box::new(Expression::Reference(FieldRef::new("r0", "n"))),
+            right: Box::new(Expression::Subtract {
+                left: Box::new(Expression::Reference(FieldRef::new("r1", "n"))),
+                right: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            }),
         })),
     );
     let mut runtime = fixture(doc);
@@ -876,6 +935,13 @@ fn working_size_moves_ten_thousand_cells_in_one_wire_request() {
 #[test]
 fn save_and_reopen_keep_moved_contents_and_formula_meaning() {
     let mut doc = document(5);
+    doc.schemas
+        .get_mut("rows")
+        .unwrap()
+        .fields
+        .get_mut("n")
+        .unwrap()
+        .field_type = FieldType::Auto;
     set(
         &mut doc,
         "r0.n",
@@ -898,6 +964,91 @@ fn save_and_reopen_keep_moved_contents_and_formula_meaning() {
     .unwrap();
     assert_number(&mut reopened, 0, "r0.n", None);
     assert_formula(&mut reopened, 0, "r1.n", 10.0, "[r0.dep]");
+}
+
+#[test]
+fn xlsx_round_trip_after_move_and_project_reopen_keeps_style_and_formula() {
+    let source = SourceWorkbook {
+        sheets: vec![SourceSheet {
+            name: "Rows".into(),
+            has_header: true,
+            columns: ["Input", "Formula"]
+                .map(|name| SourceColumn {
+                    name: name.into(),
+                    width: None,
+                    number_format: None,
+                })
+                .into(),
+            rows: vec![
+                vec![
+                    SourceCell {
+                        value: SourceValue::Number { value: 1.0 },
+                        style: CellStyle {
+                            bold: true,
+                            ..CellStyle::default()
+                        },
+                        ..SourceCell::default()
+                    },
+                    SourceCell {
+                        value: SourceValue::Number { value: 1.0 },
+                        formula: Some("$A2".into()),
+                        ..SourceCell::default()
+                    },
+                ],
+                vec![
+                    SourceCell {
+                        value: SourceValue::Number { value: 2.0 },
+                        style: CellStyle {
+                            italic: true,
+                            ..CellStyle::default()
+                        },
+                        ..SourceCell::default()
+                    },
+                    SourceCell::default(),
+                ],
+            ],
+            layout: SourceLayout::default(),
+        }],
+        ledger: vec![],
+    };
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 2]],
+        extra_columns: vec![vec![]],
+    };
+    let source = import_xlsx(&export_xlsx(&source).unwrap()).unwrap();
+    let (runtime, imported) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let input = &imported.opened.table.columns[0].id;
+    let rows = &imported.opened.table.rows;
+    let from = format!("{}.{input}", rows[0].id);
+    let to = format!("{}.{input}", rows[1].id);
+    let mut runtime = Some(runtime);
+    let before = saved(&runtime, "resident/0");
+    publish(&mut runtime, move_request("resident/0", &[(&from, &to)]));
+    let after = saved(&runtime, "resident/1");
+    history(&mut runtime, 1, false);
+    assert_eq!(saved(&runtime, "resident/2"), before);
+    history(&mut runtime, 2, true);
+    assert_eq!(saved(&runtime, "resident/3"), after);
+    let mut reopened = None;
+    open_imported_project(
+        &mut reopened,
+        &after,
+        &imported.metadata,
+        "00000000-0000-4000-8000-000000000814",
+    )
+    .unwrap();
+    let workbook = reopened
+        .unwrap()
+        .export_workbook("resident/0", &imported.metadata)
+        .unwrap();
+    let round_trip = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    let rows = &round_trip.sheets[0].rows;
+    assert_eq!(rows[0][0].value, SourceValue::Empty);
+    assert_eq!(rows[0][0].style, CellStyle::default());
+    assert_eq!(rows[1][0].value, SourceValue::Number { value: 1.0 });
+    assert!(rows[1][0].style.bold);
+    assert!(!rows[1][0].style.italic);
+    assert_eq!(rows[0][1].formula.as_deref(), Some("'Rows'!$A$3"));
 }
 
 #[test]

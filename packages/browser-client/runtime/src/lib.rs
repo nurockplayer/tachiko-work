@@ -8725,8 +8725,8 @@ impl DesignerRuntime {
         moves: &[CellMove],
     ) -> Result<PublicationProjection, DesignerError> {
         self.check_revision(expected)?;
-        let (forward, inverse) = move_cells::plan(self, moves)?;
-        self.record_edit(expected, forward, inverse)
+        let movement = move_cells::plan(self, moves)?;
+        movement.publish(self, expected)
     }
 
     fn edit_cells(
