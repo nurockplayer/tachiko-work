@@ -244,6 +244,18 @@ fn decoder_refuses_out_of_order_records() {
 }
 
 #[test]
+fn decoder_checks_kind_order_before_decoding_record_fields() {
+    let payload = format!(
+        "{{\"kind\":\"cell\",\"entity\":\"e1\",\"field\":\"f1\",\"style\":\"{STYLE_FALSE}\"}}\n{{\"kind\":\"style\"}}\n"
+    );
+    assert!(matches!(
+        decode_presentation(payload.as_bytes()),
+        Err(FormatError::InvalidRoProjectRepresentation { message })
+            if message == "presentation records are not in style, table, rule, cell order"
+    ));
+}
+
+#[test]
 fn decoder_refuses_lines_that_do_not_end_canonically() {
     let expected = pinned();
     let without_lf = expected.strip_suffix('\n').unwrap();
