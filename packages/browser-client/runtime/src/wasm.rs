@@ -4,27 +4,30 @@ use std::cell::{Cell, RefCell};
 
 use serde::Deserialize;
 
+use crate::DesignerResponse::ImportPreview;
 use crate::source_reuse::{InspectedSource, SourceIdentity};
 
 use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
-    import_csv_profile, import_xlsx_profile_with_size, validate_text_capacity_inspection,
+    import_csv_profile, import_xlsx_profile, validate_text_capacity_inspection,
 };
 use crate::interop_document::import_admitted_workbook_working_size;
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     MAX_PROJECT_TRANSFER_BYTES, MAX_SPREADSHEET_METADATA_REQUEST_BYTES, MAX_WIRE_REQUEST_BYTES,
-    ProjectExportProjection, encode_reply, encode_sized_reply, inspect_project,
-    inspect_project_working_size, open_local_document, open_local_document_working_size,
-    open_portable_ro, open_portable_ro_working_size, open_project, open_project_working_size,
-    process_wire_request, request_too_large_reply, verify_portable_ro, wire_request_limit,
+    ProjectExportProjection, encode_reply, inspect_project, inspect_project_working_size,
+    open_local_document, open_local_document_working_size, open_portable_ro,
+    open_portable_ro_working_size, open_project, open_project_working_size, process_wire_request,
+    request_too_large_reply, verify_portable_ro, wire_request_limit,
 };
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
 };
+
+mod spreadsheet_reply;
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -373,39 +376,7 @@ pub extern "C" fn tachiko_designer_spreadsheet_run() {
         };
         let reply = match result {
             Ok(result) => {
-                let reply = DesignerWireReply::Ok {
-                    response: result.response,
-                };
-                // The response arena owns its allocation across spreadsheet calls;
-                // an inspect must not allocate another preview-sized output buffer.
-                let mut buffer =
-                    RESPONSE.with(|response| std::mem::take(&mut *response.borrow_mut()));
-                if let Some((_, size @ 1..)) = &result.inspected_source {
-                    // Use the admission byte count to allocate the cold arena once.
-                    buffer.clear();
-                    buffer.reserve_exact(size + crate::REPLY_ENVELOPE_RESERVE);
-                }
-                let encoded = match encode_sized_reply(&reply, result.profile, buffer) {
-                    Err(error) => encode_reply(&DesignerWireReply::Error {
-                        error: error.failure_projection(current_revision(runtime.as_ref())),
-                    }),
-                    Ok(encoded) => {
-                        if let Some(candidate) = result.candidate {
-                            *runtime = Some(candidate);
-                        }
-                        if let Some(bytes) = result.export {
-                            PROJECT.with(|slot| *slot.borrow_mut() = bytes);
-                        }
-                        if let Some((identity, _)) = result.inspected_source {
-                            RETAINED_SOURCE.with(|retained| {
-                                *retained.borrow_mut() =
-                                    Some(InspectedSource::from_preview(identity, reply));
-                            });
-                        }
-                        encoded
-                    }
-                };
-                RESPONSE.with(|response| *response.borrow_mut() = encoded);
+                spreadsheet_reply::set_success(&mut runtime, result);
                 return;
             }
             Err(error) => DesignerWireReply::Error {
@@ -447,7 +418,7 @@ fn import_source(
         SpreadsheetFormat::Csv => {
             import_csv_profile(source, options, working).map(|workbook| (workbook, 0))
         }
-        SpreadsheetFormat::Xlsx => import_xlsx_profile_with_size(source, options, working),
+        SpreadsheetFormat::Xlsx => import_xlsx_profile(source, options, working),
     }
     .map_err(interop_error)
 }
@@ -493,22 +464,21 @@ fn spreadsheet_operation(
         } => {
             *retained = None;
             let working = profile.is_some();
-            let (workbook, size) = import_source(project, format, &csv_options, working)?;
+            let (source, size) = import_source(project, format, &csv_options, working)?;
             let profile = if working {
                 SessionProfile::WorkingSize
-            } else if validate_text_capacity_inspection(&workbook).is_ok() {
+            } else if validate_text_capacity_inspection(&source).is_ok() {
                 SessionProfile::TextCapacity
             } else {
                 SessionProfile::Ordinary
             };
-            let mut result =
-                SpreadsheetResult::read_only(DesignerResponse::ImportPreview(Box::new(workbook)));
-            result.profile = profile;
+            let mut reply = SpreadsheetResult::read_only(ImportPreview(Box::new(source)));
+            reply.profile = profile;
             if matches!(format, SpreadsheetFormat::Xlsx) {
-                result.inspected_source =
+                reply.inspected_source =
                     Some((SourceIdentity::new(project, csv_options, working), size));
             }
-            Ok(result)
+            Ok(reply)
         }
         SpreadsheetOperation::Import {
             format,

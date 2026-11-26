@@ -18,7 +18,7 @@ use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
-    import_csv_profile, import_xlsx_profile,
+    import_csv_profile, import_xlsx_source,
 };
 use crate::interop_document::import_admitted_workbook_working_size;
 use crate::{
@@ -600,7 +600,7 @@ fn import_source(
     }
     match format {
         SpreadsheetFormat::Csv => import_csv_profile(source, options, working),
-        SpreadsheetFormat::Xlsx => import_xlsx_profile(source, options, working),
+        SpreadsheetFormat::Xlsx => import_xlsx_source(source, options, working),
     }
     .map_err(interop_error)
 }

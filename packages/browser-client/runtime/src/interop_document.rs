@@ -6,6 +6,8 @@ use super::{
     ScalarEditInput, StoredValueProjection,
 };
 use crate::capacity::SessionProfile;
+
+mod working_import;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use tachiko_formula_engine::{
@@ -13,6 +15,7 @@ use tachiko_formula_engine::{
     bind_expression_with_index, parse_expression, project_expression_with_index,
     validate_expression_structure,
 };
+pub(crate) use working_import::import_admitted_workbook_working_size;
 
 fn interop_admission_error(error: super::interop_adapter::InteropError) -> DesignerError {
     match error {
@@ -994,8 +997,10 @@ fn import_workbook_candidate(
         selection,
         occurrence_id,
         DesignerRuntime::from_document,
-        false,
-        false,
+        ImportAdmission {
+            working: false,
+            source_admitted: false,
+        },
     )?;
     match runtime.profile {
         SessionProfile::TextCapacity if !super::interop_adapter::text_capacity_shape(workbook) => {
@@ -1052,104 +1057,13 @@ pub fn import_workbook_working_size(
     selection: &ImportSelection,
     occurrence_id: &str,
 ) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
-    build_working_size_candidate(Cow::Borrowed(workbook), selection, occurrence_id, false)
+    working_import::candidate(Cow::Borrowed(workbook), selection, occurrence_id, false)
         .map_err(import_capacity_refusal)
 }
 
-pub(crate) fn import_admitted_workbook_working_size(
-    workbook: SourceWorkbook,
-    selection: &ImportSelection,
-    occurrence_id: &str,
-) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
-    build_working_size_candidate(Cow::Owned(workbook), selection, occurrence_id, true)
-        .map_err(import_capacity_refusal)
-}
-
-fn build_working_size_candidate(
-    workbook: Cow<'_, SourceWorkbook>,
-    selection: &ImportSelection,
-    occurrence_id: &str,
+struct ImportAdmission {
+    working: bool,
     source_admitted: bool,
-) -> Result<(DesignerRuntime, ImportedWindowProjection), DesignerError> {
-    let (mut runtime, mut metadata, mut ledger, export_maps) = import_workbook_document(
-        &workbook,
-        selection,
-        occurrence_id,
-        DesignerRuntime::from_document_working_size,
-        true,
-        source_admitted,
-    )?;
-    normalize_import_date_styles(&workbook, &mut metadata, runtime.profile);
-    validate_import_metadata_for_profile(runtime.session.document(), &metadata, runtime.profile)?;
-    runtime = promote_import_presentation(
-        runtime,
-        &workbook,
-        &mut metadata,
-        &mut ledger,
-        occurrence_id,
-    )?;
-    // The host owns the decoded source. Release it before allocating the
-    // exportability proof's rebuilt workbook.
-    drop(workbook);
-    for sheet in &mut metadata.sheets {
-        for (index, column) in sheet.columns.iter_mut().enumerate() {
-            let mut dropped = BTreeSet::new();
-            for row in &sheet.rows {
-                let style = &row.styles[index];
-                if let Some(pattern) = &style.number_format {
-                    dropped.insert(format!("number format {pattern:?}"));
-                }
-                if let Some(alignment) = &style.alignment {
-                    dropped.insert(format!("alignment {alignment:?}"));
-                }
-                if let Some(fill) = &style.fill {
-                    dropped.insert(format!("fill {fill:?}"));
-                }
-            }
-            if !dropped.is_empty() {
-                ledger.push(FidelityFinding {
-                    category: FidelityCategory::LossyOnExport,
-                    code: "presentation_not_kept".into(),
-                    location: format!("{}:column {}", sheet.name, index + 1),
-                    message: format!(
-                        "Presentation not kept: {}.",
-                        dropped.into_iter().collect::<Vec<_>>().join(", ")
-                    ),
-                    blocking: false,
-                });
-            }
-            column.width = None;
-        }
-        sheet.rows.clear();
-    }
-    metadata.version = 2;
-    // The same representation proof as an ordinary import, without promotion.
-    drop(runtime.export_imported_workbook_with_maps(
-        runtime.current_revision(),
-        &metadata,
-        ImportedOutput::Projection,
-        Some(&export_maps),
-    )?);
-    ledger.push(stable_reference_binding());
-    super::interop_adapter::cap_ledger(&mut ledger);
-    // The reply also carries the metadata and ledger, so the window gets what
-    // is left of the one reply budget.
-    runtime.attach_imported_metadata(&metadata);
-    let overhead =
-        super::serialized_projection_bytes(&(&metadata, &ledger))? + super::REPLY_ENVELOPE_RESERVE;
-    let maximum = super::MAX_TEXT_CAPACITY_PROJECTION_BYTES.saturating_sub(overhead);
-    let opened = runtime.opened_window_within(maximum)?;
-    let projection = ImportedWindowProjection {
-        opened,
-        metadata,
-        ledger,
-    };
-    super::ensure_complete_projection_size(
-        "imported",
-        &projection,
-        super::MAX_TEXT_CAPACITY_PROJECTION_BYTES,
-    )?;
-    Ok((runtime, projection))
 }
 
 /// Build the imported document and bind every source formula, admitting both
@@ -1160,8 +1074,10 @@ fn import_workbook_document(
     selection: &ImportSelection,
     occurrence_id: &str,
     admit: fn(Document, &str) -> Result<DesignerRuntime, DesignerError>,
-    working: bool,
-    source_admitted: bool,
+    ImportAdmission {
+        working,
+        source_admitted,
+    }: ImportAdmission,
 ) -> Result<
     (
         DesignerRuntime,
@@ -1172,13 +1088,7 @@ fn import_workbook_document(
     DesignerError,
 > {
     validate_selection(workbook, selection, working, source_admitted)?;
-    // One for the document, then each sheet's schema, fields and rows.
-    let total_ids = 1 + workbook
-        .sheets
-        .iter()
-        .zip(&selection.extra_columns)
-        .map(|(sheet, extra)| 1 + sheet.columns.len() + extra.len() + sheet.rows.len())
-        .sum::<usize>();
+    let total_ids = import_id_count(workbook, selection);
     let mut ids = ImportIds {
         namespace: occurrence_id,
         serial: 0,
@@ -1327,6 +1237,16 @@ fn import_workbook_document(
     drop(index);
     let runtime = admit(document, occurrence_id)?;
     Ok((runtime, metadata, ledger, export_maps))
+}
+
+fn import_id_count(workbook: &SourceWorkbook, selection: &ImportSelection) -> usize {
+    // One for the document, then each sheet's schema, fields and rows.
+    1 + workbook
+        .sheets
+        .iter()
+        .zip(&selection.extra_columns)
+        .map(|(sheet, extra)| 1 + sheet.columns.len() + extra.len() + sheet.rows.len())
+        .sum::<usize>()
 }
 
 fn finish_import(
@@ -1799,16 +1719,7 @@ fn validate_selection(
             "8,406-row capacity requires selected Text, Number, Date or Boolean fields and no extra columns",
         ));
     }
-    let blocked = workbook.ledger.iter().any(|finding| finding.blocking);
-    // The parsers check the working-size geometry before output admission,
-    // which can still add a blocking finding and change the serialized size.
-    if !source_admitted || blocked {
-        super::interop_adapter::validate_import_geometry_profile(workbook, working)
-            .map_err(interop_admission_error)?;
-    }
-    if blocked {
-        return Err(tracker_error("blocking fidelity findings prevent import"));
-    }
+    validate_source_geometry(workbook, working, source_admitted)?;
     if workbook.sheets.is_empty()
         || selection.column_types.len() != workbook.sheets.len()
         || selection.extra_columns.len() != workbook.sheets.len()
@@ -1882,6 +1793,24 @@ fn validate_selection(
                 "source workbook exceeds the bounded expanded profile",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_source_geometry(
+    workbook: &SourceWorkbook,
+    working: bool,
+    source_admitted: bool,
+) -> Result<(), DesignerError> {
+    let blocked = workbook.ledger.iter().any(|finding| finding.blocking);
+    // The parsers check the working-size geometry before output admission,
+    // which can still add a blocking finding and change the serialized size.
+    if !source_admitted || blocked {
+        super::interop_adapter::validate_import_geometry_profile(workbook, working)
+            .map_err(interop_admission_error)?;
+    }
+    if blocked {
+        return Err(tracker_error("blocking fidelity findings prevent import"));
     }
     Ok(())
 }
@@ -4523,32 +4452,13 @@ impl DesignerRuntime {
                     let value = entity.fields.get(&field.id);
                     let (value, formula) = if let Some(Value::Formula(expression)) = value {
                         let target = FieldRef::new(entity.id.clone(), field.id.clone());
-                        let number = if profile == OutputProfile::WorkingSize
-                            && export_maps.is_some()
-                        {
-                            // Import already resolved the field in the candidate.
-                            // Read the retained result without constructing a browser reply.
-                            let result =
-                                self.session.query_fields(std::slice::from_ref(&target))?;
-                            match &result.value()[0].calculated_value {
-                                Some(super::FormulaCalculationOutcome::Value(number)) => {
-                                    Some(number.get())
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            let projection =
-                                self.query_fields(expected_revision, &[field_target(&target)])?;
-                            projection.fields[0]
-                                .calculated
-                                .as_ref()
-                                .and_then(super::CalculationProjection::number)
-                        }
-                        .ok_or_else(|| {
-                            tracker_error(
-                                "formula export requires a complete authoritative Number result",
-                            )
-                        })?;
+                        let number = export_formula_number(
+                            self,
+                            expected_revision,
+                            &target,
+                            profile,
+                            export_maps.is_some(),
+                        )?;
                         let formula = if values_only {
                             None
                         } else {
@@ -4633,6 +4543,31 @@ impl DesignerRuntime {
         }] };
         Ok(workbook)
     }
+}
+
+fn export_formula_number(
+    runtime: &DesignerRuntime,
+    expected_revision: &str,
+    target: &FieldRef,
+    profile: OutputProfile,
+    has_export_maps: bool,
+) -> Result<f64, DesignerError> {
+    if profile == OutputProfile::WorkingSize && has_export_maps {
+        // Import already resolved the field in the candidate.
+        // Read the retained result without constructing a browser reply.
+        let result = runtime.session.query_fields(std::slice::from_ref(target))?;
+        match &result.value()[0].calculated_value {
+            Some(super::FormulaCalculationOutcome::Value(number)) => Some(number.get()),
+            _ => None,
+        }
+    } else {
+        let projection = runtime.query_fields(expected_revision, &[field_target(target)])?;
+        projection.fields[0]
+            .calculated
+            .as_ref()
+            .and_then(super::CalculationProjection::number)
+    }
+    .ok_or_else(|| tracker_error("formula export requires a complete authoritative Number result"))
 }
 
 fn finalize_export_workbook(
@@ -5266,7 +5201,7 @@ pub(crate) fn validate_saved_open_closure(
     let profile = candidate.imported_output_profile();
     let encoded = super::interop_adapter::export_xlsx_for_profile(&workbook, profile)
         .map_err(interop_admission_error)?;
-    super::interop_adapter::import_xlsx_profile(
+    super::interop_adapter::import_xlsx_source(
         &encoded,
         &super::interop_adapter::ImportOptions::default(),
         candidate.profile == SessionProfile::WorkingSize,

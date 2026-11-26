@@ -1808,32 +1808,37 @@ pub(crate) fn validate_import_geometry_profile(
         )?;
     }
     if working {
-        let cells = workbook
-            .sheets
-            .iter()
-            .flat_map(|sheet| &sheet.rows)
-            .flatten()
-            .filter(|cell| !matches!(cell.value, SourceValue::Empty) || cell.formula.is_some())
-            .count();
-        check_import_limit(
-            crate::CapacityLimit::PopulatedCells,
-            crate::capacity::WORKING_LIMITS.populated_cells,
-            cells,
-            None,
-            false,
-        )?;
-        let bytes = super::serialized_projection_bytes(workbook)
-            .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?;
-        check_import_limit(
-            crate::CapacityLimit::SerializedSourceBytes,
-            MAX_WORKING_SERIALIZED_SOURCE_BYTES,
-            bytes,
-            None,
-            false,
-        )?;
-        return Ok(bytes);
+        validate_working_import_geometry(workbook)
+    } else {
+        Ok(0)
     }
-    Ok(0)
+}
+
+fn validate_working_import_geometry(workbook: &SourceWorkbook) -> Result<usize> {
+    let cells = workbook
+        .sheets
+        .iter()
+        .flat_map(|sheet| &sheet.rows)
+        .flatten()
+        .filter(|cell| !matches!(cell.value, SourceValue::Empty) || cell.formula.is_some())
+        .count();
+    check_import_limit(
+        crate::CapacityLimit::PopulatedCells,
+        crate::capacity::WORKING_LIMITS.populated_cells,
+        cells,
+        None,
+        false,
+    )?;
+    let bytes = super::serialized_projection_bytes(workbook)
+        .map_err(|_| InteropError::Invalid("source workbook is not encodable".into()))?;
+    check_import_limit(
+        crate::CapacityLimit::SerializedSourceBytes,
+        MAX_WORKING_SERIALIZED_SOURCE_BYTES,
+        bytes,
+        None,
+        false,
+    )?;
+    Ok(bytes)
 }
 
 fn finding(
@@ -2066,61 +2071,9 @@ pub(crate) fn import_csv_profile(
     Ok(finish_source_admission(workbook, working))
 }
 
-// Namespace-aware bounded XML tree. No DTD or entity expansion is accepted.
-#[derive(Clone, Debug)]
-struct Xml<'src> {
-    name: Rc<String>,
-    ns: Rc<String>,
-    attrs: Vec<(Cow<'src, str>, Cow<'src, str>)>,
-    namespace_declarations: Vec<String>,
-    children: Vec<Xml<'src>>,
-    text: Cow<'src, str>,
-    plain_attribute_namespaces: bool,
-    plain_lexical_values: bool,
-}
-impl<'src> Xml<'src> {
-    fn attr(&self, key: &str) -> Option<&str> {
-        self.attrs
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.as_ref())
-    }
-    fn child(&self, name: &str) -> Option<&Xml<'src>> {
-        self.children
-            .iter()
-            .find(|x| x.name.as_str() == name && x.ns == self.ns)
-    }
-    fn kids<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Xml<'src>> {
-        self.children
-            .iter()
-            .filter(move |x| x.name.as_str() == name && x.ns == self.ns)
-    }
-    fn all<'a>(&'a self, name: &str, out: &mut Vec<&'a Xml<'src>>) {
-        if self.name.as_str() == name {
-            out.push(self);
-        }
-        for c in &self.children {
-            c.all(name, out);
-        }
-    }
-    fn content(&self) -> Result<String> {
-        if self.name.as_str() == "t" {
-            return decode_xstring(&self.text);
-        }
-        let mut parts = self
-            .children
-            .iter()
-            .filter(|c| c.ns == self.ns && matches!(c.name.as_str(), "t" | "r"));
-        let Some(first) = parts.next() else {
-            return Ok(String::new());
-        };
-        let mut text = first.content()?;
-        for part in parts {
-            text.push_str(&part.content()?);
-        }
-        Ok(text)
-    }
-}
+mod xml_tree;
+use xml_tree::{Xml, attach_xml, restore_xml_bindings};
+
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
@@ -2274,12 +2227,11 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml<'_>> {
         let end = usize::try_from(reader.buffer_position())
             .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
         // Only the non-working text-capacity classifier uses the plain proof.
-        if !working {
-            plain_document &= tokens
+        plain_document &= working
+            || tokens
                 .as_bytes()
                 .get(start..end)
                 .is_some_and(|raw| plain_token(raw, &event));
-        }
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(e) | Event::Empty(e) => {
@@ -2450,13 +2402,7 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml<'_>> {
                     return fail("Invalid escaped XML character");
                 }
                 if let Some((node, _)) = stack.last_mut() {
-                    node.plain_lexical_values &=
-                        !matches!(node.name.as_str(), "t" | "v") || !e.as_ref().contains(&b'\r');
-                    if node.text.is_empty() {
-                        node.text = value;
-                    } else {
-                        node.text.to_mut().push_str(&value);
-                    }
+                    node.push_text(e.as_ref(), value);
                 } else {
                     plain_document &= e
                         .as_ref()
@@ -2498,37 +2444,6 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml<'_>> {
     root.plain_lexical_values &= plain_document;
     Ok(root)
 }
-fn restore_xml_bindings(
-    bindings: &mut BTreeMap<String, Rc<String>>,
-    changes: &mut Vec<(String, Option<Rc<String>>)>,
-    scope_start: usize,
-) {
-    for (prefix, previous) in changes.drain(scope_start..).rev() {
-        if let Some(previous) = previous {
-            bindings.insert(prefix, previous);
-        } else {
-            bindings.remove(&prefix);
-        }
-    }
-}
-fn attach_xml<'src>(
-    node: Xml<'src>,
-    stack: &mut [(Xml<'src>, usize)],
-    root: &mut Option<Xml<'src>>,
-) -> Result<()> {
-    if let Some((parent, _)) = stack.last_mut() {
-        // Cell value/formula and inline-text nodes usually have one or two
-        // children. Vec's default first allocation holds four full Xml nodes.
-        if parent.children.is_empty() {
-            parent.children.reserve_exact(1);
-        }
-        parent.children.push(node);
-    } else if root.replace(node).is_some() {
-        return fail("Multiple XML roots");
-    }
-    Ok(())
-}
-
 fn archive(bytes: &[u8], working: bool) -> Result<BTreeMap<String, Vec<u8>>> {
     source_bound_profile(bytes, working)?;
     validate_zip_directory(bytes)?;
@@ -3723,19 +3638,19 @@ pub fn import_xlsx(bytes: &[u8]) -> Result<SourceWorkbook> {
 /// Rejects malformed archives/XML, unresolved relationships, resource limits and
 /// header or summary-row options that do not fit the workbook.
 pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceWorkbook> {
-    import_xlsx_profile(bytes, options, false)
+    import_xlsx_source(bytes, options, false)
 }
 
-pub(crate) fn import_xlsx_profile(
+pub(crate) fn import_xlsx_source(
     bytes: &[u8],
     options: &ImportOptions,
     working: bool,
 ) -> Result<SourceWorkbook> {
-    import_xlsx_profile_with_size(bytes, options, working).map(|(workbook, _)| workbook)
+    import_xlsx_profile(bytes, options, working).map(|(workbook, _)| workbook)
 }
 
 #[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
-pub(crate) fn import_xlsx_profile_with_size(
+pub(crate) fn import_xlsx_profile(
     bytes: &[u8],
     options: &ImportOptions,
     working: bool,
@@ -3793,49 +3708,7 @@ pub(crate) fn import_xlsx_profile_with_size(
     if options.header_rows.len() > sheet_nodes.len() {
         return fail("header_rows has more entries than the workbook has sheets");
     }
-    let mut sheet_inventory = Vec::new();
-    let mut paths = BTreeSet::new();
-    let mut names = BTreeSet::new();
-    for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
-        let name = sheet
-            .attr("name")
-            .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
-            .to_owned();
-        if !valid_worksheet_name(&name) || !names.insert(name.to_lowercase()) {
-            return fail("Invalid or duplicate worksheet name");
-        }
-        match sheet.attr("state") {
-            None | Some("visible") => {}
-            Some("hidden" | "veryHidden") => ledger.push(visibility_finding("hidden_sheet", &name)),
-            Some(_) => return fail("Unknown worksheet visibility state"),
-        }
-        let relationship = rels
-            .get(
-                sheet
-                    .attr("rel:id")
-                    .ok_or_else(|| InteropError::Invalid("Missing sheet relationship".into()))?,
-            )
-            .ok_or_else(|| InteropError::Invalid("Unresolved worksheet relationship".into()))?;
-        if relationship.attr("TargetMode") == Some("External") {
-            return fail("External worksheet is not admitted");
-        }
-        if relationship.attr("Type")
-            != Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet")
-        {
-            return fail("Workbook sheet relationship is not a worksheet");
-        }
-        let path = rel_target(
-            "xl",
-            relationship
-                .attr("Target")
-                .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
-        )?;
-        part(&parts, &path)?;
-        if !paths.insert(path.clone()) {
-            return fail("Duplicate worksheet part mapping");
-        }
-        sheet_inventory.push((sheet_index, name, path));
-    }
+    let sheet_inventory = worksheet_inventory(sheet_nodes, &rels, &parts, &mut ledger)?;
     drop(rels);
     drop(relationships);
     drop(workbook);
@@ -4339,6 +4212,64 @@ pub(crate) fn import_xlsx_profile_with_size(
         crate::wasm::reserve_xlsx_heap(xml_bytes);
     }
     Ok((workbook, source_bytes))
+}
+
+type WorksheetInventory = Vec<(usize, String, String)>;
+
+fn worksheet_inventory(
+    sheet_nodes: Vec<&Xml<'_>>,
+    rels: &BTreeMap<String, &Xml<'_>>,
+    parts: &BTreeMap<String, Vec<u8>>,
+    ledger: &mut Vec<FidelityFinding>,
+) -> Result<WorksheetInventory> {
+    let mut sheet_inventory = Vec::new();
+    let mut paths = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    for (sheet_index, sheet) in sheet_nodes.into_iter().enumerate() {
+        let name = sheet
+            .attr("name")
+            .ok_or_else(|| InteropError::Invalid("Missing worksheet name".into()))?
+            .to_owned();
+        if !valid_worksheet_name(&name) || !names.insert(name.to_lowercase()) {
+            return fail("Invalid or duplicate worksheet name");
+        }
+        match sheet.attr("state") {
+            None | Some("visible") => {}
+            Some("hidden" | "veryHidden") => ledger.push(visibility_finding("hidden_sheet", &name)),
+            Some(_) => return fail("Unknown worksheet visibility state"),
+        }
+        let path = worksheet_path(sheet, rels)?;
+        part(parts, &path)?;
+        if !paths.insert(path.clone()) {
+            return fail("Duplicate worksheet part mapping");
+        }
+        sheet_inventory.push((sheet_index, name, path));
+    }
+    Ok(sheet_inventory)
+}
+
+fn worksheet_path(sheet: &Xml<'_>, rels: &BTreeMap<String, &Xml<'_>>) -> Result<String> {
+    let relationship = rels
+        .get(
+            sheet
+                .attr("rel:id")
+                .ok_or_else(|| InteropError::Invalid("Missing sheet relationship".into()))?,
+        )
+        .ok_or_else(|| InteropError::Invalid("Unresolved worksheet relationship".into()))?;
+    if relationship.attr("TargetMode") == Some("External") {
+        return fail("External worksheet is not admitted");
+    }
+    if relationship.attr("Type")
+        != Some("http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet")
+    {
+        return fail("Workbook sheet relationship is not a worksheet");
+    }
+    rel_target(
+        "xl",
+        relationship
+            .attr("Target")
+            .ok_or_else(|| InteropError::Invalid("Missing sheet target".into()))?,
+    )
 }
 
 /// Leading title rows are skipped only when a complete header follows them.
@@ -6764,98 +6695,10 @@ mod date_guard_inventory_tests {
 }
 
 #[cfg(test)]
-mod xml_scope_tests {
-    use super::{MAIN, parse_xml};
-    use std::fmt::Write;
-
-    #[test]
-    fn declarations_restore_after_empty_and_nested_elements() {
-        let source = format!(
-            "<root xmlns=\"{MAIN}\" xmlns:p=\"outer\"><p:a xmlns:p=\"empty\"/><p:b xmlns:p=\"inner\"><p:c/></p:b><p:d/></root>"
-        );
-        let xml = parse_xml(source.as_bytes()).unwrap();
-        assert_eq!(xml.children[0].ns.as_str(), "empty");
-        assert_eq!(xml.children[1].children[0].ns.as_str(), "inner");
-        assert_eq!(xml.children[2].ns.as_str(), "outer");
-        for body in ["<a xmlns:p=\"local\"/>", "<a xmlns:p=\"local\"><p:b/></a>"] {
-            let error = parse_xml(format!("<root>{body}<p:c/></root>").as_bytes()).unwrap_err();
-            assert_eq!(error.to_string(), "Unbound XML namespace prefix");
-        }
-        let mut declarations = String::new();
-        for i in 0..63 {
-            write!(declarations, " xmlns:p{i}=\"uri\"").unwrap();
-        }
-        parse_xml(format!("<root{declarations}><a xmlns:p0=\"shadow\"/><p0:b/></root>").as_bytes())
-            .unwrap();
-        let error =
-            parse_xml(format!("<root{declarations}><a xmlns:extra=\"uri\"/></root>").as_bytes())
-                .unwrap_err();
-        assert_eq!(error.to_string(), "XML namespace scope exceeds profile");
-    }
-
-    #[test]
-    fn relationship_aliases_keep_sorted_overwrite_and_scope() {
-        let office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-        let source = format!(
-            "<root xmlns:a=\"{office}\" xmlns:z=\"{office}\" xmlns:rel=\"other\"><c a:id=\"first\" rel:id=\"original\" z:other=\"last\"/><c xmlns:a=\"other\" a:id=\"local\"/><c a:id=\"restored\"/></root>"
-        );
-        let xml = parse_xml(source.as_bytes()).unwrap();
-        assert_eq!(xml.children[0].attr("rel:id"), Some("first"));
-        assert_eq!(xml.children[0].attr("a:id"), Some("first"));
-        assert_eq!(xml.children[0].attr("rel:other"), Some("last"));
-        assert_eq!(xml.children[1].attr("rel:id"), None);
-        assert_eq!(xml.children[2].attr("rel:id"), Some("restored"));
-    }
-}
+mod xml_scope_tests;
 
 #[cfg(test)]
-mod scalar_carrier_tests {
-    use super::{CellStyle, MAIN, c_unknown, cell_value, ignorable_formula_cache, parse_xml};
-
-    fn cell_xml(kind: &str, carrier: &str, formula: &str) -> String {
-        format!("<c xmlns=\"{MAIN}\"{kind}>{formula}{carrier}</c>")
-    }
-
-    #[test]
-    fn mismatched_carriers_cannot_reach_defaults_or_formula_cache_recovery() {
-        for (kind, carrier) in [
-            ("", "<is><t>value</t></is>"),
-            (" t=\"n\"", "<is><t>value</t></is>"),
-            (" t=\"str\"", "<is><t>value</t></is>"),
-            (" t=\"b\"", "<is><t>1</t></is>"),
-            (" t=\"s\"", "<is><t>0</t></is>"),
-            (" t=\"e\"", "<is><t>#VALUE!</t></is>"),
-            (" t=\"d\"", "<is><t>2026-10-10</t></is>"),
-            (" t=\"inlineStr\"", "<v>123</v>"),
-        ] {
-            for formula in ["", "<f>1+2</f>"] {
-                let xml = cell_xml(kind, carrier, formula);
-                let cell = parse_xml(xml.as_bytes()).unwrap();
-                assert!(c_unknown(&cell), "{kind} {carrier} {formula}");
-                assert!(cell_value(&cell, &[], &CellStyle::default(), false).is_err());
-                assert!(!ignorable_formula_cache(&cell, &CellStyle::default()));
-            }
-        }
-    }
-
-    #[test]
-    fn compatible_and_absent_carriers_keep_formula_cache_eligibility() {
-        for (kind, carrier) in [
-            ("", ""),
-            (" t=\"n\"", "<v/>"),
-            (" t=\"n\"", "<v>3</v>"),
-            (" t=\"inlineStr\"", ""),
-            (" t=\"inlineStr\"", "<is><t>3</t></is>"),
-            (" t=\"e\"", "<v>#VALUE!</v>"),
-            (" t=\"str\"", "<v>cache</v>"),
-        ] {
-            let xml = cell_xml(kind, carrier, "<f>1+2</f>");
-            let cell = parse_xml(xml.as_bytes()).unwrap();
-            assert!(!c_unknown(&cell), "{kind} {carrier}");
-            assert!(ignorable_formula_cache(&cell, &CellStyle::default()));
-        }
-    }
-}
+mod scalar_carrier_tests;
 
 #[cfg(test)]
 mod capacity_proof_tests {
@@ -6868,7 +6711,7 @@ mod capacity_proof_tests {
         CapacityXmlCount, ImportOptions, InteropError, MAX_TEXT_CAPACITY_ROWS, OutputProfile,
         SourceColumn, SourceLayout, SourceValue, capacity_auxiliary_xml_reserve,
         capacity_header_bytes, capacity_header_limit, capacity_worksheet, column_name, export_xlsx,
-        import_csv, import_xlsx, import_xlsx_profile, max_physical_rows, output_profile, plain_tag,
+        import_csv, import_xlsx, import_xlsx_source, max_physical_rows, output_profile, plain_tag,
         st_xstring, validate_text_capacity,
     };
     use crate::{CapacityExceeded, CapacityLimit};
@@ -6977,7 +6820,7 @@ mod capacity_proof_tests {
             xml.push_str("</row>");
         }
         xml.push_str("</sheetData></worksheet>");
-        let workbook = import_xlsx_profile(&xlsx_with_sheet(&xml), &options, true).unwrap();
+        let workbook = import_xlsx_source(&xlsx_with_sheet(&xml), &options, true).unwrap();
         let sheet = &workbook.sheets[0];
         assert_eq!(sheet.rows.len(), 1);
         assert_eq!(sheet.columns.len(), 32);
@@ -7002,14 +6845,14 @@ mod capacity_proof_tests {
                     ..ImportOptions::default()
                 };
                 let workbook =
-                    import_xlsx_profile(&capacity_xlsx_with_title(10_000, summary), &options, true)
+                    import_xlsx_source(&capacity_xlsx_with_title(10_000, summary), &options, true)
                         .unwrap();
                 assert_eq!(workbook.sheets[0].rows.len(), 10_000);
                 assert_eq!(workbook.sheets[0].layout.rows_above_header, 2);
                 assert_eq!(workbook.sheets[0].layout.summary_row.is_some(), summary);
                 assert!(!workbook.ledger.iter().any(|finding| finding.blocking));
                 let error =
-                    import_xlsx_profile(&capacity_xlsx_with_title(10_011, summary), &options, true)
+                    import_xlsx_source(&capacity_xlsx_with_title(10_011, summary), &options, true)
                         .unwrap_err();
                 assert_eq!(
                     error,

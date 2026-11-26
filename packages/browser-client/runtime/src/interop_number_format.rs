@@ -261,16 +261,7 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
             }
             '[' => {
                 let start = i + 1;
-                i = start;
-                while i < chars.len() && chars[i] != ']' {
-                    if chars[i] == '[' {
-                        return Err("Nested number-format bracket".into());
-                    }
-                    i += 1;
-                }
-                if i == chars.len() {
-                    return Err("Incomplete number-format bracket".into());
-                }
+                i = bracket_end(&chars, start)?;
                 bracket(&chars[start..i].iter().collect::<String>(), &mut conditions)?
             }
             ';' => {
@@ -332,6 +323,19 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
         i += 1;
     }
     uniform_kind(&sections).map(|kind| (kind, conditions))
+}
+
+fn bracket_end(chars: &[char], mut i: usize) -> Result<usize, String> {
+    while i < chars.len() && chars[i] != ']' {
+        if chars[i] == '[' {
+            return Err("Nested number-format bracket".into());
+        }
+        i += 1;
+    }
+    if i == chars.len() {
+        return Err("Incomplete number-format bracket".into());
+    }
+    Ok(i)
 }
 
 fn literal_end(chars: &[char], mut i: usize) -> Result<usize, String> {
