@@ -150,7 +150,7 @@ fn overwrite_exports_current_edit_and_leaves_one_undo() {
 }
 
 #[test]
-fn overwrite_reports_rich_text_flattening_even_with_a_clean_import_ledger() {
+fn overwrite_reports_rich_text_flattening_absent_from_the_import_ledger() {
     let original = repack(
         |xml| {
             xml.replace(
@@ -160,15 +160,10 @@ fn overwrite_reports_rich_text_flattening_even_with_a_clean_import_ledger() {
         },
         &[],
     );
+    let plain = open(&mut DesignerHost::new(), &source(), FIRST, 1);
     let mut host = DesignerHost::new();
     let imported = open(&mut host, &original, FIRST, 1);
-    assert!(
-        imported["ledger"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|entry| entry["category"] != "lossy_on_export")
-    );
+    assert_eq!(imported["ledger"], plain["ledger"]);
     let expected = ok(&host.observe_occurrence());
     let diagnostics = refusal(&overwrite(&mut host, &expected), "xlsx_overwrite_refused");
     has_reason(&diagnostics, "xlsx_rich_text_flattened", SHEET);

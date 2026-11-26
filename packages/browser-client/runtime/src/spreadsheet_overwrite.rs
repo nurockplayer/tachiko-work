@@ -183,7 +183,10 @@ pub(super) fn export(
         .filter(|finding| {
             finding.blocking
                 || !matches!(finding.category, FidelityCategory::NativeEquivalent)
-                    && finding.code != "imported_current_structure"
+                    && !matches!(
+                        finding.code.as_str(),
+                        "imported_current_structure" | "bound_formula_absolute_a1"
+                    )
         })
         .cloned()
         .collect();
