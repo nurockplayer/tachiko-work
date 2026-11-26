@@ -1,7 +1,7 @@
 //! Identity-bound cell presentation commands; semantic values never change.
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
-    BorderSide, CellStyle, EntityId, FieldId, PresentationStore, SchemaId,
+    BorderSide, CellStyle, EntityId, FieldId, FieldType, NumberFormat, PresentationStore, SchemaId,
 };
 
 use crate::{
@@ -25,6 +25,9 @@ pub enum CellStyleChange {
     Fill {
         #[serde(deserialize_with = "deserialize_fill_color")]
         color: Option<String>,
+    },
+    NumberFormat {
+        format: NumberFormat,
     },
     Border {
         target: CellBorderTarget,
@@ -107,6 +110,9 @@ impl DesignerRuntime {
                         CellStyleChange::Bold { value } => style.bold = Some(*value),
                         CellStyleChange::Italic { value } => style.italic = Some(*value),
                         CellStyleChange::Fill { color } => style.fill.clone_from(color),
+                        CellStyleChange::NumberFormat { format } => {
+                            style.number_format = Some(format.clone());
+                        }
                         CellStyleChange::Border { target, value } => {
                             let borders = effective_borders(&candidate, &schema, entity, field);
                             style.borders = Some(edit_borders(
@@ -479,6 +485,11 @@ fn edit_borders(
 
 fn validate_style_changes(changes: &[CellStyleChange]) -> Result<(), DesignerError> {
     for change in changes {
+        if let CellStyleChange::NumberFormat { format } = change {
+            format
+                .validate_for(&FieldType::Number)
+                .map_err(|source| DesignerError::InvalidNumberFormat { source })?;
+        }
         if let CellStyleChange::Fill { color: Some(color) } = change {
             let bytes = color.as_bytes();
             if bytes.len() != 7

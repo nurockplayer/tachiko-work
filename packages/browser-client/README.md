@@ -49,6 +49,11 @@ selected cell already has that style. Blank cells in stored rows receive
 presentation without creating values. One Undo restores the prior
 presentation for the entire range, and one Redo reapplies it.
 
+To set a number format, pass a change such as
+`{kind: "number_format", format: {kind: {type: "percent"}, decimals: 2, thousands_separator: false}}`.
+It overrides the column's number format on the selected cells and is saved with
+their other styles. Supported numeric formats round-trip through XLSX.
+
 ## Explicit v3 project transfers
 
 The experimental client offers `exportProjectV3(expectedRevision)` to explicitly

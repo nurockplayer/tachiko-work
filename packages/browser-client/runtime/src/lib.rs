@@ -3167,9 +3167,10 @@ fn predicate_matches<'a>(
             value,
         } => {
             let (format, date_format) = auto_input::layered_formats(
-                auto.then(|| style(*ordinal)).flatten(),
+                style(*ordinal),
                 format.as_ref(),
                 date_format.as_ref(),
+                *auto,
             );
             let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
@@ -3188,9 +3189,10 @@ fn predicate_matches<'a>(
             values,
         } => {
             let (format, date_format) = auto_input::layered_formats(
-                auto.then(|| style(*ordinal)).flatten(),
+                style(*ordinal),
                 format.as_ref(),
                 date_format.as_ref(),
+                *auto,
             );
             let text = display_text::cell_text(
                 cells.get(*ordinal).and_then(Option::as_ref),
@@ -3679,7 +3681,7 @@ impl DesignerRuntime {
                 })
             })?;
         let new_revision = new_revision.as_str().to_owned();
-        // A cell record can change an Auto cell's display text, which display
+        // A cell record can change the cell's display text, which display
         // filters read; only an unchanged set of cell records keeps the orders.
         if presentation.cells == self.presentation.cells {
             self.view_index.rekey(expected_revision, &new_revision);
@@ -9912,8 +9914,8 @@ fn attach_display_text(
     }
 }
 
-/// The Number or Date a field shows as display text, in its column's format
-/// or an Auto cell's implied one.
+/// The Number or Date a field shows as display text, with cell formats taking
+/// precedence over column defaults for numbers and Auto dates.
 fn field_display_text(
     field: &FieldProjection,
     column: &ColumnSpec,

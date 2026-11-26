@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Set plain, currency or percent number formats on a cell range with
+  `setCellStyleRange`. The range uses one Undo step, and numeric formats
+  survive project saves and XLSX round trips (#955).
+
 - Move worksheets with `moveCollection`, with one-step Undo and Redo.
   V3 and portable `.ro` saves and XLSX round trips retain worksheet order.
   V3 emits the order only when it differs from stable Schema ID order (#953).

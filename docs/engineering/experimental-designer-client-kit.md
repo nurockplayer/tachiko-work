@@ -871,6 +871,14 @@ other records' current appearance. Changes run in array order. A toggle clears
 its attribute when every selected cell has it, otherwise it sets the whole
 selection. Colours use ADR-0049's canonical `#RRGGBB` spelling with uppercase hex.
 
+`setCellStyleRange(expectedRevision, collection, row, rowCount, fields, changes)`
+uses 1-based stored rows and stable field IDs. Both style commands accept
+`{kind: "number_format", format: NumberFormat}` to set a display-only override
+of the column's number format on each selected cell. It uses the same plain,
+currency and percent formats as `setColumnNumberFormat`. Invalid declarations
+return `invalid_number_format`. The override follows the cell through Undo,
+Redo, v3 and portable `.ro` saves, and supported numeric XLSX export/import.
+
 Borders use `{kind: "border", target, value}`. Targets are `"top"`, `"right"`,
 `"bottom"`, `"left"`, `"outline"` and `"all"`; true draws thin borders and false
 clears them. A side target applies that side to every selected cell; all applies
