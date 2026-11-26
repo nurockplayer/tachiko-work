@@ -473,6 +473,10 @@ independent review remain required. No failing product seed is manufactured.
 
 ### Later: guard preflight and focused enforcement
 
+The [Rust Clean Code standard](clean-code-standard.md) defines the eight source
+rules and CI ratchet adopted in #958. Its checker and self-tests run in the
+existing CI quality job.
+
 Inventory existing tests and guards first. A tests-only preflight may establish
 real baseline/negative-control evidence but does not itself authorize production
 changes. A separately Ready child may add one bounded guard after the Steward
