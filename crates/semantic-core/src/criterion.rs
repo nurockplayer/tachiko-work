@@ -139,21 +139,19 @@ impl CriterionTest {
     /// Returns [`InvalidCriterion`] for a relational operator on text, a
     /// boolean, or an empty operand.
     pub fn parse(text: &str) -> Result<Self, InvalidCriterion> {
-        let (operator, remainder) = if let Some(rest) = text.strip_prefix(">=") {
-            (ComparisonOperator::GreaterOrEqual, rest)
-        } else if let Some(rest) = text.strip_prefix("<=") {
-            (ComparisonOperator::LessOrEqual, rest)
-        } else if let Some(rest) = text.strip_prefix("<>") {
-            (ComparisonOperator::NotEqual, rest)
-        } else if let Some(rest) = text.strip_prefix('>') {
-            (ComparisonOperator::Greater, rest)
-        } else if let Some(rest) = text.strip_prefix('<') {
-            (ComparisonOperator::Less, rest)
-        } else if let Some(rest) = text.strip_prefix('=') {
-            (ComparisonOperator::Equal, rest)
-        } else {
-            (ComparisonOperator::Equal, text)
-        };
+        // Match longer prefixes before their single-character forms.
+        const OPERATOR_PREFIXES: [(&str, ComparisonOperator); 6] = [
+            (">=", ComparisonOperator::GreaterOrEqual),
+            ("<=", ComparisonOperator::LessOrEqual),
+            ("<>", ComparisonOperator::NotEqual),
+            (">", ComparisonOperator::Greater),
+            ("<", ComparisonOperator::Less),
+            ("=", ComparisonOperator::Equal),
+        ];
+        let (operator, remainder) = OPERATOR_PREFIXES
+            .into_iter()
+            .find_map(|(prefix, operator)| text.strip_prefix(prefix).map(|rest| (operator, rest)))
+            .unwrap_or((ComparisonOperator::Equal, text));
         let operand = classify(remainder);
         if is_relational(operator) && matches!(operand, Operand::Text | Operand::Boolean(_)) {
             return Err(InvalidCriterion::new(
