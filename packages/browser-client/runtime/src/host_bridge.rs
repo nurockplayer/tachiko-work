@@ -18,8 +18,9 @@ use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
     FidelityCategory, FidelityFinding, ImportOptions, InteropError, MAX_SOURCE_BYTES,
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
-    import_csv_profile, import_xlsx_profile,
+    import_csv_profile, import_xlsx_source,
 };
+use crate::interop_document::import_admitted_workbook_working_size;
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
@@ -32,7 +33,6 @@ use crate::{
 use crate::{
     ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
     NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
-    import_workbook_working_size,
 };
 
 /// The browser request arena's spreadsheet metadata limit. The crate constant
@@ -600,7 +600,7 @@ fn import_source(
     }
     match format {
         SpreadsheetFormat::Csv => import_csv_profile(source, options, working),
-        SpreadsheetFormat::Xlsx => import_xlsx_profile(source, options, working),
+        SpreadsheetFormat::Xlsx => import_xlsx_source(source, options, working),
     }
     .map_err(interop_error)
 }
@@ -682,7 +682,7 @@ fn spreadsheet_operation(
                 Some(workbook) => *workbook,
                 None => import_source(project, format, &csv_options, profile.is_some())?,
             };
-            import_spreadsheet(&workbook, &selection, &occurrence_id, install, profile)
+            import_spreadsheet(workbook, &selection, &occurrence_id, install, profile)
         }
         SpreadsheetOperation::InspectProject { metadata, profile } => {
             inspect_imported_project_spreadsheet(project, &metadata, profile)
@@ -738,7 +738,7 @@ fn spreadsheet_operation(
 }
 
 fn import_spreadsheet(
-    workbook: &SourceWorkbook,
+    workbook: SourceWorkbook,
     selection: &ImportSelection,
     occurrence_id: &str,
     install: bool,
@@ -746,7 +746,7 @@ fn import_spreadsheet(
 ) -> Result<SpreadsheetResult, DesignerError> {
     match profile {
         None => {
-            let (candidate, imported) = import_workbook(workbook, selection, occurrence_id)?;
+            let (candidate, imported) = import_workbook(&workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,
@@ -757,7 +757,7 @@ fn import_spreadsheet(
         }
         Some(DesignerProfile::WorkingSize) => {
             let (candidate, imported) =
-                import_workbook_working_size(workbook, selection, occurrence_id)?;
+                import_admitted_workbook_working_size(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,

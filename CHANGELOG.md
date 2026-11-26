@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reduce XLSX inspect and import allocations by borrowing XML text and
+  attributes, releasing the decoded source before rebuilding the export proof,
+  and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).
+
 - Set plain, currency or percent number formats on a cell range with
   `setCellStyleRange`. The range uses one Undo step, and numeric formats
   survive project saves and XLSX round trips (#955).

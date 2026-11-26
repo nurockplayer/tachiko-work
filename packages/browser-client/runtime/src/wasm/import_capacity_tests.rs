@@ -615,12 +615,12 @@ fn assert_working_success(source: &[u8], format: &str) {
 fn assert_export_round_trip(source: &[u8], bytes: &[u8], request: &[u8], format: &str) {
     let options = ImportOptions::default();
     let original = if format == "xlsx" {
-        crate::interop_adapter::import_xlsx_profile(source, &options, true).unwrap()
+        crate::interop_adapter::import_xlsx_source(source, &options, true).unwrap()
     } else {
         crate::interop_adapter::import_csv_profile(source, &options, true).unwrap()
     };
     let roundtrip = if format == "xlsx" {
-        crate::interop_adapter::import_xlsx_profile(bytes, &options, true).unwrap()
+        crate::interop_adapter::import_xlsx_source(bytes, &options, true).unwrap()
     } else {
         crate::interop_adapter::import_csv_profile(bytes, &options, true).unwrap()
     };
@@ -660,7 +660,7 @@ fn assert_export_round_trip(source: &[u8], bytes: &[u8], request: &[u8], format:
         let reply: Value = serde_json::from_slice(&exported.reply).unwrap();
         assert_eq!(reply["status"], "ok", "{reply}");
         let fixed =
-            crate::interop_adapter::import_xlsx_profile(&exported.bytes.unwrap(), &options, true)
+            crate::interop_adapter::import_xlsx_source(&exported.bytes.unwrap(), &options, true)
                 .unwrap();
         assert_eq!(roundtrip.sheets[0].rows.len(), fixed.sheets[0].rows.len());
         for (first, second) in roundtrip.sheets[0].rows.iter().zip(&fixed.sheets[0].rows) {
@@ -731,9 +731,8 @@ fn working_size_xlsx_last_excel_row_refuses_before_allocation() {
         output.write_all(&bytes).unwrap();
     }
     let bytes = output.finish().unwrap().into_inner();
-    let error =
-        crate::interop_adapter::import_xlsx_profile(&bytes, &ImportOptions::default(), true)
-            .unwrap_err();
+    let error = crate::interop_adapter::import_xlsx_source(&bytes, &ImportOptions::default(), true)
+        .unwrap_err();
     assert_eq!(
         error,
         InteropError::Capacity(CapacityExceeded {
@@ -991,7 +990,7 @@ fn assert_tracker_exports(count: usize) {
             assert_eq!(value["status"], "ok", "{kind} {format}: {value}");
             let bytes = reply.bytes.unwrap();
             let workbook = if format == "xlsx" {
-                crate::interop_adapter::import_xlsx_profile(&bytes, &ImportOptions::default(), true)
+                crate::interop_adapter::import_xlsx_source(&bytes, &ImportOptions::default(), true)
                     .unwrap()
             } else {
                 crate::interop_adapter::import_csv_profile(&bytes, &ImportOptions::default(), true)
@@ -1328,7 +1327,7 @@ fn working_xlsx_with_layout(rows: usize, header_row: usize, summary: bool) -> Ve
 }
 
 fn assert_working_layout_import(source: &[u8], options: &ImportOptions, code: &str) {
-    let workbook = crate::interop_adapter::import_xlsx_profile(source, options, true).unwrap();
+    let workbook = crate::interop_adapter::import_xlsx_source(source, options, true).unwrap();
     assert_eq!(workbook.sheets[0].rows.len(), 10_000);
     assert!(workbook.ledger.iter().any(|finding| finding.code == code));
     let selection = ImportSelection {
@@ -1361,7 +1360,7 @@ fn working_size_xlsx_summary_row_does_not_count_as_data() {
 
 #[test]
 fn working_size_xlsx_header_offset_refuses_exact_data_row_count() {
-    let error = crate::interop_adapter::import_xlsx_profile(
+    let error = crate::interop_adapter::import_xlsx_source(
         &working_xlsx_with_layout(10_001, 3, false),
         &ImportOptions::default(),
         true,
@@ -1624,7 +1623,7 @@ fn working_size_totals_over_formula_column_bind_every_row_first() {
 fn working_size_mixed_column_sum_keeps_cached_value_with_existing_finding() {
     let source = column_totals_xlsx(10, false, true);
     let workbook =
-        crate::interop_adapter::import_xlsx_profile(&source, &ImportOptions::default(), true)
+        crate::interop_adapter::import_xlsx_source(&source, &ImportOptions::default(), true)
             .unwrap();
     assert!(
         workbook.sheets[0]

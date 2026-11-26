@@ -237,16 +237,15 @@ body	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profi
 body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	307
 body	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	82
 body	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	176
-body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	568
+body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	548
 body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_admission	91
 body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_call	67
 body	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility	336
 body	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_xlsx_number_findings	80
 body	packages/browser-client/runtime/src/interop_adapter.rs	parse_styles	101
-body	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile	242
+body	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile	240
 body	packages/browser-client/runtime/src/interop_adapter.rs	root_inventory	88
 body	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function	129
-body	packages/browser-client/runtime/src/interop_adapter.rs	validate_import_geometry_profile	79
 body	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile	141
 body	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	81
 body	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	71
@@ -264,8 +263,7 @@ body	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	67
 body	packages/browser-client/runtime/src/interop_document.rs	export_in	178
 body	packages/browser-client/runtime/src/interop_document.rs	finish_import	96
 body	packages/browser-client/runtime/src/interop_document.rs	import_formula_order	65
-body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	149
-body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	69
+body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	145
 body	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	67
 body	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	239
 body	packages/browser-client/runtime/src/interop_document.rs	native_tracker_metadata	62
@@ -273,8 +271,8 @@ body	packages/browser-client/runtime/src/interop_document.rs	promote_import_pres
 body	packages/browser-client/runtime/src/interop_document.rs	reconcile_import_rows	64
 body	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	219
 body	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	91
-body	packages/browser-client/runtime/src/interop_document.rs	validate_selection	102
-body	packages/browser-client/runtime/src/interop_number_format.rs	inspect	97
+body	packages/browser-client/runtime/src/interop_document.rs	validate_selection	98
+body	packages/browser-client/runtime/src/interop_number_format.rs	inspect	91
 body	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	125
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness	85
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_table	91
@@ -328,7 +326,7 @@ body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadshe
 body	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	64
 body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	83
 body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	99
-body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	99
+body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	75
 branches	crates/cli/src/commands.rs	analysis_failure_output	14
 branches	crates/cli/src/commands.rs	parse_analysis_predicate	19
 branches	crates/cli/src/main.rs	execute	34
@@ -485,7 +483,7 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_
 branches	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	107
 branches	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	39
 branches	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	63
-branches	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	230
+branches	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	223
 branches	packages/browser-client/runtime/src/interop_adapter.rs	infer_column_number_format	30
 branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_workbook_children	22
 branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_worksheet_children	17
@@ -502,7 +500,7 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	summary_cells	16
 branches	packages/browser-client/runtime/src/interop_adapter.rs	top_level_colon	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function	90
 branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_capacity_source_inspection	13
-branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_import_geometry_profile	15
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_import_geometry_profile	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile	91
 branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	53
 branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	19
@@ -523,7 +521,6 @@ branches	packages/browser-client/runtime/src/interop_document.rs	export_in	37
 branches	packages/browser-client/runtime/src/interop_document.rs	finish_import	15
 branches	packages/browser-client/runtime/src/interop_document.rs	import_formula_order	22
 branches	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	18
-branches	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	21
 branches	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	24
 branches	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	62
 branches	packages/browser-client/runtime/src/interop_document.rs	normalize_import_date_styles	13
@@ -533,11 +530,11 @@ branches	packages/browser-client/runtime/src/interop_document.rs	translate_a1_in
 branches	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	51
 branches	packages/browser-client/runtime/src/interop_document.rs	validate_historical_sheet	14
 branches	packages/browser-client/runtime/src/interop_document.rs	validate_metadata_envelope	15
-branches	packages/browser-client/runtime/src/interop_document.rs	validate_selection	35
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_selection	34
 branches	packages/browser-client/runtime/src/interop_document.rs	validate_tracker_rows	17
 branches	packages/browser-client/runtime/src/interop_number_format.rs	bracket	24
 branches	packages/browser-client/runtime/src/interop_number_format.rs	currency_code	29
-branches	packages/browser-client/runtime/src/interop_number_format.rs	inspect	77
+branches	packages/browser-client/runtime/src/interop_number_format.rs	inspect	67
 branches	packages/browser-client/runtime/src/interop_number_format.rs	token_prefix	17
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::failure_projection	15
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	43
@@ -584,7 +581,7 @@ branches	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	24
 branches	packages/browser-client/runtime/src/wasm.rs	process_portable_ro_candidate	17
 branches	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	24
 branches	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	18
-branches	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	26
+branches	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	14
 depth	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	4
 depth	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	5
 depth	crates/formula-engine/src/lib.rs	<DependencyGraph>::reaching_fields	5
@@ -655,7 +652,6 @@ depth	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argume
 depth	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	6
 depth	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet	4
 depth	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	4
-depth	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	4
 depth	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	4
 depth	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	5
 depth	packages/browser-client/runtime/src/interop_document.rs	normalize_import_date_styles	4
@@ -698,12 +694,12 @@ file	crates/workspace-engine/src/lib.rs		4009
 file	crates/workspace-engine/src/patch_lifecycle.rs		6780
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
-file	packages/browser-client/runtime/src/interop_adapter.rs		6697
-file	packages/browser-client/runtime/src/interop_document.rs		5678
-file	packages/browser-client/runtime/src/lib.rs		13715
+file	packages/browser-client/runtime/src/interop_adapter.rs		6680
+file	packages/browser-client/runtime/src/interop_document.rs		5661
+file	packages/browser-client/runtime/src/lib.rs		13666
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
-file	packages/browser-client/runtime/src/wasm.rs		1310
+file	packages/browser-client/runtime/src/wasm.rs		1289
 inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
 inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
@@ -737,8 +733,6 @@ inline-test	packages/browser-client/runtime/src/interop_adapter.rs	date_guard_in
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_tests[cfg(test)]	43
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	ledger_cap_tests[cfg(test)]	263
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]	988
-inline-test	packages/browser-client/runtime/src/interop_adapter.rs	scalar_carrier_tests[cfg(test)]	47
-inline-test	packages/browser-client/runtime/src/interop_adapter.rs	xml_scope_tests[cfg(test)]	42
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	xstring_tests[cfg(test)]	233
 inline-test	packages/browser-client/runtime/src/interop_date_format.rs	tests[cfg(test)]	24
 inline-test	packages/browser-client/runtime/src/interop_document.rs	a1_import_boundary_tests[cfg(test)]	17
