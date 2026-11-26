@@ -107,6 +107,25 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
+    pub(super) fn presentation_with_inserted_collection(
+        &self,
+        schema: SchemaId,
+        to_index: u32,
+    ) -> crate::PresentationStore {
+        let mut presentation = self.presentation.clone();
+        let mut order = self
+            .collections
+            .iter()
+            .map(|summary| SchemaId::from(summary.id.clone()))
+            .collect::<Vec<_>>();
+        let to = usize::try_from(to_index)
+            .unwrap_or(usize::MAX)
+            .min(order.len());
+        order.insert(to, schema);
+        presentation.collection_order = order;
+        presentation
+    }
+
     pub(super) fn apply_collection_order(
         &mut self,
         expected: &str,
