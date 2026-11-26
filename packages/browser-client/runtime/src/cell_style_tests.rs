@@ -17,7 +17,13 @@ const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000815";
 #[test]
 fn cell_styling_projection_agrees_with_command() {
     let native = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
-    let tracker = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    let mut tracker = DesignerRuntime::tracker(OCCURRENCE).unwrap();
+    tracker
+        .handle(DesignerRequest::AppendRow {
+            expected_revision: tracker.current_revision().to_owned(),
+            collection: "tracker".to_owned(),
+        })
+        .unwrap();
     let (imported, collection) = imported_styling_fixture();
     let reference =
         DesignerRuntime::from_document(reference_styling_fixture(), OCCURRENCE).unwrap();
