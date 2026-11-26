@@ -172,6 +172,12 @@ export class WorkerDesignerClient implements DesignerClient {
     return reply.export;
   }
 
+  async exportSpreadsheetOverwrite(expected: OccurrenceProjection): Promise<SpreadsheetExport> {
+    const reply = await this.#spreadsheet({type: "export_xlsx_overwrite", expected});
+    if (reply.status !== "spreadsheet_exported") throw new Error("Expected XLSX overwrite export.");
+    return reply.export;
+  }
+
   async exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport> {
     const reply = await this.#spreadsheet({type: "export_native_tables", expected_revision: expectedRevision, collection, format});
     if (reply.status !== "spreadsheet_exported") throw new Error("Expected native tables spreadsheet export.");

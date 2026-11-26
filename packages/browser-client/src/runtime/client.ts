@@ -55,6 +55,8 @@ export interface DesignerClient {
   openImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
   openImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
+  /** Refuses with displayable diagnostics unless overwriting this opened XLSX is proven safe. */
+  exportSpreadsheetOverwrite?(expected: OccurrenceProjection): Promise<SpreadsheetExport>;
   /** Rust-derived native tables; CSV selects collection, XLSX exports all scalar tables. */
   exportNativeTablesSpreadsheet?(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportNativeTrackerSpreadsheet?(expectedRevision: string, presentation: NativeTrackerExportPresentation, format: SpreadsheetFormat): Promise<SpreadsheetExport>;

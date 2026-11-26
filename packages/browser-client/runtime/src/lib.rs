@@ -123,6 +123,8 @@ mod native_tables_export;
 mod sized_reply;
 pub(crate) use sized_reply::encode_sized_reply;
 mod source_reuse;
+mod spreadsheet_overwrite;
+mod spreadsheet_request;
 pub use cell_style::{CellBorderTarget, CellStyleChange};
 #[cfg(test)]
 mod cell_border_tests;
@@ -2053,6 +2055,10 @@ pub enum DesignerError {
     ImportedSpreadsheetExport {
         finding: interop_adapter::FidelityFinding,
     },
+    #[error("Work could not verify that overwriting the original XLSX would be lossless.")]
+    SpreadsheetOverwrite {
+        findings: Vec<interop_adapter::FidelityFinding>,
+    },
     #[error("native tables export refused: {}: {}", .finding.code, .finding.message)]
     NativeTablesExport {
         finding: interop_adapter::FidelityFinding,
@@ -2281,28 +2287,9 @@ impl DesignerError {
                     }],
                 }],
             ),
-            Self::NativeTablesExport { finding } => (
-                "native_tables_export_refused",
-                vec![DiagnosticProjection {
-                    code: finding.code.clone(),
-                    message: finding.message.clone(),
-                    path: finding.location.clone(),
-                    subjects: Vec::new(),
-                    related_subjects: Vec::new(),
-                    facts: Vec::new(),
-                }],
-            ),
-            Self::ImportedSpreadsheetExport { finding } => (
-                "imported_spreadsheet_export_refused",
-                vec![DiagnosticProjection {
-                    code: finding.code.clone(),
-                    message: finding.message.clone(),
-                    path: finding.location.clone(),
-                    subjects: Vec::new(),
-                    related_subjects: Vec::new(),
-                    facts: Vec::new(),
-                }],
-            ),
+            Self::NativeTablesExport { .. }
+            | Self::ImportedSpreadsheetExport { .. }
+            | Self::SpreadsheetOverwrite { .. } => spreadsheet_overwrite::export_failure(self),
             Self::LastTable => ("last_table", Vec::new()),
             Self::TableReferenced { diagnostics } => ("table_referenced", diagnostics.clone()),
             Self::InvalidTrackerOperation { .. } => ("invalid_tracker_operation", Vec::new()),
@@ -2601,6 +2588,7 @@ pub struct DesignerRuntime {
     /// [`DesignerRuntime::publish_presentation`] so this stays current.
     presentation_saved_bytes: u64,
     imported: Option<imported_lifecycle::ImportedState>,
+    xlsx_overwrite: Option<spreadsheet_overwrite::OverwriteProof>,
     /// Remains true after Undo restores the untouched mapping.
     import_metadata_published: bool,
 }
@@ -3610,7 +3598,7 @@ impl DesignerRuntime {
         let formula_sources = session.formula_source_projections()?;
         let principal = PrincipalId::from(DESIGNER_PRINCIPAL);
         let lifecycle = designer_lifecycle(&document_scope, session.document(), &principal)?;
-        let runtime = Self {
+        Ok(Self {
             profile,
             capacity_usage,
             working_admission,
@@ -3638,8 +3626,8 @@ impl DesignerRuntime {
             presentation_saved_bytes: 0,
             imported: None,
             import_metadata_published: false,
-        };
-        Ok(runtime)
+            xlsx_overwrite: None,
+        })
     }
 
     /// Replace the open-time presentation and record its encoded length for

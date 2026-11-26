@@ -765,6 +765,22 @@ unchanged. `inspectProject(bytes)` and `inspectImportedProject(bytes, metadata)`
 still inspect saved candidates in a temporary occurrence; use
 `inspectCurrentProject()` to recover the current resident mapping instead.
 
+## Checking an XLSX before overwriting it
+
+After a successful XLSX import, keep the `scope` from `observeOccurrence()`
+with the source file. Call `exportSpreadsheetOverwrite({scope, revision})`
+with that scope and the revision being saved. The Worker returns XLSX bytes
+only when it can reproduce every original package part from the untouched
+import and export the requested revision without known loss. The comparison
+ignores ZIP compression and entry order. Changes inside an original package
+part require a refusal unless preservation can be established.
+
+On refusal, show the `DesignerRuntimeError` message and its
+`failure.diagnostics` and offer Save a Copy via `exportSpreadsheet`. The
+overwrite proof belongs to the live XLSX occurrence. To regain it after
+closing that occurrence or opening a saved Work project, open the original
+XLSX. The client owns the file write.
+
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is

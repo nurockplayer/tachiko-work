@@ -262,6 +262,7 @@ fn bench_runtime(document: Document, occurrence_id: &str) -> DesignerRuntime {
         pending_cleanup: None,
         imported: None,
         import_metadata_published: false,
+        xlsx_overwrite: None,
         duplicate_serial: 0,
         opened_from_v3: false,
         presentation: crate::PresentationStore::default(),
