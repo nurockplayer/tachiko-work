@@ -218,7 +218,7 @@ fn number_format_does_not_scale_stored_or_calculated_values() {
     let revision = runtime.current_revision().to_owned();
     runtime
         .insert_row(
-            None,
+            (None, 1),
             &revision,
             &collection,
             &[RowInitializer {
