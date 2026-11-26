@@ -102,6 +102,154 @@ pub(crate) fn window(
         .unwrap()
 }
 
+fn range_number_format_request(revision: &str, rows: usize, fields: &[&str]) -> serde_json::Value {
+    json!({
+        "type": "set_cell_style_range", "expected_revision": revision,
+        "collection": "rows", "row": 1, "row_count": rows, "fields": fields,
+        "changes": [{"kind": "number_format", "format": {
+            "kind": {"type": "percent"}, "decimals": 1, "thousands_separator": false,
+        }}],
+    })
+}
+
+#[test]
+fn range_number_format_uses_stored_identities_and_one_undo() {
+    let mut document = fixture();
+    document.entities.get_mut("r3").unwrap().rank =
+        Some(tachiko_workspace_engine::RowRank::new("A").unwrap());
+    document
+        .schemas
+        .get_mut("rows")
+        .unwrap()
+        .fields
+        .get_mut("a")
+        .unwrap()
+        .number_format = crate::interop_number_format::from_excel("0.00");
+    let mut runtime = DesignerRuntime::from_document(document, OCCURRENCE).unwrap();
+    edit(
+        &mut runtime,
+        &["r3"],
+        &["a"],
+        &json!([{"kind": "bold", "value": true}]),
+    )
+    .unwrap();
+    let view = TableView {
+        sort: vec![ViewSortKey {
+            field: "a".into(),
+            direction: SortDirection::Asc,
+            text_order: ViewTextOrder::Bytes,
+        }],
+        ..TableView::default()
+    };
+    let before = window(&mut runtime, &view);
+    let request = range_number_format_request(runtime.current_revision(), 2, &["a", "b"]);
+    runtime
+        .handle(serde_json::from_value(request).unwrap())
+        .unwrap();
+    assert_eq!(runtime.undo.len(), 2);
+    let after = window(&mut runtime, &view);
+    assert_eq!(after.rows[0].id, "r2");
+    assert_eq!(after.rows[0].fields[0].display.as_deref(), Some("1.00"));
+    assert_eq!(after.rows[0], before.rows[0]);
+    for row in &after.rows[1..] {
+        let display = if row.id == "r3" { "200.0%" } else { "300.0%" };
+        assert_eq!(row.fields[0].display.as_deref(), Some(display));
+        assert_eq!(row.styles[0].bold, row.id == "r3");
+        assert_eq!(row.styles[1].number_format.as_deref(), Some("0.0%"));
+        assert_eq!(row.styles[2].number_format, None);
+    }
+    history(&mut runtime, false);
+    assert_eq!(window(&mut runtime, &view).rows, before.rows);
+    history(&mut runtime, true);
+    assert_eq!(window(&mut runtime, &view).rows, after.rows);
+}
+
+#[test]
+fn range_number_format_survives_project_and_xlsx_round_trips() {
+    use crate::interop_adapter::{export_xlsx, import_xlsx};
+    use crate::{ImportFieldType, ImportSelection, import_workbook};
+
+    let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    let request = range_number_format_request(runtime.current_revision(), 2, &["a", "b"]);
+    runtime
+        .handle(serde_json::from_value(request).unwrap())
+        .unwrap();
+    let saved = runtime
+        .export_portable_ro(runtime.current_revision())
+        .unwrap();
+    let (reopened, _) = admit_portable_ro(&saved.bytes, OCCURRENCE).unwrap();
+    assert_eq!(reopened.presentation, runtime.presentation);
+
+    let workbook = reopened
+        .export_native_tables_workbook(reopened.current_revision(), "rows")
+        .unwrap();
+    let source = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Number; 3]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut imported, projection) = import_workbook(&source, &selection, OCCURRENCE).unwrap();
+    let revision = imported.current_revision().to_owned();
+    let table = imported
+        .query_table_window(
+            &revision,
+            &projection.opened.table.collection.key,
+            &TableView::default(),
+            0,
+            3,
+            true,
+        )
+        .unwrap();
+    for (row, display) in table.rows[..2].iter().zip(["300.0%", "100.0%"]) {
+        assert_eq!(row.fields[0].display.as_deref(), Some(display));
+        assert_eq!(row.styles[1].number_format.as_deref(), Some("0.0%"));
+    }
+    assert_eq!(table.rows[2].styles, []);
+    assert_eq!(table.rows[2].fields[0].display.as_deref(), Some("2"));
+}
+
+#[test]
+fn range_number_format_applies_a1_z2000_in_one_step() {
+    const ROWS: usize = 2_000;
+    let mut document = fixture();
+    let schema = document.schemas.get_mut("rows").unwrap();
+    let template = schema.fields["a"].clone();
+    for column in b'd'..=b'z' {
+        let name = char::from(column).to_string();
+        let mut field = template.clone();
+        field.id = name.as_str().into();
+        field.key = name.as_str().into();
+        schema.fields.insert(field.id.clone(), field);
+    }
+    let fields: Vec<_> = schema.fields.keys().map(ToString::to_string).collect();
+    let field_ids: Vec<_> = fields.iter().map(String::as_str).collect();
+    let template = document.entities["r1"].clone();
+    document.entities.clear();
+    for row in 1..=ROWS {
+        let name = format!("r{row:04}");
+        let mut entity = template.clone();
+        entity.id = name.as_str().into();
+        entity.key = name.as_str().into();
+        document.entities.insert(entity.id.clone(), entity);
+    }
+    let runtime = DesignerRuntime::from_document_working_size(document, OCCURRENCE).unwrap();
+    let request = range_number_format_request(runtime.current_revision(), ROWS, &field_ids);
+    let mut runtime = Some(runtime);
+    let reply: serde_json::Value = serde_json::from_slice(&crate::process_wire_request(
+        &mut runtime,
+        &serde_json::to_vec(&request).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(reply["response"]["type"], "published", "{reply}");
+    let mut runtime = runtime.unwrap();
+    assert_eq!(runtime.presentation.cells.len(), 26 * ROWS);
+    assert_eq!(runtime.presentation.styles.len(), 1);
+    assert_eq!(runtime.undo.len(), 1);
+    history(&mut runtime, false);
+    assert!(runtime.presentation.is_empty());
+    assert!(runtime.undo.is_empty());
+}
+
 #[test]
 fn cell_style_range_formats_20_000_cells_inside_text_capacity_wire_limit() {
     const ROWS: usize = 5_000;

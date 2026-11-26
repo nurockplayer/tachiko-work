@@ -26,6 +26,7 @@ it("sends the rectangular cell style command through the kit without changing it
     {kind: "border", target: "right", value: true},
     {kind: "border", target: "bottom", value: false},
     {kind: "border", target: "left", value: true},
+    {kind: "number_format", format: {kind: {type: "percent"}, decimals: 2, thousands_separator: false}},
   ];
   const publication = await client.setCellStyle("resident/0", "rows", ["r2", "r3", "r4"], ["b", "c"], changes);
   const clear: CellStyleChange[] = [{kind: "bold", value: false}, {kind: "toggle_italic"}, {kind: "fill", color: null}, {kind: "border", target: "all", value: false}];

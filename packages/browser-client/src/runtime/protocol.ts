@@ -609,6 +609,7 @@ export type CellStyleChange =
   | { kind: "bold" | "italic"; value: boolean }
   | { kind: "toggle_bold" | "toggle_italic" }
   | { kind: "fill"; color: string | null }
+  | { kind: "number_format"; format: NumberFormat }
   | { kind: "border"; target: "top" | "right" | "bottom" | "left" | "outline" | "all"; value: boolean };
 
 export type TrackerCommand =

@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Set plain, currency or percent number formats on a cell range with
+  `setCellStyleRange`. The range uses one Undo step, and numeric formats
+  survive project saves and XLSX round trips (#955).
+
 - Cover the WASM XLSX reservation ceiling and 256 MiB inspect/import budget in
   the browser carrier capacity boundary job (#933).
 
