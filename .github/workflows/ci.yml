@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
 
       - name: Install pnpm
         uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1
@@ -59,6 +61,23 @@ jobs:
 
       - name: Verify ADR-0016 workspace dependencies
         run: node scripts/workspace-dependency-check.mjs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: 0.13.7
+
+      - name: Check Rust Clean Code ratchet and checker self-tests
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            base=$(git rev-parse HEAD^1)
+          else
+            base="$PUSH_BEFORE"
+            git cat-file -e "$base^{commit}" || git fetch --no-tags --depth=1 origin "$base"
+          fi
+          nice -n 15 uv run --locked --no-build --managed-python --script scripts/clean-code-check.py --self-test --base "$base"
 
       - name: Install open-sheet experimental dependencies
         run: pnpm --dir experiments/open-sheet-export install --frozen-lockfile
