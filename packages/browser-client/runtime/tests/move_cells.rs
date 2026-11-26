@@ -826,7 +826,7 @@ fn formulas_follow_moved_cells_and_keep_references_outside_the_move() {
     );
     assert_formula(&mut runtime, 1, "r1.dep", 1.0, "[.n]");
     assert_formula(&mut runtime, 1, "r0.req", 1.0, "[r1.n]");
-    assert_formula(&mut runtime, 1, "r4.dep", 4.0, "[r1.$n] + [r2.n]");
+    assert_formula(&mut runtime, 1, "r4.dep", 4.0, "([r1.$n] + [r2.n])");
     history(&mut runtime, 1, false);
     assert_eq!(saved(&runtime, "resident/2"), before);
 }
