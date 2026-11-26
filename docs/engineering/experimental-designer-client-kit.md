@@ -536,6 +536,22 @@ is part of the copy's single history step and is retained by v3 and portable
 `.ro` saves and XLSX export and reimport. The copy, Undo and Redo publish the
 current import metadata for imported workbooks.
 
+`rangeToTable(expectedRevision, range, name, hasHeader)` copies a stored
+rectangle into a new table. The range uses the same collection key, inclusive
+row IDs, and field IDs as `querySelectionRangeStatistics`. Supply a contiguous
+slice of fields in source column order. With `hasHeader` enabled, the first
+selected row supplies displayed header text and is omitted from the copied
+data. Blank and repeated headings receive generated names, as in
+`promoteFirstRowToHeaders`. With it disabled, the table uses generated names
+(`Column A`, `Column B`, and so on) and copies every selected row.
+
+The command returns the new collection and its publication. The source stays
+intact. A copied formula follows its copied cell dependencies and keeps
+dependencies outside the copied data bound to the source. Whole-column
+dependencies follow the copy only when their full row and column domain was
+copied. One Undo removes the table, Redo restores its identities, and a save
+and reopen retains them.
+
 `moveCollection(expectedRevision, collection, toIndex)` moves an existing
 worksheet identified by its collection key. Read the new order from
 `bootstrap().collections`. This edit is one history step and is carried by v3

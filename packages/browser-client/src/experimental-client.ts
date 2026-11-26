@@ -22,6 +22,8 @@ import type {
   CellStyleChange,
   FieldTarget,
   PublicationProjection,
+  SelectionStatisticsRange,
+  DuplicateCollectionProjection,
   PasteCellInput,
   CapacityProjection,
   ProjectInspectionProjection,
@@ -45,6 +47,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation>;
   renderA1Formula(input: RenderA1FormulaInput): Promise<A1Translation>;
   pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection>;
+  rangeToTable(expectedRevision: string, range: SelectionStatisticsRange, name: string, hasHeader: boolean): Promise<DuplicateCollectionProjection>;
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Classify raw input in one Auto scalar cell. */
   editAuto(expectedRevision: string, target: FieldTarget, input: string, dateOrder?: "month_first" | "day_first"): Promise<PublicationProjection>;
@@ -204,6 +207,8 @@ export type {
   FieldProjection,
   FieldTarget,
   NewTableColumnInput,
+  SelectionStatisticsRange,
+  DuplicateCollectionProjection,
   PasteCellInput,
   AutoDateOrder,
   ScalarEditInput,

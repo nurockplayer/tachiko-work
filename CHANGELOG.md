@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Create a table from a selected rectangle with `rangeToTable`. Choose whether
+  the first row supplies headers and keep formulas live. The new table has one
+  Undo step and retains its identities on save and reopen (#964).
+
 - Reduce XLSX inspect and import allocations by borrowing XML text and
   attributes, releasing the decoded source before rebuilding the export proof,
   and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).
