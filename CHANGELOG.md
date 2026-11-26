@@ -8,6 +8,9 @@ All notable changes to Tachiko Work are documented in this file.
   `setCellStyleRange`. The range uses one Undo step, and numeric formats
   survive project saves and XLSX round trips (#955).
 
+- Cover the WASM XLSX reservation ceiling and 256 MiB inspect/import budget in
+  the browser carrier capacity boundary job (#933).
+
 - Copy worksheets to a destination index with `duplicateCollection`. One
   Undo removes the copy and restores worksheet order. Saves and XLSX round
   trips retain the order, and imported workbook metadata follows it (#953).

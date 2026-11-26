@@ -150,6 +150,14 @@ def string_escape_variants(folder):
 
 
 def generate(folder):
+    # A populated, admitted workbook whose referenced XML reaches the WASM
+    # reservation cap. Whitespace fills the remaining expanded-byte allowance.
+    with zipfile.ZipFile(folder / "source-8406.xlsx") as archive:
+        ceiling = {name: archive.read(name) for name in archive.namelist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    padding = 8 * 1024 * 1024 - sum(map(len, ceiling.values()))
+    ceiling[sheet] = ceiling[sheet].replace(b"</worksheet>", b" " * padding + b"</worksheet>")
+    (folder / "reservation-ceiling.xlsx").write_bytes(pack(ceiling))
     with zipfile.ZipFile(folder / "source-8.xlsx") as archive:
         original = {name: archive.read(name) for name in archive.namelist()}
     worksheet = "xl/worksheets/sheet1.xml"

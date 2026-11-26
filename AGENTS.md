@@ -80,6 +80,24 @@ escape-hatch justification in the owning Issue or PR evidence. If they are not
 touched, mark the PR boundary check as not applicable rather than inventing a
 justification.
 
+## Rust Clean Code and continuous refactoring
+
+Follow the [Rust Clean Code standard](docs/engineering/clean-code-standard.md#rules)
+on every Tachiko Work Rust change. Keep new source within the limits, give each
+lint suppression an inline reason, put new unit tests in dedicated test modules,
+and use the narrowest visibility that serves the caller. Run the Clean Code check
+for the candidate alongside the applicable existing validation. Keep the tracked
+baseline equal to current violations. Every existing key must stay at or below
+its recorded ceiling, and every resolved key must be removed.
+
+Refactor one cohesive seam per Ready PR, with one refactor PR active at a time
+under #958. A refactor PR removes at least one baseline entry. Recheck open PR
+file overlap before starting and yield to 1.0 work. Reuse existing contract
+coverage and keep the ADR-0016 dependency graph, behavior, error precedence,
+durable data, serialization and public interfaces intact. Apply the Rust
+ownership and unsafe rules above. Ask the lead for a DECISION if a split requires
+changing a public interface, behavior, data or issue scope.
+
 ## JavaScript and TypeScript
 
 Node.js is used by parts of the release and WASM validation workflow. If package-managed JavaScript or TypeScript tooling is introduced or modified:
