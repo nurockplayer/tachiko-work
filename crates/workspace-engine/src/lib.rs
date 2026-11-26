@@ -65,6 +65,7 @@ use thiserror::Error;
 pub mod analysis_operations;
 pub mod capability_discovery;
 pub mod formula_operations;
+mod formula_projection;
 pub mod keyed_grouped_sum_operations;
 pub mod patch_lifecycle;
 pub mod resident_session;
@@ -3507,12 +3508,9 @@ fn preflight_formula_projections(document: &Document) -> Result<(), WorkspaceErr
     Ok(())
 }
 
-/// Project only the formulas whose fields are in `changed`.
-///
-/// The candidate's unchanged formulas project exactly as the base's did, so
-/// [`preflight_formula_projections`] and this function visit the same failing
-/// formula first whenever the base passed and neither the address index nor a
-/// schema definition changed.
+/// Project changed formulas in the same order as [`preflight_formula_projections`].
+/// If the base passed and the address index and schemas are unchanged, the
+/// unchanged formulas still project and both walks report the same first error.
 fn preflight_changed_formula_projections(
     document: &Document,
     changed: &BTreeSet<FieldRef>,
@@ -3526,15 +3524,15 @@ fn preflight_changed_formula_projections(
             if !changed.contains(&field) {
                 continue;
             }
-            if let Value::Formula(expression) = value {
-                #[cfg(test)]
-                evaluation_counters::record_preflight_projection();
-                let projection = match &index {
-                    Ok(index) => project_expression_with_index(document, index, &field, expression),
-                    Err(_) => project_expression(document, &field, expression),
-                };
-                projection.map_err(|source| WorkspaceError::FormulaProjection { field, source })?;
-            }
+            let Value::Formula(expression) = value else {
+                continue;
+            };
+            #[cfg(test)]
+            evaluation_counters::record_preflight_projection();
+            match &index {
+                Ok(index) => formula_projection::indexed(document, index, field, expression),
+                Err(_) => formula_projection::unindexed(document, field, expression),
+            }?;
         }
     }
     Ok(())
