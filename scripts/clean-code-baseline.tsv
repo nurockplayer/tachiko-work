@@ -169,7 +169,6 @@ body	crates/storage/src/portable_package/v1.rs	build_zip	64
 body	crates/storage/src/portable_package/v1.rs	parse_container_at_end	83
 body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
 body	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	67
-body	crates/storage/src/presentation.rs	parse_presentation	124
 body	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	62
 body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
 body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
@@ -392,7 +391,7 @@ branches	crates/storage/src/portable_package/v1.rs	parse_container_at_end	17
 branches	crates/storage/src/portable_package/v1.rs	parse_manifest	15
 branches	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	13
 branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	33
-branches	crates/storage/src/presentation.rs	parse_presentation	28
+branches	crates/storage/src/presentation.rs	parse_presentation	16
 branches	crates/storage/src/presentation.rs	write_style_object	22
 branches	crates/storage/src/presentation.rs	write_table_record	23
 branches	crates/storage/src/roproj/host.rs	collect_entity_records	13
@@ -600,7 +599,6 @@ depth	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="iss
 depth	crates/semantic-core/src/validation.rs	validate_column_conditional	4
 depth	crates/semantic-core/src/validation.rs	validate_schemas	4
 depth	crates/storage/src/lib.rs	enforce_v2_number_token_limit	5
-depth	crates/storage/src/presentation.rs	parse_presentation	4
 depth	crates/storage/src/roproj/host.rs	collect_entity_records	4
 depth	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	6
 depth	crates/storage/src/roproj/host.rs	resolve_component_path	4
@@ -782,7 +780,6 @@ reason	crates/semantic-core/src/validation.rs	validate_value allow(clippy::too_m
 reason	crates/semantic-core/tests/diagnostic_contract.rs	duplicate_keys_identify_distinct_store_entries_when_declared_ids_match allow(clippy::too_many_lines)	1
 reason	crates/storage/src/direct_ro/v2.rs	deserialize_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
 reason	crates/storage/src/direct_ro/v2.rs	write_expression allow(clippy::too_many_lines)	1
-reason	crates/storage/src/presentation.rs	parse_presentation allow(clippy::too_many_lines)	1
 reason	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	issue_175_admit_a0_a1 allow(dead_code) cfg_attr(test)	1
 reason	crates/storage/src/roproj/v1/issue_175_research.rs	admit_one_pass_host allow(clippy::too_many_lines)	1
 reason	crates/storage/src/roproj/v1/issue_175_research.rs	admit_one_pass_host_controlled allow(clippy::too_many_arguments,clippy::too_many_lines)	1

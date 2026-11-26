@@ -1,5 +1,7 @@
 //! Storage-owned `.roproj/v3` `presentation.jsonl` member codec (ADR-0049).
 
+mod decode;
+
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -10,6 +12,7 @@ use tachiko_semantic_core::{
     TablePresentation,
 };
 
+use self::decode::{decode_cell, decode_rule, decode_style, decode_table};
 use crate::{
     FormatError,
     number_format::{NumberFormatDto, write_compact},
@@ -112,7 +115,6 @@ pub fn decode_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatErro
     Ok(store)
 }
 
-#[allow(clippy::too_many_lines)] // One strict record loop keeps the refusal order visible.
 fn parse_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatError> {
     let source =
         std::str::from_utf8(bytes).map_err(|source| FormatError::InvalidRoProjectUtf8 {
@@ -154,77 +156,10 @@ fn parse_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatError> {
         }
         previous_kind = Some(kind);
         match kind {
-            KIND_STYLE => {
-                let dto: StyleRecordV3 = deserialize_roproj(&path, record)?;
-                require_id("style id", &dto.id)?;
-                ensure_increasing("style", previous_style.as_deref(), &dto.id)?;
-                let style = style_into_semantic(dto.style)?;
-                let computed = style_id(&style)?;
-                if computed.as_str() != dto.id {
-                    return invalid_representation(format!(
-                        "style '{}' does not match its content",
-                        dto.id
-                    ));
-                }
-                previous_style = Some(dto.id.clone());
-                store.styles.insert(StyleId::from(dto.id), style);
-            }
-            KIND_TABLE => {
-                let dto: TableRecordV3 = deserialize_roproj(&path, record)?;
-                require_id("table schema id", &dto.schema)?;
-                ensure_increasing("table schema", previous_table.as_deref(), &dto.schema)?;
-                previous_table = Some(dto.schema.clone());
-                let (schema, table) = table_into_semantic(dto)?;
-                store.tables.insert(SchemaId::from(schema), table);
-            }
-            KIND_RULE => {
-                let dto: RuleRecordV3 = deserialize_roproj(&path, record)?;
-                require_id("rule id", &dto.id)?;
-                require_id("rule schema id", &dto.schema)?;
-                require_id("rule style id", &dto.style)?;
-                ensure_increasing("rule", previous_rule.as_deref(), &dto.id)?;
-                previous_rule = Some(dto.id.clone());
-                dto.condition.validate_ids_and_limits()?;
-                let fields = rule_fields(&dto.fields)?;
-                let rule = ConditionalRule {
-                    schema: SchemaId::from(dto.schema),
-                    rank: dto.rank,
-                    fields,
-                    condition: dto.condition.into_semantic()?,
-                    style: StyleId::from(dto.style),
-                };
-                store.rules.insert(RuleId::from(dto.id), rule);
-            }
-            KIND_CELL => {
-                let dto: CellRecordV3 = deserialize_roproj(&path, record)?;
-                require_id("cell entity id", &dto.entity)?;
-                require_id("cell field id", &dto.field)?;
-                require_id("cell style id", &dto.style)?;
-                let key = (dto.entity.as_str(), dto.field.as_str());
-                if let Some(previous) = &previous_cell {
-                    let previous_key = (previous.0.as_str(), previous.1.as_str());
-                    match previous_key.cmp(&key) {
-                        std::cmp::Ordering::Less => {}
-                        std::cmp::Ordering::Equal => {
-                            return invalid_representation(format!(
-                                "duplicate cell record ({}, {})",
-                                dto.entity, dto.field
-                            ));
-                        }
-                        std::cmp::Ordering::Greater => {
-                            return invalid_representation(format!(
-                                "cell records are not in unsigned UTF-8 order: ({}, {}) follows ({}, {})",
-                                dto.entity, dto.field, previous.0, previous.1
-                            ));
-                        }
-                    }
-                }
-                previous_cell = Some((dto.entity.clone(), dto.field.clone()));
-                store.cells.insert(
-                    (EntityId::from(dto.entity), FieldId::from(dto.field)),
-                    StyleId::from(dto.style),
-                );
-            }
+            KIND_STYLE => decode_style(&path, record, &mut previous_style, &mut store)?,
+            KIND_TABLE => decode_table(&path, record, &mut previous_table, &mut store)?,
+            KIND_RULE => decode_rule(&path, record, &mut previous_rule, &mut store)?,
+            KIND_CELL => decode_cell(&path, record, &mut previous_cell, &mut store)?,
             _ => {
                 return invalid_representation(format!(
                     "unknown presentation record kind rank {kind}"
