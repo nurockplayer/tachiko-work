@@ -1021,7 +1021,9 @@ fn import_workbook_candidate(
         &export_maps,
     )?;
     // TextCapacity requires the original complete source presentation metadata.
-    if runtime.profile != SessionProfile::TextCapacity {
+    if runtime.profile == SessionProfile::TextCapacity {
+        runtime.install_text_capacity_visibility(workbook, &projection.metadata)?;
+    } else {
         runtime = promote_import_presentation(
             runtime,
             workbook,
@@ -1031,8 +1033,6 @@ fn import_workbook_candidate(
         )?;
         super::interop_adapter::cap_ledger(&mut projection.ledger);
         drop(runtime.export_workbook(runtime.current_revision(), &projection.metadata)?);
-    } else {
-        runtime.install_text_capacity_visibility(workbook, &projection.metadata)?;
     }
     runtime.refresh_imported_table_with_presentation(&mut projection)?;
     runtime.attach_imported_metadata(&projection.metadata);

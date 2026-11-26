@@ -154,10 +154,10 @@ impl DesignerRuntime {
         let entities: BTreeSet<_> = entities.into_iter().map(EntityId::from).collect();
         let fields: BTreeSet<_> = fields.into_iter().map(FieldId::from).collect();
         if entities.iter().any(|entity| {
-            !document
+            document
                 .entities
                 .get(entity)
-                .is_some_and(|row| row.schema == schema)
+                .is_none_or(|row| row.schema != schema)
         }) {
             return Err(table_error("visibility row is unavailable in this table"));
         }
