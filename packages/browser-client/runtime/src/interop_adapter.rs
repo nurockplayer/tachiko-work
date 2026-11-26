@@ -1755,7 +1755,7 @@ pub(crate) fn check_import_limit(
 pub(crate) fn validate_import_geometry_profile(
     workbook: &SourceWorkbook,
     working: bool,
-) -> Result<()> {
+) -> Result<usize> {
     check_import_limit(
         crate::CapacityLimit::Collections,
         if working {
@@ -1831,8 +1831,9 @@ pub(crate) fn validate_import_geometry_profile(
             None,
             false,
         )?;
+        return Ok(bytes);
     }
-    Ok(())
+    Ok(0)
 }
 
 fn finding(
@@ -2106,15 +2107,18 @@ impl<'src> Xml<'src> {
         if self.name.as_str() == "t" {
             return decode_xstring(&self.text);
         }
-        let mut s = String::new();
-        for c in self
+        let mut parts = self
             .children
             .iter()
-            .filter(|c| c.ns == self.ns && matches!(c.name.as_str(), "t" | "r"))
-        {
-            s.push_str(&c.content()?);
+            .filter(|c| c.ns == self.ns && matches!(c.name.as_str(), "t" | "r"));
+        let Some(first) = parts.next() else {
+            return Ok(String::new());
+        };
+        let mut text = first.content()?;
+        for part in parts {
+            text.push_str(&part.content()?);
         }
-        Ok(s)
+        Ok(text)
     }
 }
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -2269,10 +2273,13 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml<'_>> {
             .map_err(|e| InteropError::Invalid(format!("Invalid XML: {e}")))?;
         let end = usize::try_from(reader.buffer_position())
             .map_err(|_| InteropError::Invalid("XML offset overflow".into()))?;
-        plain_document &= tokens
-            .as_bytes()
-            .get(start..end)
-            .is_some_and(|raw| plain_token(raw, &event));
+        // Only the non-working text-capacity classifier uses the plain proof.
+        if !working {
+            plain_document &= tokens
+                .as_bytes()
+                .get(start..end)
+                .is_some_and(|raw| plain_token(raw, &event));
+        }
         let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(e) | Event::Empty(e) => {
@@ -3719,12 +3726,23 @@ pub fn import_xlsx_with(bytes: &[u8], options: &ImportOptions) -> Result<SourceW
     import_xlsx_profile(bytes, options, false)
 }
 
-#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
 pub(crate) fn import_xlsx_profile(
     bytes: &[u8],
     options: &ImportOptions,
     working: bool,
 ) -> Result<SourceWorkbook> {
+    import_xlsx_profile_with_size(bytes, options, working).map(|(workbook, _)| workbook)
+}
+
+#[allow(clippy::too_many_lines)] // Ordered admission of workbook, worksheets, cells and headers.
+pub(crate) fn import_xlsx_profile_with_size(
+    bytes: &[u8],
+    options: &ImportOptions,
+    working: bool,
+) -> Result<(SourceWorkbook, usize)> {
+    // Both XLSX profiles fit one column bit per physical row.
+    const _: () = assert!(MAX_COLUMNS <= 32 && crate::capacity::WORKING_LIMITS.table_fields <= 32);
+
     let parts = archive(bytes, working)?;
     let mut ledger = Vec::new();
     let workbook = xml_part(&parts, "xl/workbook.xml", "workbook", MAIN, working)?;
@@ -3886,10 +3904,6 @@ pub(crate) fn import_xlsx_profile(
             return fail(format!("Header row 0 is outside worksheet {name}"));
         }
         let physical_row_limit = max_physical_rows(row_limit, options, sheet_index);
-        // Both XLSX profiles admit at most 32 columns; keep one bit per
-        // coordinate even when a worksheet repeats a physical row element.
-        const _: () =
-            assert!(MAX_COLUMNS <= 32 && crate::capacity::WORKING_LIMITS.table_fields <= 32);
         let mut seen = Vec::<u32>::new();
         let mut width = 0;
         let data = xml
@@ -4304,15 +4318,16 @@ pub(crate) fn import_xlsx_profile(
     ledger.push(finding(FidelityCategory::NativeEquivalent,if plain {"plain_workbook"} else {"bounded_workbook"},"source","All bounded worksheets and scalar cells were inspected; formula sources require authoritative Rust binding",false));
     let mut workbook = SourceWorkbook { sheets, ledger };
     cap_ledger(&mut workbook.ledger);
-    let workbook = if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
-        // Validate isolated Number-feasibility hypotheses without changing
-        // the typed values the user sees and explicitly selects.
-        validate_capacity_source_inspection(&workbook)?;
-        workbook
-    } else {
-        validate_import_geometry_profile(&workbook, working)?;
-        finish_source_admission(workbook, working)
-    };
+    let (workbook, source_bytes) =
+        if !working && output_profile(&workbook) == OutputProfile::TextCapacity {
+            // Validate isolated Number-feasibility hypotheses without changing
+            // the typed values the user sees and explicitly selects.
+            validate_capacity_source_inspection(&workbook)?;
+            (workbook, 0)
+        } else {
+            let source_bytes = validate_import_geometry_profile(&workbook, working)?;
+            (finish_source_admission(workbook, working), source_bytes)
+        };
     #[cfg(target_arch = "wasm32")]
     if !workbook.ledger.iter().any(|finding| finding.blocking) {
         let xml_bytes = worksheet_paths
@@ -4323,7 +4338,7 @@ pub(crate) fn import_xlsx_profile(
         drop(parts);
         crate::wasm::reserve_xlsx_heap(xml_bytes);
     }
-    Ok(workbook)
+    Ok((workbook, source_bytes))
 }
 
 /// Leading title rows are skipped only when a complete header follows them.

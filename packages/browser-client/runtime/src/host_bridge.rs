@@ -20,7 +20,7 @@ use crate::interop_adapter::{
     OutputProfile, SourceWorkbook, export_csv_for_profile, export_xlsx_for_profile,
     import_csv_profile, import_xlsx_profile,
 };
-use crate::interop_document::import_workbook_working_size_candidate;
+use crate::interop_document::import_admitted_workbook_working_size;
 use crate::{
     DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, DesignerWireReply,
     FailureProjection, MAX_PROJECT_TRANSFER_BYTES, MAX_WIRE_REQUEST_BYTES,
@@ -756,11 +756,8 @@ fn import_spreadsheet(
             })
         }
         Some(DesignerProfile::WorkingSize) => {
-            let (candidate, imported) = import_workbook_working_size_candidate(
-                std::borrow::Cow::Owned(workbook),
-                selection,
-                occurrence_id,
-            )?;
+            let (candidate, imported) =
+                import_admitted_workbook_working_size(workbook, selection, occurrence_id)?;
             Ok(SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,

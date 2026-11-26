@@ -234,11 +234,14 @@ pub(crate) fn classify(pattern: Option<&str>) -> Result<NumberFormatKind, String
 /// One tokenizer supplies both classification and numeric condition inventory.
 /// Digits in quoted display text, locale IDs and color IDs are not conditions.
 pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<String>), String> {
-    let mut conditions = Vec::new();
     let pattern = pattern.unwrap_or("");
+    if pattern.is_empty() {
+        return Ok((NumberFormatKind::Number, Vec::new()));
+    }
     if pattern.len() > 4096 {
         return Err("Number format exceeds retained-style bound".into());
     }
+    let mut conditions = Vec::new();
     let chars: Vec<char> = pattern.chars().collect();
     let mut sections = vec![Vec::new()];
     let mut i = 0;
@@ -345,9 +348,13 @@ fn literal_end(chars: &[char], mut i: usize) -> Result<usize, String> {
 }
 
 fn uniform_kind(sections: &[Vec<Token>]) -> Result<NumberFormatKind, String> {
-    let kinds: Vec<_> = sections.iter().take(3).map(|s| section_kind(s)).collect();
-    let first = kinds[0];
-    if kinds.iter().any(|kind| *kind != first) {
+    let first = section_kind(&sections[0]);
+    if sections
+        .iter()
+        .take(3)
+        .skip(1)
+        .any(|s| section_kind(s) != first)
+    {
         return Err("Mixed numeric number-format section types are unsupported".into());
     }
     Ok(first)
