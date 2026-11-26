@@ -691,6 +691,7 @@ export type DesignerRequest =
   | { type: "new_blank_workbook"; occurrence_id: string; profile: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
+  | { type: "duplicate_collection_at"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string>; to_index: number }
   | { type: "delete_table"; expected_revision: string; collection: string }
   | { type: "add_table"; expected_revision: string; name: string; columns: NewTableColumnInput[] }
   | { type: "bootstrap"; occurrence_id: string }

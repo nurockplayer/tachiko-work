@@ -8,6 +8,10 @@ All notable changes to Tachiko Work are documented in this file.
   `setCellStyleRange`. The range uses one Undo step, and numeric formats
   survive project saves and XLSX round trips (#955).
 
+- Copy worksheets to a destination index with `duplicateCollection`. One
+  Undo removes the copy and restores worksheet order. Saves and XLSX round
+  trips retain the order, and imported workbook metadata follows it (#953).
+
 - Move worksheets with `moveCollection`, with one-step Undo and Redo.
   V3 and portable `.ro` saves and XLSX round trips retain worksheet order.
   V3 emits the order only when it differs from stable Schema ID order (#953).

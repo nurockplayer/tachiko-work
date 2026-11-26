@@ -441,6 +441,14 @@ pub enum DesignerRequest {
         #[serde(default)]
         column_names: BTreeMap<String, String>,
     },
+    DuplicateCollectionAt {
+        expected_revision: String,
+        collection: String,
+        name: String,
+        #[serde(default)]
+        column_names: BTreeMap<String, String>,
+        to_index: u32,
+    },
     EditCells {
         expected_revision: String,
         edits: Vec<CellEdit>,
@@ -2631,6 +2639,10 @@ enum HistoryAction {
         styles: Vec<auto_input::CellDisplay>,
     },
     Commands(Vec<SemanticCommand>),
+    OrderedCommands {
+        commands: Vec<SemanticCommand>,
+        order: Vec<SchemaId>,
+    },
     TableCommands {
         commands: Vec<SemanticCommand>,
         default_collection: String,
@@ -2670,6 +2682,13 @@ impl HistoryAction {
                         .sum::<usize>()
             }
             Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
+            Self::OrderedCommands { commands, order } => {
+                commands
+                    .iter()
+                    .map(SemanticCommand::approx_bytes)
+                    .sum::<usize>()
+                    + order.iter().map(|id| id.as_str().len()).sum::<usize>()
+            }
             Self::TableCommands {
                 commands,
                 default_collection,
@@ -4308,6 +4327,20 @@ impl DesignerRuntime {
                 &collection,
                 &name,
                 &column_names,
+                None,
+            )?)),
+            DesignerRequest::DuplicateCollectionAt {
+                expected_revision,
+                collection,
+                name,
+                column_names,
+                to_index,
+            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
+                &expected_revision,
+                &collection,
+                &name,
+                &column_names,
+                Some(to_index),
             )?)),
             DesignerRequest::EditCells {
                 expected_revision,
@@ -7343,13 +7376,13 @@ impl DesignerRuntime {
     /// identity graph. Formula references are remapped only when both their
     /// entity and field belong to the copied collection; external references
     /// remain bound to their original stable targets.
-    #[allow(clippy::too_many_lines)] // Keep the bounded identity mapping atomic.
     fn duplicate_collection(
         &mut self,
         expected_revision: &str,
         collection: &str,
         name: &str,
         column_names: &BTreeMap<String, String>,
+        to_index: Option<u32>,
     ) -> Result<DuplicateCollectionProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
@@ -7365,31 +7398,7 @@ impl DesignerRuntime {
             document.schemas.len().saturating_add(1),
             None,
         )?;
-        let mut failures = Vec::new();
-        let name = name_admission::check_name(
-            name,
-            Some(&name_admission::NameInput::Table),
-            &[],
-            &mut failures,
-        );
-        if let Some(name) = name {
-            let subjects = document
-                .schemas
-                .values()
-                .filter(|schema| schema.effective_name() == name)
-                .map(|schema| tachiko_workspace_engine::SemanticSubject::Schema(schema.id.clone()))
-                .collect::<Vec<_>>();
-            if !subjects.is_empty() {
-                failures.push(NameFailure {
-                    reason: "duplicate_display_name".into(),
-                    inputs: vec![name_admission::NameInput::Table],
-                    subjects,
-                    effective_name: Some(name.to_owned()),
-                });
-            }
-        }
-        name_admission::refuse(failures)?;
-        let name = name.expect("table name admitted");
+        let name = admit_duplicate_name(document, name)?;
         let occupied = document
             .schemas
             .values()
@@ -7405,143 +7414,56 @@ impl DesignerRuntime {
                 .saturating_add(source_spec.entities.len()),
             None,
         )?;
-        let source_schema = document
-            .schemas
-            .get(&SchemaId::from(source_spec.summary.id.clone()))
-            .ok_or_else(|| DesignerError::MissingCollection {
-                collection: collection.to_owned(),
-            })?;
         let mut ids = NewTableIds::with_serial(
             &format!("{}/duplicate", self.row_namespace),
             self.duplicate_serial,
         );
-        let schema_id = loop {
-            let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
-            if !document.schemas.contains_key(&id) {
-                break id;
-            }
-        };
-        let mut field_map = BTreeMap::<FieldId, FieldId>::new();
-        let mut fields = BTreeMap::new();
-        for field in source_schema.fields.values() {
-            let field_id = loop {
-                let id = FieldId::from(ids.generate(SemanticIdKind::Field));
-                if !document
-                    .schemas
-                    .values()
-                    .any(|schema| schema.fields.contains_key(&id))
-                    && !fields.contains_key(&id)
-                {
-                    break id;
-                }
-            };
-            field_map.insert(field.id.clone(), field_id.clone());
-            let mut definition = field.clone();
-            definition.id = field_id.clone();
-            if let FieldType::Reference { schema } = &mut definition.field_type {
-                if schema == &source_schema.id {
-                    *schema = schema_id.clone();
-                }
-            }
-            fields.insert(field_id, definition);
-        }
-        let schema_map = BTreeMap::from([(source_schema.id.clone(), schema_id.clone())]);
-        let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
-        for source_id in &source_spec.entities {
-            let target_id = loop {
-                let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
-                if !document.entities.contains_key(&id)
-                    && !entity_map.values().any(|used| used == &id)
-                {
-                    break id;
-                }
-            };
-            entity_map.insert(source_id.clone(), target_id);
-        }
-        let ordered_ids = entity_map.values().cloned().collect::<BTreeSet<_>>();
-        entity_map = source_spec
-            .entities
-            .iter()
-            .cloned()
-            .zip(ordered_ids)
-            .collect();
-        let mut schema = Schema {
-            headerless: source_schema.headerless,
-            // The copy keeps the source's projected column order.
-            field_order: Some(
-                source_spec
-                    .columns
-                    .iter()
-                    .filter_map(|column| field_map.get(&column.id).cloned())
-                    .collect(),
-            ),
-            id: schema_id.clone(),
-            key: SchemaKey::from(target_key.clone()),
-            display_name: Some(name.to_owned()),
-            fields,
-        };
-        for (field, name) in copied_column_names(&schema, column_names, &field_map)? {
-            if let Some(definition) = schema.fields.get_mut(&field) {
-                definition.display_name = Some(name);
-            }
-        }
-        schema.normalize_field_order();
-        let mut entities = Vec::with_capacity(source_spec.entities.len());
-        for source_id in &source_spec.entities {
-            let source = document.entities.get(source_id).ok_or_else(|| {
-                DesignerError::MissingCollection {
-                    collection: collection.to_owned(),
-                }
-            })?;
-            let target_id = entity_map
-                .get(source_id)
-                .ok_or_else(|| table_error("entity mapping is incomplete"))?;
-            let entity_key = format!("{}-{}", source.key, target_key);
-            if entity_key.len() > MAX_PROFILE_STRING_BYTES {
-                return Err(table_error("copied entity key exceeds the bounded profile"));
-            }
-            let entity_key = native_table_key(&entity_key, "copied entity key")?;
-            let mut copied = Entity {
-                rank: source.rank.clone(),
-                id: target_id.clone(),
-                key: EntityKey::from(entity_key),
-                schema: schema_id.clone(),
-                fields: BTreeMap::new(),
-            };
-            for (source_field, value) in &source.fields {
-                let target_field = field_map
-                    .get(source_field)
-                    .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(value, &entity_map, &field_map, &schema_map)?;
-                copied.fields.insert(target_field.clone(), value);
-            }
-            entities.push(copied);
-        }
+        let (schema, entities) = build_duplicate_collection(
+            document,
+            source_spec,
+            &target_key,
+            name,
+            column_names,
+            &mut ids,
+        )?;
+        let presentation = to_index
+            .map(|index| self.presentation_with_inserted_collection(schema.id.clone(), index));
+        let inverse = vec![SemanticCommand::RemoveCollection {
+            schema: schema.id.clone(),
+            entities: entities.iter().map(|entity| entity.id.clone()).collect(),
+        }];
         let forward = vec![SemanticCommand::AppendCollection { schema, entities }];
-        let inverse = match &forward[0] {
-            SemanticCommand::AppendCollection { schema, entities } => {
-                vec![SemanticCommand::RemoveCollection {
-                    schema: schema.id.clone(),
-                    entities: entities.iter().map(|entity| entity.id.clone()).collect(),
-                }]
-            }
-            _ => unreachable!("duplicate collection always creates an append command"),
-        };
+        let order_before = presentation
+            .as_ref()
+            .map(|_| self.presentation.collection_order.clone());
         let imported_before = self.imported.clone();
         let publication = self.publish_commands_with_imported(
             expected_revision,
             &forward,
             None,
             Some(&target_key),
-            None,
+            presentation,
         )?;
         self.duplicate_serial = ids.serial;
-        self.record_history_entry(
-            HistoryEntry::new(
+        let (forward, inverse) = match order_before {
+            Some(order) => (
+                HistoryAction::OrderedCommands {
+                    commands: forward,
+                    order: self.presentation.collection_order.clone(),
+                },
+                HistoryAction::OrderedCommands {
+                    commands: inverse,
+                    order,
+                },
+            ),
+            None => (
                 HistoryAction::Commands(forward),
                 HistoryAction::Commands(inverse),
-            )
-            .with_imported(imported_before, self.imported.as_ref()),
+            ),
+        };
+        self.record_history_entry(
+            HistoryEntry::new(forward, inverse)
+                .with_imported(imported_before, self.imported.as_ref()),
         );
         let collection = self
             .collection_specs
@@ -8070,11 +7992,23 @@ impl DesignerRuntime {
             auto_input::admit_presentation(input_presentation.as_ref(), candidate, self.profile)?;
         let imported = match restored_import {
             Some(state) => Some(state.clone()),
-            None => self.plan_imported_state(candidate, commands)?,
+            None => self.plan_imported_state(
+                candidate,
+                commands,
+                input_presentation
+                    .as_ref()
+                    .map(|store| store.collection_order.as_slice()),
+            )?,
         };
         if let Some(imported) = imported.as_ref().filter(|_| restored_import.is_none()) {
             self.preflight_imported_reply(&imported.metadata, |candidate| {
-                let publication = candidate.publish_commands("resident/0", commands)?;
+                let publication = candidate.publish_commands_with_imported(
+                    "resident/0",
+                    commands,
+                    None,
+                    None,
+                    input_presentation.clone(),
+                )?;
                 Ok(match added_collection {
                     Some(key) => DesignerResponse::Duplicated(DuplicateCollectionProjection {
                         publication,
@@ -8978,6 +8912,17 @@ impl DesignerRuntime {
             }
             HistoryAction::Commands(commands) => {
                 self.publish_commands_with_imported(expected, commands, imported, None, None)
+            }
+            HistoryAction::OrderedCommands { commands, order } => {
+                let mut presentation = self.presentation.clone();
+                presentation.collection_order.clone_from(order);
+                self.publish_commands_with_imported(
+                    expected,
+                    commands,
+                    imported,
+                    None,
+                    Some(presentation),
+                )
             }
             HistoryAction::TableCommands {
                 commands,
@@ -11601,6 +11546,175 @@ fn map_copy_references(
             Ok(())
         }
     }
+}
+
+fn admit_duplicate_name<'a>(document: &Document, name: &'a str) -> Result<&'a str, DesignerError> {
+    let mut failures = Vec::new();
+    let name = name_admission::check_name(
+        name,
+        Some(&name_admission::NameInput::Table),
+        &[],
+        &mut failures,
+    );
+    if let Some(name) = name {
+        let subjects = document
+            .schemas
+            .values()
+            .filter(|schema| schema.effective_name() == name)
+            .map(|schema| tachiko_workspace_engine::SemanticSubject::Schema(schema.id.clone()))
+            .collect::<Vec<_>>();
+        if !subjects.is_empty() {
+            failures.push(NameFailure {
+                reason: "duplicate_display_name".into(),
+                inputs: vec![name_admission::NameInput::Table],
+                subjects,
+                effective_name: Some(name.to_owned()),
+            });
+        }
+    }
+    name_admission::refuse(failures)?;
+    Ok(name.expect("table name admitted"))
+}
+
+fn build_duplicate_collection(
+    document: &Document,
+    source_spec: &CollectionSpec,
+    target_key: &str,
+    name: &str,
+    column_names: &BTreeMap<String, String>,
+    ids: &mut NewTableIds,
+) -> Result<(Schema, Vec<Entity>), DesignerError> {
+    let source_schema = document
+        .schemas
+        .get(&SchemaId::from(source_spec.summary.id.clone()))
+        .ok_or_else(|| DesignerError::MissingCollection {
+            collection: source_spec.summary.key.clone(),
+        })?;
+    let schema_id = loop {
+        let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
+        if !document.schemas.contains_key(&id) {
+            break id;
+        }
+    };
+    let mut field_map = BTreeMap::<FieldId, FieldId>::new();
+    let mut fields = BTreeMap::new();
+    for field in source_schema.fields.values() {
+        let field_id = loop {
+            let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+            if !document
+                .schemas
+                .values()
+                .any(|schema| schema.fields.contains_key(&id))
+                && !fields.contains_key(&id)
+            {
+                break id;
+            }
+        };
+        field_map.insert(field.id.clone(), field_id.clone());
+        let mut definition = field.clone();
+        definition.id = field_id.clone();
+        if let FieldType::Reference { schema } = &mut definition.field_type {
+            if schema == &source_schema.id {
+                *schema = schema_id.clone();
+            }
+        }
+        fields.insert(field_id, definition);
+    }
+    let mut schema = Schema {
+        headerless: source_schema.headerless,
+        // The copy keeps the source's projected column order.
+        field_order: Some(
+            source_spec
+                .columns
+                .iter()
+                .filter_map(|column| field_map.get(&column.id).cloned())
+                .collect(),
+        ),
+        id: schema_id,
+        key: SchemaKey::from(target_key.to_owned()),
+        display_name: Some(name.to_owned()),
+        fields,
+    };
+    for (field, name) in copied_column_names(&schema, column_names, &field_map)? {
+        if let Some(definition) = schema.fields.get_mut(&field) {
+            definition.display_name = Some(name);
+        }
+    }
+    schema.normalize_field_order();
+    let entities = copy_collection_entities(
+        document,
+        source_spec,
+        &source_schema.id,
+        &schema.id,
+        &field_map,
+        target_key,
+        ids,
+    )?;
+    Ok((schema, entities))
+}
+
+fn copy_collection_entities(
+    document: &Document,
+    source_spec: &CollectionSpec,
+    source_schema_id: &SchemaId,
+    target_schema_id: &SchemaId,
+    field_map: &BTreeMap<FieldId, FieldId>,
+    target_key: &str,
+    ids: &mut NewTableIds,
+) -> Result<Vec<Entity>, DesignerError> {
+    let schema_map = BTreeMap::from([(source_schema_id.clone(), target_schema_id.clone())]);
+    let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
+    for source_id in &source_spec.entities {
+        let target_id = loop {
+            let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+            if !document.entities.contains_key(&id) && !entity_map.values().any(|used| used == &id)
+            {
+                break id;
+            }
+        };
+        entity_map.insert(source_id.clone(), target_id);
+    }
+    let ordered_ids = entity_map.values().cloned().collect::<BTreeSet<_>>();
+    entity_map = source_spec
+        .entities
+        .iter()
+        .cloned()
+        .zip(ordered_ids)
+        .collect();
+    let mut entities = Vec::with_capacity(source_spec.entities.len());
+    for source_id in &source_spec.entities {
+        let source =
+            document
+                .entities
+                .get(source_id)
+                .ok_or_else(|| DesignerError::MissingCollection {
+                    collection: source_spec.summary.key.clone(),
+                })?;
+        let target_id = entity_map
+            .get(source_id)
+            .ok_or_else(|| table_error("entity mapping is incomplete"))?;
+        let entity_key = format!("{}-{}", source.key, target_key);
+        if entity_key.len() > MAX_PROFILE_STRING_BYTES {
+            return Err(table_error("copied entity key exceeds the bounded profile"));
+        }
+        let entity_key = native_table_key(&entity_key, "copied entity key")?;
+        let mut copied = Entity {
+            rank: source.rank.clone(),
+            id: target_id.clone(),
+            key: EntityKey::from(entity_key),
+            schema: target_schema_id.clone(),
+            fields: BTreeMap::new(),
+        };
+        for (source_field, value) in &source.fields {
+            let target_field = field_map
+                .get(source_field)
+                .ok_or_else(|| table_error("field mapping is incomplete"))?;
+            let value = remap_duplicate_value(value, &entity_map, field_map, &schema_map)?;
+            copied.fields.insert(target_field.clone(), value);
+        }
+        entities.push(copied);
+    }
+    Ok(entities)
 }
 
 /// Admits the column names a copy is given, before anything is published.

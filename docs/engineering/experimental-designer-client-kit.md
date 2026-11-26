@@ -520,7 +520,7 @@ marker before relying on omission to mean fallback in older kits. The client
 preserves `true` or omission and rejects every other defined value; Rust emits
 only `true` or omission. Storage formats and rename semantics are unchanged.
 
-`duplicateCollection(expectedRevision, collection, name, columnNames?)` can name
+`duplicateCollection(expectedRevision, collection, name, columnNames?, toIndex?)` can name
 the copy's columns in the same command. `columnNames` maps each source column's
 stable field ID to the copy's display name; a name passes the same spelling rule
 as renaming a column. A blank name, two copy columns with the same effective name, or a
@@ -529,6 +529,12 @@ names are part of the copy's single history step, so one Undo removes the copy
 with its names and Redo restores both. Omitting `columnNames` or passing `{}`
 keeps the source names. An imported CSV or XLSX table has no stored names; pass
 the header text to give the copy its headers.
+
+Pass `toIndex` to place the copy at a zero-based worksheet index, clamped to
+the end. Omit it to retain the existing placement behavior. The destination
+is part of the copy's single history step and is retained by v3 and portable
+`.ro` saves and XLSX export and reimport. The copy, Undo and Redo publish the
+current import metadata for imported workbooks.
 
 `moveCollection(expectedRevision, collection, toIndex)` moves an existing
 worksheet identified by its collection key. Read the new order from
