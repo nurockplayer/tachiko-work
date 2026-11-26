@@ -479,6 +479,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
             .fields
             .values()
             .map(|field| ColumnProjection {
+                hidden: false,
                 required: true,
                 id: field.id.to_string(),
                 key: field.key.to_string(),
@@ -497,6 +498,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         rows: entities
             .into_iter()
             .map(|entity| RowProjection {
+                hidden: false,
                 blank_fields: Vec::new(),
                 styles: Vec::new(),
                 id: entity.id.to_string(),

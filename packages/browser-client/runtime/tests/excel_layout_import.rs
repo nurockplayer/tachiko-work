@@ -483,6 +483,7 @@ fn a_summary_row_reference_outside_its_imported_cells_fails() {
                         formula: "SUM(A2:A3)".into(),
                     }],
                 }),
+                ..SourceLayout::default()
             },
         }],
         ledger: Vec::new(),

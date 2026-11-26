@@ -395,3 +395,93 @@ fn edits_after_a_styled_column_is_removed() {
         .expect("the removed column is back");
     assert_eq!(restored.width, Some(512));
 }
+
+#[test]
+fn visibility_batches_by_id_preserve_formulas_and_use_one_undo() {
+    let mut runtime = runtime();
+    let collection = runtime.default_collection.clone();
+    let original = runtime.query_table(&collection).unwrap();
+    let request = |expected_revision, hidden| DesignerRequest::SetTableVisibility {
+        expected_revision,
+        collection: collection.clone(),
+        entities: vec!["e02".into(), "e01".into()],
+        fields: vec![FIELD.into(), "f02_tiny".into()],
+        hidden,
+    };
+    let before = runtime.current_revision().to_owned();
+    let response = runtime.handle(request(before.clone(), true)).unwrap();
+    let super::DesignerResponse::Published(publication) = response else {
+        panic!("expected publication")
+    };
+    assert_eq!(publication.base_revision, before);
+    assert_eq!(publication.resulting_revision, "resident/1");
+    assert_eq!(runtime.undo.len(), 1);
+    let full = runtime.query_table(&collection).unwrap();
+    assert_eq!(full.rows.len(), original.rows.len());
+    for (row, before) in full.rows.iter().zip(&original.rows) {
+        assert_eq!(row.id, before.id);
+        assert_eq!(row.hidden, matches!(row.id.as_str(), "e01" | "e02"));
+        assert_eq!(row.fields, before.fields, "including calculated results");
+    }
+    let view = window(&mut runtime, &TableView::default());
+    assert_eq!(view.columns, full.columns);
+    assert!(column(&view).hidden);
+    assert!(
+        view.columns
+            .iter()
+            .find(|column| column.id == "f02_tiny")
+            .unwrap()
+            .hidden
+    );
+    assert!(view.rows.iter().find(|row| row.id == "e01").unwrap().hidden);
+    runtime.history_edit("resident/1", false).unwrap();
+    let undone = runtime.query_table(&collection).unwrap();
+    assert_eq!(undone.columns, original.columns);
+    assert_eq!(undone.rows, original.rows);
+    runtime.history_edit("resident/2", true).unwrap();
+    runtime.handle(request("resident/3".into(), false)).unwrap();
+    assert_eq!(
+        runtime.query_table(&collection).unwrap().rows,
+        original.rows
+    );
+    assert_eq!(runtime.undo.len(), 2);
+    runtime.history_edit("resident/4", false).unwrap();
+    assert!(column(&window(&mut runtime, &TableView::default())).hidden);
+}
+
+#[test]
+fn visibility_survives_save_and_reopen() {
+    let mut runtime = runtime();
+    let collection = runtime.default_collection.clone();
+    let revision = runtime.current_revision().to_owned();
+    runtime
+        .handle(DesignerRequest::SetTableVisibility {
+            expected_revision: revision,
+            collection: collection.clone(),
+            entities: vec!["e02".into()],
+            fields: vec![FIELD.into()],
+            hidden: true,
+        })
+        .unwrap();
+    let export = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let (reopened, _) = admit_project(&export.bytes, OCCURRENCE).unwrap();
+    let projection = reopened.query_table(&collection).unwrap();
+    assert!(
+        projection
+            .rows
+            .iter()
+            .find(|row| row.id == "e02")
+            .unwrap()
+            .hidden
+    );
+    assert!(
+        projection
+            .columns
+            .iter()
+            .find(|column| column.id == FIELD)
+            .unwrap()
+            .hidden
+    );
+}

@@ -1125,3 +1125,45 @@ fn stage5_palette_bound_drops_cell_and_validates() {
     assert!(store.cells.contains_key(&("row4097".into(), "text".into())));
     tachiko_semantic_core::validate_presentation(&store, &document).unwrap();
 }
+
+#[test]
+fn visibility_survives_native_xlsx_import_and_imported_export() {
+    let (workbook, selection) = import_presentation_fixture(&["mm/dd/yyyy", "mm/dd/yyyy"]);
+    let (mut runtime, imported) = import_workbook(&workbook, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    runtime
+        .handle(DesignerRequest::SetTableVisibility {
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: sheet.schema_id.clone(),
+            entities: vec![sheet.rows[1].entity_id.clone()],
+            fields: vec![sheet.columns[0].field_id.clone()],
+            hidden: true,
+        })
+        .unwrap();
+    let native = runtime
+        .export_native_tables_workbook(runtime.current_revision(), &sheet.schema_id)
+        .unwrap();
+    let bytes = export_xlsx(&native).unwrap();
+    let inspected = import_xlsx(&bytes).unwrap();
+    let layout = &inspected.sheets[0].layout;
+    assert_eq!(layout.hidden_rows, [1].into());
+    assert_eq!(layout.hidden_columns, [0].into());
+    let (reopened, imported) = import_workbook(&inspected, &selection, OCCURRENCE).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let table = &reopened.presentation.tables[sheet.schema_id.as_str()];
+    assert!(table.hidden_rows.contains(sheet.rows[1].entity_id.as_str()));
+    assert!(
+        table
+            .hidden_fields
+            .contains(sheet.columns[0].field_id.as_str())
+    );
+    let rebuilt = reopened
+        .export_workbook(reopened.current_revision(), &imported.metadata)
+        .unwrap();
+    let round_trip = import_xlsx(&export_xlsx(&rebuilt).unwrap()).unwrap();
+    assert_eq!(round_trip.sheets[0].layout, *layout);
+    assert_eq!(
+        round_trip.sheets[0].rows[1][0].value,
+        inspected.sheets[0].rows[1][0].value
+    );
+}

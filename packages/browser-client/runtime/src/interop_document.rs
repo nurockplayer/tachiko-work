@@ -1031,16 +1031,10 @@ fn import_workbook_candidate(
         )?;
         super::interop_adapter::cap_ledger(&mut projection.ledger);
         drop(runtime.export_workbook(runtime.current_revision(), &projection.metadata)?);
-        projection.opened = OpenedProjection {
-            bootstrap: runtime.bootstrap_projection(),
-            table: runtime.query_table(&runtime.default_collection)?,
-        };
-        super::ensure_complete_projection_size(
-            "imported",
-            &projection,
-            super::MAX_PROJECTION_BYTES,
-        )?;
+    } else {
+        runtime.install_text_capacity_visibility(workbook, &projection.metadata)?;
     }
+    runtime.refresh_imported_table_with_presentation(&mut projection)?;
     runtime.attach_imported_metadata(&projection.metadata);
     projection.opened.bootstrap = runtime.bootstrap_projection();
     Ok((runtime, projection))
@@ -1378,7 +1372,7 @@ fn promote_import_presentation(
     let mut date_formats = Vec::new();
     for (sheet, source) in metadata.sheets.iter_mut().zip(&workbook.sheets) {
         let schema_id = SchemaId::from(sheet.schema_id.clone());
-        let mut table = TablePresentation::default();
+        let mut table = crate::table_visibility::import_visibility(source, sheet);
         for (column_index, column) in sheet.columns.iter_mut().enumerate() {
             let field_id = FieldId::from(column.field_id.clone());
             if let Some(width) = column.width.take() {
@@ -4534,7 +4528,7 @@ impl DesignerRuntime {
                     })
                     .collect(),
                 rows,
-                layout: SourceLayout::default(),
+                layout: self.export_imported_visibility(sheet, document, values_only),
             });
         }
         let workbook = SourceWorkbook { sheets, ledger: vec![FidelityFinding {
