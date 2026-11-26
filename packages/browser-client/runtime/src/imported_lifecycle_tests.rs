@@ -646,18 +646,36 @@ fn worksheet_copy_at_index_round_trips_through_history_save_and_xlsx() {
     let mut selection = selection();
     selection.column_types.push(vec![ImportFieldType::Number]);
     selection.extra_columns.push(vec![]);
-    let (reimported, _) = import_workbook(&book, &selection, OCCURRENCE).unwrap();
+    let (reimported, projection) = import_workbook(&book, &selection, OCCURRENCE).unwrap();
     assert_eq!(
-        names(&reimported),
+        projection
+            .metadata
+            .sheets
+            .iter()
+            .map(|sheet| sheet.name.as_str())
+            .collect::<Vec<_>>(),
         ordered
             .each_ref()
             .map(|collection| collection.display_name.as_str()),
+    );
+    assert!(
+        reimported
+            .bootstrap_projection()
+            .collections
+            .iter()
+            .map(|collection| &collection.id)
+            .eq(projection
+                .metadata
+                .sheets
+                .iter()
+                .map(|sheet| &sheet.schema_id))
     );
 }
 
 #[test]
 fn imported_worksheet_copy_at_index_publishes_matching_save_and_xlsx_order() {
     let (mut runtime, initial) = imported(true);
+    let before = runtime.bootstrap_projection().collections;
     let DesignerResponse::Duplicated(copy) = runtime
         .handle(DesignerRequest::DuplicateCollectionAt {
             expected_revision: "resident/0".into(),
@@ -673,12 +691,14 @@ fn imported_worksheet_copy_at_index_publishes_matching_save_and_xlsx_order() {
     let metadata = copy.publication.import_metadata.unwrap();
     assert_eq!(metadata.sheets[0].schema_id, copy.collection.id);
     assert_eq!(metadata.sheets[1..], initial.sheets);
-    assert_eq!(names(&runtime), ["Scratch Copy", "Input", "Scratch"]);
+    let ordered = [copy.collection, before[0].clone(), before[1].clone()];
+    assert_eq!(runtime.bootstrap_projection().collections, ordered);
     assert!(runtime.export_workbook("resident/1", &initial).is_err());
     let saved = runtime.export_portable_ro("resident/1").unwrap();
     assert_eq!(saved.import_metadata.as_ref(), Some(&metadata));
     let mut reopened = None;
-    open_imported_project(&mut reopened, &saved.bytes, &metadata, OCCURRENCE).unwrap();
+    let opened = open_imported_project(&mut reopened, &saved.bytes, &metadata, OCCURRENCE).unwrap();
+    assert_eq!(opened.bootstrap.collections, ordered);
     let book = import_xlsx(&xlsx(&reopened.unwrap(), &metadata)).unwrap();
     assert_eq!(
         book.sheets
@@ -697,10 +717,10 @@ fn imported_worksheet_copy_at_index_publishes_matching_save_and_xlsx_order() {
 
     let undo = runtime.history_edit("resident/1", false).unwrap();
     assert_eq!(undo.import_metadata, Some(initial));
-    assert_eq!(names(&runtime), ["Input", "Scratch"]);
+    assert_eq!(runtime.bootstrap_projection().collections, before);
     let redo = runtime.history_edit("resident/2", true).unwrap();
     assert_eq!(redo.import_metadata, Some(metadata));
-    assert_eq!(names(&runtime), ["Scratch Copy", "Input", "Scratch"]);
+    assert_eq!(runtime.bootstrap_projection().collections, ordered);
 }
 
 #[test]
