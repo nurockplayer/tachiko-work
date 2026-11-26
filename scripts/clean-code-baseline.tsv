@@ -424,7 +424,7 @@ branches	crates/workspace-engine/src/lib.rs	explain_field	17
 branches	crates/workspace-engine/src/lib.rs	formula_diagnostics	31
 branches	crates/workspace-engine/src/lib.rs	merge_documents	14
 branches	crates/workspace-engine/src/lib.rs	parse_scalar	13
-branches	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	14
+branches	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	13
 branches	crates/workspace-engine/src/lib.rs	runtime_value	13
 branches	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_calculation_dependency_disclosures	14
 branches	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	64
@@ -609,7 +609,6 @@ depth	crates/storage/src/roproj/v3.rs	write_constraint	4
 depth	crates/storage/src/strict_json.rs	inspect_object	4
 depth	crates/storage/src/strict_json.rs	json_nesting_depth	5
 depth	crates/workspace-engine/src/analysis_operations.rs	select_entities	4
-depth	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	4
 depth	crates/workspace-engine/src/lib.rs	preflight_formula_projections	4
 depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	4
 depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	4
@@ -685,7 +684,7 @@ file	crates/storage/src/roproj/v2.rs		1722
 file	crates/storage/src/roproj/v3.rs		2914
 file	crates/workspace-engine/src/analysis_operations.rs		1436
 file	crates/workspace-engine/src/formula_operations.rs		1225
-file	crates/workspace-engine/src/lib.rs		4009
+file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6780
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
