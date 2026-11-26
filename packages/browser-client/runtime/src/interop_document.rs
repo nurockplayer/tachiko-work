@@ -2653,6 +2653,10 @@ mod extremum_tests {
 }
 
 // Both explicit A1 boundaries share tokenization; geometry owns address resolution.
+mod a1_lookup;
+pub(super) use a1_lookup::A1ColumnMode;
+use a1_lookup::translate_lookup_call;
+
 pub(super) trait A1Geometry {
     fn sheet(&self, name: &str) -> Result<usize, DesignerError>;
     fn cell(
@@ -2671,12 +2675,12 @@ pub(super) trait A1Geometry {
         references: &mut FormulaReferences,
     ) -> Result<String, DesignerError>;
     /// One column argument of a conditional aggregate, as `[schema.field:column]`.
-    /// `numeric` is true for the value column.
+    /// The mode distinguishes scalar criteria, numeric aggregates and lookup results.
     fn column(
         &mut self,
         argument: &str,
         current: usize,
-        numeric: bool,
+        mode: A1ColumnMode,
         document: &Document,
         references: &mut FormulaReferences,
     ) -> Result<String, DesignerError>;
@@ -2743,7 +2747,7 @@ impl A1Geometry for ImportA1Geometry<'_> {
         &mut self,
         argument: &str,
         current: usize,
-        numeric: bool,
+        mode: A1ColumnMode,
         document: &Document,
         references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
@@ -2752,7 +2756,7 @@ impl A1Geometry for ImportA1Geometry<'_> {
             current,
             self.sources,
             self.numeric_columns,
-            numeric,
+            mode.needs_number(),
         )
         .ok_or_else(|| tracker_error("conditional range must cover one whole data column"))?;
         let span = (sheet, first_row, last_row);
@@ -2904,8 +2908,7 @@ fn translate_a1_inner(
                             let (argument, consumed) = call_argument(&source[call..])
                                 .ok_or_else(|| tracker_error("unterminated source formula call"))?;
                             output.push_str(&translate_lookup_call(
-                                &name,
-                                argument,
+                                (&name, argument),
                                 current_sheet,
                                 geometry,
                                 document,
@@ -3089,45 +3092,6 @@ fn translate_a1_inner(
     Ok((output, references))
 }
 
-fn translate_lookup_call(
-    name: &str,
-    argument: &str,
-    current_sheet: usize,
-    geometry: &mut impl A1Geometry,
-    document: &Document,
-    references: &mut FormulaReferences,
-) -> Result<String, DesignerError> {
-    let call = lookup_call(name, argument).ok_or_else(|| geometry.unknown_function())?;
-    geometry.begin_conditional();
-    let keys = geometry.column(&call.keys, current_sheet, false, document, references)?;
-    let results = geometry.column(&call.results, current_sheet, true, document, references)?;
-    if let Some(end) = &call.range_end {
-        geometry.column(
-            end,
-            current_sheet,
-            false,
-            document,
-            &mut FormulaReferences::default(),
-        )?;
-    }
-    let (key, nested) = translate_a1_inner(
-        lookup_key(call.key).0,
-        geometry,
-        current_sheet,
-        document,
-        false,
-    )?;
-    references.extend(nested);
-    let mut arguments = vec![key, keys, results];
-    if let Some(fallback) = call.if_missing {
-        let (fallback, nested) =
-            translate_a1_inner(fallback, geometry, current_sheet, document, false)?;
-        references.extend(nested);
-        arguments.push(fallback);
-    }
-    Ok(format!("LOOKUP({})", arguments.join(",")))
-}
-
 /// Translate one `SUMIF`-family call to canonical Tachiko text, keeping the
 /// caller's function spelling. `base` is the call argument's offset in the
 /// formula being translated.
@@ -3149,7 +3113,7 @@ fn translate_conditional_call(
         rendered[index] = geometry.column(
             parts[index].1.trim(),
             current_sheet,
-            numeric,
+            A1ColumnMode::conditional(numeric),
             document,
             references,
         )?;

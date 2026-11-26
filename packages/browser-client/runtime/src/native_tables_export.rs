@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_workspace_engine::{ColumnRef, Document, FieldRef, FieldType, Value};
 
+use crate::interop_adapter::xlsx_cells::CachedErrors;
 use crate::interop_adapter::{
-    FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceCell, SourceColumn,
+    FidelityCategory, FidelityFinding, NativeTablesCheck, OutputProfile, SourceColumn,
     SourceLayout, SourceSheet, SourceWorkbook, csv_formula_text, export_csv_for_profile,
     export_xlsx_for_profile, native_tables_caseless_key, native_tables_compatibility,
     native_tables_trim_worksheet_name, native_tables_xlsx_number_findings, st_xstring,
@@ -18,6 +19,9 @@ use crate::{
     CollectionSpec, DesignerError, DesignerResponse, DesignerRuntime, DesignerWireReply,
     SpreadsheetExportProjection,
 };
+
+mod projected_rows;
+use projected_rows::{ProjectionFormat, project_rows};
 
 fn finding(
     category: FidelityCategory,
@@ -45,30 +49,35 @@ fn refused(code: &str, location: &str, message: impl Into<String>) -> DesignerEr
     DesignerError::NativeTablesExport { finding }
 }
 
-fn scalar_mapping(document: &Document, spec: &CollectionSpec) -> bool {
+fn scalar_mapping(document: &Document, spec: &CollectionSpec, format: ProjectionFormat) -> bool {
     !spec.columns.is_empty()
         && spec.columns.iter().all(|column| {
             matches!(
                 column.field_type,
                 FieldType::Text | FieldType::Number | FieldType::Boolean | FieldType::Date
-            )
+            ) || (format == ProjectionFormat::Xlsx && column.field_type == FieldType::Auto)
         })
         && spec.entities.iter().all(|id| {
             let entity = &document.entities[id];
             spec.columns
                 .iter()
-                .all(|column| match entity.fields.get(&column.id) {
-                    None => !column.required,
-                    Some(Value::Text(_)) => column.field_type == FieldType::Text,
-                    Some(Value::Number(_)) => column.field_type == FieldType::Number,
-                    Some(Value::Formula(_)) => {
-                        matches!(column.field_type, FieldType::Number | FieldType::Date)
-                    }
-                    Some(Value::Boolean(_)) => column.field_type == FieldType::Boolean,
-                    Some(Value::Date(_)) => column.field_type == FieldType::Date,
-                    Some(Value::Reference(_)) => false,
-                })
+                .all(|column| scalar_cell_mapping(entity.fields.get(&column.id), column))
         })
+}
+
+fn scalar_cell_mapping(value: Option<&Value>, column: &crate::ColumnSpec) -> bool {
+    if column.field_type == FieldType::Auto {
+        return !matches!(value, Some(Value::Reference(_)));
+    }
+    match value {
+        None => !column.required,
+        Some(Value::Text(_)) => column.field_type == FieldType::Text,
+        Some(Value::Number(_)) => column.field_type == FieldType::Number,
+        Some(Value::Formula(_)) => matches!(column.field_type, FieldType::Number | FieldType::Date),
+        Some(Value::Boolean(_)) => column.field_type == FieldType::Boolean,
+        Some(Value::Date(_)) => column.field_type == FieldType::Date,
+        Some(Value::Reference(_)) => false,
+    }
 }
 
 /// Disclose every constrained field whose rule has no native spreadsheet
@@ -168,14 +177,11 @@ fn write_formulas(
     for (spec, sheet) in specs.iter().zip(sheets.iter()) {
         let quoted = sheet.name.replace('\'', "''");
         let n = spec.entities.len();
+        let header_rows = usize::from(sheet.has_header);
         let mut count = 0;
         for (j, column) in spec.columns.iter().enumerate() {
             let letters = column_letters(j);
-            let range = if n == 0 {
-                String::new()
-            } else {
-                format!("'{quoted}'!${letters}$2:${letters}${}", n + 1)
-            };
+            let range = formula_column_range(&quoted, &letters, header_rows, n);
             columns.insert(
                 ColumnRef::new(spec.summary.id.clone(), column.id.clone()),
                 ExportColumn::new(range, Some(column.field_type.clone())),
@@ -187,7 +193,7 @@ fn write_formulas(
                     ExportCell::new(
                         quoted.clone(),
                         letters.clone(),
-                        i + 2,
+                        i + 1 + header_rows,
                         criterion_type(Some(&column.field_type), value),
                         column.field_type == FieldType::Date && !column.required,
                     )
@@ -260,43 +266,14 @@ fn write_formulas(
     }
 }
 
-/// Current calculated value for every formula cell in the selected collection.
-/// The resident snapshot is authoritative; no stored or cached result is read.
-fn computed_formula_values(
-    runtime: &DesignerRuntime,
-    revision: &str,
-    document: &Document,
-    spec: &CollectionSpec,
-) -> Result<BTreeMap<FieldRef, crate::CalculationProjection>, DesignerError> {
-    let targets = spec
-        .entities
-        .iter()
-        .flat_map(|entity| {
-            spec.columns.iter().filter_map(|column| {
-                match document.entities[entity].fields.get(&column.id) {
-                    Some(Value::Formula(_)) => {
-                        Some(FieldRef::new(entity.clone(), column.id.clone()))
-                    }
-                    _ => None,
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut values = BTreeMap::new();
-    for chunk in targets.chunks(crate::MAX_FIELD_QUERY_TARGETS) {
-        let fields = chunk.iter().map(crate::field_target).collect::<Vec<_>>();
-        let projection = runtime.query_fields(revision, &fields)?;
-        for field in projection.fields {
-            let target = FieldRef::new(field.target.entity, field.target.field);
-            values.insert(
-                target,
-                field
-                    .calculated
-                    .unwrap_or(crate::CalculationProjection::Unavailable),
-            );
-        }
+fn formula_column_range(sheet: &str, letters: &str, header_rows: usize, rows: usize) -> String {
+    if rows == 0 {
+        String::new()
+    } else {
+        let first = header_rows + 1;
+        let last = header_rows + rows;
+        format!("'{sheet}'!${letters}${first}:${letters}${last}")
     }
-    Ok(values)
 }
 
 fn safe_character(c: char) -> bool {
@@ -349,117 +326,16 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
     unreachable!("the finite export profile cannot exhaust name suffixes")
 }
 
-/// Project one stored scalar or one formula's current computed value. A
-/// formula without a current result refuses instead of writing a blank.
-fn projected_cell(
-    document: &Document,
-    spec: &CollectionSpec,
-    entity: &tachiko_workspace_engine::EntityId,
-    column: &crate::ColumnSpec,
-    computed: &BTreeMap<FieldRef, crate::CalculationProjection>,
-    presentation: &tachiko_workspace_engine::PresentationStore,
-    csv: bool,
-) -> Result<SourceCell, DesignerError> {
-    let stored = document.entities[entity].fields.get(&column.id);
-    if !matches!(stored, Some(Value::Formula(_))) {
-        return crate::interop_document::export_scalar(stored).map(|value| {
-            let style = if csv {
-                crate::interop_adapter::CellStyle::default()
-            } else {
-                let schema = &document.schemas[spec.summary.id.as_str()];
-                crate::interop_date_format::cell_style(
-                    presentation,
-                    &schema.id,
-                    &schema.fields[&column.id],
-                    entity,
-                    &value,
-                    crate::interop_adapter::CellStyle::default(),
-                )
-            };
-            SourceCell {
-                value,
-                style,
-                ..SourceCell::default()
-            }
-        });
-    }
-    let target = FieldRef::new(entity.clone(), column.id.clone());
-    let location = format!(
-        "collection {}/field {}/row {entity}",
-        spec.summary.id, column.id
-    );
-    let value = match computed.get(&target) {
-        Some(crate::CalculationProjection::Value {
-            result: Some(crate::StoredValueProjection::Date { value }),
-            ..
-        }) => crate::interop_adapter::SourceValue::Date {
-            value: value.to_string(),
-        },
-        Some(crate::CalculationProjection::Value {
-            value,
-            result: None | Some(crate::StoredValueProjection::Number { .. }),
-        }) => crate::interop_adapter::SourceValue::Number { value: *value },
-        Some(crate::CalculationProjection::Value {
-            result: Some(crate::StoredValueProjection::Text { value }),
-            ..
-        }) => crate::interop_adapter::SourceValue::Text {
-            value: value.clone(),
-        },
-        Some(crate::CalculationProjection::Value {
-            result: Some(crate::StoredValueProjection::Boolean { value }),
-            ..
-        }) => crate::interop_adapter::SourceValue::Boolean { value: *value },
-        Some(crate::CalculationProjection::Value {
-            result: Some(crate::StoredValueProjection::Reference { .. }),
-            ..
-        }) => unreachable!("a formula cannot calculate a Reference"),
-        Some(crate::CalculationProjection::Failure { code, message }) => {
-            return Err(refused(
-                "native_tables_formula_value_unavailable",
-                &location,
-                format!(
-                    "Formula cell has no current result ({code}: {message}); export refuses rather than writing a blank or a stale value."
-                ),
-            ));
-        }
-        Some(crate::CalculationProjection::Unavailable) | None => {
-            return Err(refused(
-                "native_tables_formula_value_unavailable",
-                &location,
-                "Formula cell has no current result; export refuses rather than writing a blank or a stale value.",
-            ));
-        }
-    };
-    let style = if csv {
-        crate::interop_adapter::CellStyle::default()
-    } else {
-        let schema = &document.schemas[spec.summary.id.as_str()];
-        crate::interop_date_format::cell_style(
-            presentation,
-            &schema.id,
-            &schema.fields[&column.id],
-            entity,
-            &value,
-            crate::interop_adapter::CellStyle::default(),
-        )
-    };
-    Ok(SourceCell {
-        value,
-        style,
-        ..SourceCell::default()
-    })
-}
-
 #[allow(clippy::too_many_lines)] // One sheet: names, columns with stored widths, and styled rows.
 fn project_sheet(
     runtime: &DesignerRuntime,
-    revision: &str,
     document: &Document,
     spec: &CollectionSpec,
-    csv: bool,
+    format: ProjectionFormat,
     names: &mut BTreeSet<String>,
     ledger: &mut Vec<FidelityFinding>,
-) -> Result<SourceSheet, DesignerError> {
+) -> Result<(SourceSheet, CachedErrors), DesignerError> {
+    let csv = format == ProjectionFormat::Csv;
     let name = if csv {
         mapped_name(&spec.summary.display_name, true, names)
     } else {
@@ -552,34 +428,17 @@ fn project_sheet(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let computed = computed_formula_values(runtime, revision, document, spec)?;
-    let rows = spec
-        .entities
-        .iter()
-        .map(|id| {
-            spec.columns
-                .iter()
-                .map(|column| {
-                    projected_cell(
-                        document,
-                        spec,
-                        id,
-                        column,
-                        &computed,
-                        &runtime.presentation,
-                        csv,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(SourceSheet {
+    let has_header =
+        format != ProjectionFormat::Xlsx || !document.schemas[spec.summary.id.as_str()].headerless;
+    let (rows, errors) = project_rows(runtime, document, spec, format, has_header)?;
+    let sheet = SourceSheet {
         name,
-        has_header: true,
+        has_header,
         columns,
         rows,
         layout: SourceLayout::default(),
-    })
+    };
+    Ok((sheet, errors))
 }
 
 impl DesignerRuntime {
@@ -595,7 +454,8 @@ impl DesignerRuntime {
         expected_revision: &str,
         collection: &str,
     ) -> Result<SourceWorkbook, DesignerError> {
-        self.native_tables_workbook(expected_revision, collection, false)
+        self.native_tables_workbook(expected_revision, collection, ProjectionFormat::Workbook)
+            .map(|(workbook, _)| workbook)
     }
 
     /// Export only the selected collection, including absent optional scalars.
@@ -608,7 +468,8 @@ impl DesignerRuntime {
         expected_revision: &str,
         collection: &str,
     ) -> Result<SourceWorkbook, DesignerError> {
-        self.native_tables_workbook(expected_revision, collection, true)
+        self.native_tables_workbook(expected_revision, collection, ProjectionFormat::Csv)
+            .map(|(workbook, _)| workbook)
     }
 
     #[allow(clippy::too_many_lines)] // One ordered projection, including working-size preflight.
@@ -616,9 +477,10 @@ impl DesignerRuntime {
         &self,
         expected_revision: &str,
         collection: &str,
-        csv: bool,
-    ) -> Result<SourceWorkbook, DesignerError> {
+        format: ProjectionFormat,
+    ) -> Result<(SourceWorkbook, Vec<CachedErrors>), DesignerError> {
         self.check_revision(expected_revision)?;
+        let csv = format == ProjectionFormat::Csv;
         let selected = self.collection_spec(collection).map_err(|_| {
             refused(
                 "native_tables_unknown_collection",
@@ -691,6 +553,7 @@ impl DesignerRuntime {
         let mut ledger = vec![finding(FidelityCategory::NativeEquivalent, "native_tables_outbound_profile", "workbook",
             if working { "Native scalar output uses the working-size geometry, with 8 MiB encoded and 24 MiB expanded XLSX bounds." } else { "Native scalar output: at most 32 collections, 32 columns, 128 rows per collection, 1,024 total rows, 8 MiB encoded bytes and 24 MiB expanded XLSX. The shared incoming geometry is 32 sheets, 32 columns, 128 rows per sheet and 1,024 total rows, with separate 2 MiB source/8 MiB expanded bounds; its restricted Text-capacity exception is unchanged. Larger output is not promised reimportable." }.into())];
         let mut sheets = Vec::new();
+        let mut errors = Vec::new();
         let mut exported = Vec::new();
         let mut names = BTreeSet::new();
         for collection in &self.collections {
@@ -701,7 +564,7 @@ impl DesignerRuntime {
                     format!("CSV excludes collection {:?} ({key}); only the requested collection is exported.", spec.summary.display_name)));
                 continue;
             }
-            if !scalar_mapping(document, spec) {
+            if !scalar_mapping(document, spec, format) {
                 return Err(refused(
                     "native_tables_unmapped_collection",
                     &spec.summary.id,
@@ -713,15 +576,10 @@ impl DesignerRuntime {
             collection_findings(document, spec, &mut ledger, csv);
             // Canonical specs are Rust-derived; the client supplies no names,
             // identity mapping, row order or values.
-            sheets.push(project_sheet(
-                self,
-                expected_revision,
-                document,
-                spec,
-                csv,
-                &mut names,
-                &mut ledger,
-            )?);
+            let (sheet, cached) =
+                project_sheet(self, document, spec, format, &mut names, &mut ledger)?;
+            sheets.push(sheet);
+            errors.push(cached);
             exported.push(spec);
         }
         if !csv {
@@ -790,7 +648,7 @@ impl DesignerRuntime {
                 error.to_string(),
             )
         })?;
-        Ok(workbook)
+        Ok((workbook, errors))
     }
 }
 
@@ -801,7 +659,12 @@ pub(crate) fn encode_native_tables_spreadsheet(
     collection: &str,
     csv: bool,
 ) -> Result<(DesignerResponse, Vec<u8>), DesignerError> {
-    let workbook = runtime.native_tables_workbook(revision, collection, csv)?;
+    let format = if csv {
+        ProjectionFormat::Csv
+    } else {
+        ProjectionFormat::Xlsx
+    };
+    let (workbook, errors) = runtime.native_tables_workbook(revision, collection, format)?;
     let profile = if runtime.profile == crate::capacity::SessionProfile::WorkingSize {
         OutputProfile::WorkingSize
     } else {
@@ -810,7 +673,7 @@ pub(crate) fn encode_native_tables_spreadsheet(
     let bytes = if csv {
         export_csv_for_profile(&workbook.sheets[0], profile)
     } else {
-        export_xlsx_for_profile(&workbook, profile)
+        export_xlsx_for_profile((&workbook, errors.as_slice()), profile)
     }
     .map_err(|error| {
         if let (

@@ -1103,6 +1103,87 @@ fn translate_a1_lookup_spellings_share_one_node() {
 }
 
 #[test]
+fn auto_lookup_miss_publishes_and_propagates_after_reopen() {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    for id in ["qty", "price", "total"] {
+        let field = schema.fields.get_mut(id).unwrap();
+        field.field_type = FieldType::Auto;
+        field.required = false;
+    }
+    document.entities.get_mut("r3").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(tachiko_workspace_engine::Expression::Reference(
+            tachiko_workspace_engine::FieldRef::new("r2", "total"),
+        )),
+    );
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let translated = call(&mut runtime, &request("VLOOKUP(999,B2:C4,2,FALSE)"));
+    assert_eq!(translated["status"], "ok", "{translated}");
+    let source = &translated["response"]["payload"]["source"];
+    let updated = call(
+        &mut runtime,
+        &json!({
+            "type": "formula_update", "expected_revision": "resident/0",
+            "target": {"entity": "r2", "field": "total"}, "source": source,
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    let revision = "resident/1";
+    assert_eq!(
+        updated["response"]["payload"]["resulting_revision"],
+        revision
+    );
+    let actual = lookup_results(&mut runtime, revision);
+    for field in actual.as_array().unwrap() {
+        assert!(field["formula"].is_object(), "{field}");
+        assert_eq!(
+            field["calculated"],
+            json!({
+                "status": "failure", "code": "lookup_missing_key", "message": "#N/A"
+            })
+        );
+    }
+    let saved = runtime
+        .as_ref()
+        .unwrap()
+        .export_project_v3(revision)
+        .unwrap();
+    let mut reopened = None;
+    tachiko_designer_runtime::open_project(
+        &mut reopened,
+        &saved.bytes,
+        "00000000-0000-4000-8000-000000000980",
+    )
+    .unwrap();
+    let reopened_revision = reopened.as_ref().unwrap().current_revision().to_owned();
+    assert_eq!(lookup_results(&mut reopened, &reopened_revision), actual);
+
+    let undone = call(
+        &mut runtime,
+        &json!({"type": "undo", "expected_revision": revision}),
+    );
+    assert_eq!(undone["status"], "ok", "{undone}");
+    let after_undo = lookup_results(&mut runtime, "resident/2");
+    assert_eq!(after_undo[0]["stored"]["value"].as_f64(), Some(2.0));
+    assert_eq!(after_undo[1]["calculated"]["value"].as_f64(), Some(2.0));
+}
+
+fn lookup_results(runtime: &mut Option<DesignerRuntime>, revision: &str) -> Json {
+    let result = call(
+        runtime,
+        &json!({
+            "type": "query_fields", "expected_revision": revision,
+            "fields": [{"entity": "r2", "field": "total"}, {"entity": "r3", "field": "total"}],
+        }),
+    );
+    assert_eq!(result["status"], "ok", "{result}");
+    result["response"]["payload"]["fields"].clone()
+}
+
+#[test]
 fn translate_a1_lookup_refuses_other_shapes_and_partial_ranges() {
     let mut rt = Some(fixture());
     for text in [

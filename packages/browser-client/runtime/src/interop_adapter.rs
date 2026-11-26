@@ -2071,6 +2071,7 @@ pub(crate) fn import_csv_profile(
     Ok(finish_source_admission(workbook, working))
 }
 
+pub(crate) mod xlsx_cells;
 mod xml_tree;
 use xml_tree::{Xml, attach_xml, restore_xml_bindings};
 
@@ -6354,10 +6355,11 @@ pub fn export_xlsx(workbook: &SourceWorkbook) -> Result<Vec<u8>> {
 /// # Errors
 /// Rejects blocking findings, invalid output values/styles and bounded size limits.
 #[allow(clippy::too_many_lines, clippy::format_push_string)] // Bounded deterministic XML assembly; temporary strings stay within the tiny workbook profile.
-pub(crate) fn export_xlsx_for_profile(
-    workbook: &SourceWorkbook,
+pub(crate) fn export_xlsx_for_profile<'a>(
+    workbook: impl Into<xlsx_cells::XlsxProjection<'a>>,
     profile: OutputProfile,
 ) -> Result<Vec<u8>> {
+    let xlsx_cells::XlsxProjection { workbook, errors } = workbook.into();
     if profile == OutputProfile::NativeTables {
         validate_native_tables_xlsx(workbook).map_err(|finding| {
             InteropError::Invalid(format!(
@@ -6532,45 +6534,9 @@ pub(crate) fn export_xlsx_for_profile(
                     .map_err(|e| InteropError::Invalid(e.to_string()))?;
                     style_keys.iter().position(|x| x == &key).unwrap_or(0)
                 };
-                let formula = c
-                    .formula
-                    .as_ref()
-                    .map(|f| {
-                        format!(
-                            "<f>{}</f>",
-                            escape(&future_ooxml_formula(f.trim_start_matches('='), true))
-                        )
-                    })
-                    .unwrap_or_default();
-                let (kind, body) = if profile == OutputProfile::TextCapacity && r == 0 {
-                    ("s", format!("<v>{col}</v>"))
-                } else {
-                    match &c.value {
-                        SourceValue::Empty => ("n", formula.clone()),
-                        SourceValue::Text { value } if c.formula.is_some() => {
-                            ("str", format!("{formula}<v>{}</v>", escape_xstring(value)))
-                        }
-                        SourceValue::Text { value } => (
-                            "inlineStr",
-                            format!(
-                                "{formula}<is><t xml:space=\"preserve\">{}</t></is>",
-                                escape_xstring(value)
-                            ),
-                        ),
-                        SourceValue::Number { value }
-                            if profile == OutputProfile::NativeTables && *value == 0.0 =>
-                        {
-                            ("n", format!("{formula}<v>0</v>"))
-                        }
-                        SourceValue::Number { value } => ("n", format!("{formula}<v>{value}</v>")),
-                        SourceValue::Boolean { value } => {
-                            ("b", format!("{formula}<v>{}</v>", u8::from(*value)))
-                        }
-                        SourceValue::Date { value } => {
-                            ("d", format!("{formula}<v>{}</v>", escape(value)))
-                        }
-                    }
-                };
+                let header = (profile == OutputProfile::TextCapacity && r == 0).then_some(col);
+                let error = errors.get(index).and_then(|sheet| sheet.get(&(r, col)));
+                let (kind, body) = xlsx_cells::content(c, profile, header, error.copied());
                 xml.push_str(&format!(
                     "<c r=\"{address}\" s=\"{sid}\" t=\"{kind}\">{body}</c>"
                 ));

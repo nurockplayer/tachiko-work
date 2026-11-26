@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+mod lookup;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use tachiko_semantic_core::{
@@ -647,7 +649,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 if_missing,
             } => {
                 if let Some(entity) = self.lookup_row(key, key_column)? {
-                    self.reference(&FieldRef::new(entity, result_column.field.clone()))
+                    self.lookup_result_number(&FieldRef::new(entity, result_column.field.clone()))
                 } else if let Some(value) = if_missing {
                     self.number(value)
                 } else {
@@ -686,39 +688,6 @@ impl<V: ValueStore> Evaluation<'_, V> {
             }
             _ => Err(CalculationFailure::TypeMismatch),
         }
-    }
-
-    fn lookup_row(
-        &mut self,
-        key: &Expression,
-        column: &ColumnRef,
-    ) -> Result<Option<EntityId>, CalculationFailure> {
-        let key = match key {
-            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-                self.lookup_reference_key(reference)?
-            }
-            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-                self.lookup_reference_key(&FieldRef::new(self.owner.entity.clone(), field.clone()))?
-            }
-            expression => exact_key(CriterionCell::Number(self.number(expression)?.get())),
-        };
-        self.columns
-            .lookup_index(self.document, self.values, column);
-        Ok(self.columns.lookup_indexes[column].get(&key).cloned())
-    }
-
-    fn lookup_reference_key(
-        &self,
-        reference: &FieldRef,
-    ) -> Result<CriterionKey, CalculationFailure> {
-        if let Some(entity) = self.document.entities.get(&reference.entity) {
-            if let Some(cell) = self.criterion_cell(entity, &reference.field)? {
-                return Ok(exact_key(cell));
-            }
-        }
-        Err(CalculationFailure::FailedDependencies {
-            dependencies: BTreeSet::from([reference.clone()]),
-        })
     }
 
     fn conditional(
