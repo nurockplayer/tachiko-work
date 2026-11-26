@@ -349,7 +349,7 @@ fn assert_duplicate_order(current: &mut DesignerRuntime) {
     let before = current.query_table("rows").unwrap();
     let revision = current.current_revision().to_owned();
     current
-        .duplicate_collection(&revision, "rows", "Copy", &BTreeMap::new())
+        .duplicate_collection(&revision, "rows", "Copy", &BTreeMap::new(), None)
         .unwrap();
     let key = current
         .collection_specs

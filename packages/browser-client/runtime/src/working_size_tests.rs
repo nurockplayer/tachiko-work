@@ -974,7 +974,7 @@ fn every_command_succeeds_and_keeps_the_working_size_profile() {
         .unwrap();
     let current = revision(&runtime);
     runtime
-        .duplicate_collection(&current, "grid", "Copy", &BTreeMap::new())
+        .duplicate_collection(&current, "grid", "Copy", &BTreeMap::new(), None)
         .unwrap();
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
 

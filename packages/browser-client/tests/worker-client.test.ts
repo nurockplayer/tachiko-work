@@ -323,9 +323,10 @@ describe("duplicate collection column names", () => {
     ]);
   });
 
-  it("sends the copy's column names with the duplicate request", async () => {
+  it("sends column names and the optional destination with the duplicate request", async () => {
     const { WorkerDesignerClient } = await import("../src/runtime/worker-client.ts");
     let receive: ((event: MessageEvent) => void) | undefined;
+    const requests: unknown[] = [];
     const duplicated = { publication: { revision: "resident/2" }, collection: { id: "table_1", key: "table_1", headerless: false, data_start_row: 2, entity_count: 0 } };
     const worker = {
       addEventListener: (type: string, callback: (event: MessageEvent) => void) => {
@@ -333,18 +334,18 @@ describe("duplicate collection column names", () => {
       },
       postMessage: (request: { id: number; kind: string; request: Record<string, unknown> }) => {
         expect(request.kind).toBe("command");
-        expect(request.request).toEqual({
-          type: "duplicate_collection",
-          expected_revision: "resident/1",
-          collection: "items",
-          name: "Copy",
-          column_names: { column_1: "Amount" },
-        });
+        requests.push(request.request);
         receive?.({ data: { id: request.id, status: "ok", response: { type: "duplicated", payload: duplicated } } } as MessageEvent);
       },
     } as unknown as Worker;
     const client = new WorkerDesignerClient(() => worker);
     await expect(client.duplicateCollection("resident/1", "items", "Copy", { column_1: "Amount" })).resolves.toEqual(duplicated);
+    await expect(client.duplicateCollection("resident/1", "items", "Copy", { column_1: "Amount" }, 0)).resolves.toEqual(duplicated);
+    const copy = {expected_revision: "resident/1", collection: "items", name: "Copy", column_names: {column_1: "Amount"}};
+    expect(requests).toEqual([
+      {type: "duplicate_collection", ...copy},
+      {type: "duplicate_collection_at", ...copy, to_index: 0},
+    ]);
   });
 });
 

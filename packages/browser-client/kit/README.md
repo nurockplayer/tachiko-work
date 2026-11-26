@@ -170,6 +170,15 @@ portable `.ro` saves retain the order, as does XLSX export and reimport. For an
 imported workbook, keep the `publication.import_metadata` returned by the move,
 Undo, or Redo for subsequent save and export.
 
+Copy a worksheet to a specific position with
+`duplicateCollection(revision, collection, name, columnNames, toIndex)`.
+Pass `undefined` for `columnNames` to keep the source names. The zero-based
+index is the copy's position in the resulting order. Destinations past the end
+append the copy. Omitting the index preserves the existing placement behavior.
+One Undo removes the copy and restores worksheet order. V3 and portable `.ro`
+saves and XLSX round trips retain the order. For imported workbooks, use the
+copy's `publication.import_metadata` for subsequent save and export.
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

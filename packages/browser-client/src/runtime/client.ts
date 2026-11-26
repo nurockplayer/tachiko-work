@@ -75,7 +75,7 @@ export interface DesignerClient {
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;
-  duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection>;
+  duplicateCollection?(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>, toIndex?: number): Promise<DuplicateCollectionProjection>;
   moveCollection?(expectedRevision: string, collection: string, toIndex: number): Promise<PublicationProjection>;
   deleteTable?(expectedRevision: string, collection: string): Promise<PublicationProjection>;
   addTable?(expectedRevision: string, name: string, columns: NewTableColumnInput[]): Promise<DuplicateCollectionProjection>;
