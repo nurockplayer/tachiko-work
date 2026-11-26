@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     CalculatedValue, CalculationFailure, ColumnRef, CriterionCell, CriterionKey, EntityId,
     Evaluation, Expression, FieldRef, FieldType, Number, ValueStore, exact_key,
