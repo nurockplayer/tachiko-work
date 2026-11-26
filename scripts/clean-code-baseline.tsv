@@ -734,7 +734,6 @@ inline-test	packages/browser-client/runtime/src/interop_adapter.rs	ledger_cap_te
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]	988
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	xstring_tests[cfg(test)]	233
 inline-test	packages/browser-client/runtime/src/interop_date_format.rs	tests[cfg(test)]	24
-inline-test	packages/browser-client/runtime/src/interop_document.rs	a1_import_boundary_tests[cfg(test)]	17
 inline-test	packages/browser-client/runtime/src/interop_document.rs	extremum_tests[cfg(test)]	92
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_dependency_tests[cfg(test)]	315
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
