@@ -32,6 +32,8 @@ mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
 mod collection_order;
+mod column_presentation;
+use column_presentation::ColumnPresentation;
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -2631,7 +2633,7 @@ impl HistoryEntry {
     }
 }
 
-type ColumnPresentationFacts = (SchemaId, FieldId, Option<CellStyle>, Option<u32>);
+type ColumnPresentationFacts = ((SchemaId, FieldId), ColumnPresentation);
 
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug))]
@@ -6394,7 +6396,7 @@ impl DesignerRuntime {
         let width = table
             .and_then(|table| table.column_widths.get(&field))
             .copied();
-        Ok((schema, field, style, width))
+        Ok(((schema, field), ColumnPresentation { style, width }))
     }
 
     fn set_column_alignment(
@@ -6404,16 +6406,18 @@ impl DesignerRuntime {
         field: &str,
         alignment: Option<ColumnAlignment>,
     ) -> Result<PublicationProjection, DesignerError> {
-        let (schema, field, before, width) =
-            self.column_presentation(expected, collection, field)?;
-        let mut style = before.clone().unwrap_or_default();
+        let (column, before) = self.column_presentation(expected, collection, field)?;
+        let mut style = before.style.clone().unwrap_or_default();
         let alignment = alignment.map(Into::into);
         if style.alignment == alignment {
             return Err(PatchLifecycleError::NoChange.into());
         }
         style.alignment = alignment;
-        let after = (style != CellStyle::default()).then_some(style);
-        self.record_column_presentation(expected, schema, field, before, width, after, width)
+        let after = ColumnPresentation {
+            style: (style != CellStyle::default()).then_some(style),
+            width: before.width,
+        };
+        self.record_column_presentation(expected, column, before, after)
     }
 
     fn set_column_wrap(
@@ -6423,15 +6427,17 @@ impl DesignerRuntime {
         field: &str,
         wrap: Option<bool>,
     ) -> Result<PublicationProjection, DesignerError> {
-        let (schema, field, before, width) =
-            self.column_presentation(expected, collection, field)?;
-        let mut style = before.clone().unwrap_or_default();
+        let (column, before) = self.column_presentation(expected, collection, field)?;
+        let mut style = before.style.clone().unwrap_or_default();
         if style.wrap == wrap {
             return Err(PatchLifecycleError::NoChange.into());
         }
         style.wrap = wrap;
-        let after = (style != CellStyle::default()).then_some(style);
-        self.record_column_presentation(expected, schema, field, before, width, after, width)
+        let after = ColumnPresentation {
+            style: (style != CellStyle::default()).then_some(style),
+            width: before.width,
+        };
+        self.record_column_presentation(expected, column, before, after)
     }
 
     fn set_column_width(
@@ -6441,58 +6447,18 @@ impl DesignerRuntime {
         field: &str,
         width: Option<u32>,
     ) -> Result<PublicationProjection, DesignerError> {
-        let (schema, field, style, before) =
-            self.column_presentation(expected, collection, field)?;
+        let (column, before) = self.column_presentation(expected, collection, field)?;
         if width.is_some_and(|value| !(1..=65280).contains(&value)) {
             return Err(DesignerError::InvalidColumnWidth);
         }
-        if before == width {
+        if before.width == width {
             return Err(PatchLifecycleError::NoChange.into());
         }
-        self.record_column_presentation(
-            expected,
-            schema,
-            field,
-            style.clone(),
-            before,
-            style,
+        let after = ColumnPresentation {
+            style: before.style.clone(),
             width,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn record_column_presentation(
-        &mut self,
-        expected: &str,
-        schema: SchemaId,
-        field: FieldId,
-        before_style: Option<CellStyle>,
-        before_width: Option<u32>,
-        after_style: Option<CellStyle>,
-        after_width: Option<u32>,
-    ) -> Result<PublicationProjection, DesignerError> {
-        let publication = self.apply_column_presentation(
-            expected,
-            &schema,
-            &field,
-            after_style.clone(),
-            after_width,
-        )?;
-        self.record_history_entry(HistoryEntry::new(
-            HistoryAction::ColumnPresentation {
-                schema: schema.clone(),
-                field: field.clone(),
-                style: after_style,
-                width: after_width,
-            },
-            HistoryAction::ColumnPresentation {
-                schema,
-                field,
-                style: before_style,
-                width: before_width,
-            },
-        ));
-        Ok(publication)
+        };
+        self.record_column_presentation(expected, column, before, after)
     }
 
     fn apply_column_presentation(
