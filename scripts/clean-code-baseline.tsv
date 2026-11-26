@@ -108,7 +108,6 @@ args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_comma
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_distinct_values	6
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals	6
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_table_window	7
-args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::record_column_presentation	8
 args	packages/browser-client/runtime/src/lib.rs	budget_item	7
 args	packages/browser-client/runtime/src/lib.rs	build_duplicate_collection	6
 args	packages/browser-client/runtime/src/lib.rs	copy_collection_entities	7
@@ -692,7 +691,7 @@ file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13666
+file	packages/browser-client/runtime/src/lib.rs		13632
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1289
@@ -887,7 +886,6 @@ reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch al
 reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals allow(clippy::too_many_lines)	1
-reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::record_column_presentation allow(clippy::too_many_arguments)	1
 reason	packages/browser-client/runtime/src/lib.rs	ensure_static_profile allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/lib.rs	formula_failure_projection allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/lib.rs	is_default_text_order allow(clippy::trivially_copy_pass_by_ref)	1
