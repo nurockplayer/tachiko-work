@@ -204,7 +204,7 @@ fn range_number_format_survives_project_and_xlsx_round_trips() {
         assert_eq!(row.fields[0].display.as_deref(), Some(display));
         assert_eq!(row.styles[1].number_format.as_deref(), Some("0.0%"));
     }
-    assert!(table.rows[2].styles.is_empty());
+    assert_eq!(table.rows[2].styles, []);
     assert_eq!(table.rows[2].fields[0].display.as_deref(), Some("2"));
 }
 
