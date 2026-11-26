@@ -112,7 +112,7 @@ fn table(runtime: &mut DesignerRuntime) -> TableProjection {
         };
         if collection.is_none() {
             columns = window.columns;
-            collection = Some(window.collection);
+            collection = Some((window.collection, window.cell_styling));
         }
         let received = window.rows.len();
         rows.extend(window.rows);
@@ -121,11 +121,13 @@ fn table(runtime: &mut DesignerRuntime) -> TableProjection {
             break;
         }
     }
+    let (collection, cell_styling) = collection.expect("the first window carries the collection");
     TableProjection {
         revision: String::from("normalized"),
+        cell_styling,
         tracker_profile: None,
         native_table_profile: None,
-        collection: collection.expect("the first window carries the collection"),
+        collection,
         columns,
         rows,
         // Windows carry no totals yet; this assembly only compares rows.

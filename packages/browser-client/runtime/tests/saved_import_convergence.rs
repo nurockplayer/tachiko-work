@@ -7,11 +7,11 @@ use std::{
 };
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CapacityLimit, CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest,
-    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
-    StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
-    open_imported_project, open_project,
+    CapacityLimit, CellStylingCapability, CleanupOperation, CollectionSummary, ColumnProjection,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget,
+    ImportFieldType, ImportSelection, InteropMetadata, RowInitializer, RowProjection,
+    ScalarEditInput, ScalarKind, StoredValueProjection, TableProjection, import_workbook,
+    inspect_imported_project, open_imported_project, open_project,
 };
 use tachiko_storage::{CanonicalRoProjectV1, decode_roproj_v1, from_bytes};
 use tachiko_workspace_engine::{
@@ -465,6 +465,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         .collect::<Vec<_>>();
     TableProjection {
         revision: revision.to_owned(),
+        cell_styling: CellStylingCapability::Supported,
         tracker_profile: None,
         native_table_profile: Some(true),
         collection: CollectionSummary {
