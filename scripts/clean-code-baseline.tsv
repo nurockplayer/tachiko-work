@@ -721,7 +721,6 @@ inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
 inline-test	crates/storage/src/roproj/host.rs	tests[cfg(test)]	56
 inline-test	crates/storage/src/roproj/v1.rs	tests[cfg(test)]	10
 inline-test	crates/storage/src/roproj/v2.rs	tests[cfg(test)]	73
-inline-test	crates/storage/src/strict_json.rs	tests[cfg(test)]	118
 inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
 inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
