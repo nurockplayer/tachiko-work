@@ -110,7 +110,20 @@ fn has_reason(diagnostics: &Value, code: &str, path: &str) {
 
 #[test]
 fn overwrite_exports_current_edit_and_leaves_one_undo() {
-    let original = repack(std::convert::identity, &[]);
+    let original = repack(
+        |xml| {
+            let attributes = r#"r="A2" s="0" t="inlineStr""#;
+            assert!(xml.contains(attributes));
+            let xml = xml
+                .replace(attributes, r#"t="inlineStr" r="A2" s="0""#)
+                .replace(" xmlns=", " xmlns:m=")
+                .replace('<', "<m:")
+                .replace("<m:/", "</m:")
+                .replace("><", ">\n  <");
+            format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{xml}\n")
+        },
+        &[],
+    );
     let mut host = DesignerHost::new();
     let imported = open(&mut host, &original, FIRST, 1);
     let occurrence = ok(&host.observe_occurrence());
@@ -147,6 +160,22 @@ fn overwrite_exports_current_edit_and_leaves_one_undo() {
         import_xlsx(&exported.bytes.unwrap()).unwrap(),
         import_xlsx(&original).unwrap()
     );
+}
+
+#[test]
+fn overwrite_refuses_a_dropped_cell_attribute() {
+    let original = repack(
+        |xml| {
+            assert!(xml.contains(r#"<c r="A2" "#));
+            xml.replace(r#"<c r="A2" "#, r#"<c r="A2" ph="1" "#)
+        },
+        &[],
+    );
+    let mut host = DesignerHost::new();
+    open(&mut host, &original, FIRST, 1);
+    let expected = ok(&host.observe_occurrence());
+    let diagnostics = refusal(&overwrite(&mut host, &expected), "xlsx_overwrite_refused");
+    has_reason(&diagnostics, "xlsx_source_part_changed", SHEET);
 }
 
 #[test]

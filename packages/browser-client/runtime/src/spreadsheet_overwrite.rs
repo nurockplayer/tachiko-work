@@ -12,6 +12,8 @@ use crate::{
     SpreadsheetExportProjection,
 };
 
+mod xml_part;
+
 pub(super) type OverwriteProof = Result<Vec<String>, Vec<FidelityFinding>>;
 
 pub(super) fn remember(
@@ -37,7 +39,7 @@ fn prove(runtime: &DesignerRuntime, original: &[u8], ledger: &[FidelityFinding])
         .collect();
     // Compare the untouched semantic export. An import ledger cannot account
     // for content the reader never represented. ZIP compression and order
-    // are immaterial, but changes within a part require positive evidence.
+    // are immaterial. XML may differ in serialization without losing content.
     let result = encode(runtime, runtime.current_revision())
         .and_then(|(bytes, _)| compare_packages(original, &bytes, runtime.profile));
     match result {
@@ -81,7 +83,7 @@ fn difference(
     regenerated: &BTreeMap<String, Vec<u8>>,
 ) -> Option<FidelityFinding> {
     let copy = regenerated.get(path);
-    if copy.is_some_and(|copy| copy == bytes) {
+    if copy.is_some_and(|copy| xml_part::equivalent(path, bytes, copy)) {
         return None;
     }
     let missing = copy.is_none();
