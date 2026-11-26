@@ -254,9 +254,16 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened_window", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns, profile: "working_size"}));
   }
 
-  async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>): Promise<DuplicateCollectionProjection> {
+  async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>, toIndex?: number): Promise<DuplicateCollectionProjection> {
     const columns = columnNames === undefined ? {} : {column_names: columnNames};
-    return expectResponse("duplicated", await this.#command({type: "duplicate_collection", expected_revision: expectedRevision, collection, name, ...columns}));
+    const copy = {expected_revision: expectedRevision, collection, name, ...columns};
+    return expectResponse("duplicated", await this.#command(toIndex === undefined
+      ? {type: "duplicate_collection", ...copy}
+      : {type: "duplicate_collection_at", ...copy, to_index: toIndex}));
+  }
+
+  async moveCollection(expectedRevision: string, collection: string, toIndex: number): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "move_collection", expected_revision: expectedRevision, collection, to_index: toIndex});
   }
 
   async deleteTable(expectedRevision: string, collection: string): Promise<PublicationProjection> {

@@ -170,6 +170,7 @@ fn number_format_save_reopen_duplicate_and_remove() {
             &collection,
             "Copy",
             &std::collections::BTreeMap::new(),
+            None,
         )
         .unwrap();
     let copied = runtime

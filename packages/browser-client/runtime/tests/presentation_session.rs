@@ -159,6 +159,7 @@ fn styled_store(
         },
     );
     PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([
             (cell_style.clone(), bold_style()),
             (rule_style.clone(), fill_style()),

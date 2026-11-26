@@ -32,6 +32,7 @@ fn full_style() -> CellStyle {
 
 fn store() -> PresentationStore {
     PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([
             (StyleId::from(STYLE_FULL), full_style()),
             (

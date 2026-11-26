@@ -31,6 +31,7 @@ mod blank_workbook_tests;
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
+mod collection_order;
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -70,8 +71,8 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
     CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
-    ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1, decode_presentation, decode_roproj_v2,
-    decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
+    ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1, decode_roproj_v2, decode_roproj_v3,
+    encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -396,6 +397,11 @@ pub enum DesignerRequest {
         field: String,
         to_index: u32,
     },
+    MoveCollection {
+        expected_revision: String,
+        collection: String,
+        to_index: u32,
+    },
     SetColumnConstraint {
         expected_revision: String,
         collection: String,
@@ -434,6 +440,14 @@ pub enum DesignerRequest {
         /// Copy column names keyed by source field id. Empty keeps the source names.
         #[serde(default)]
         column_names: BTreeMap<String, String>,
+    },
+    DuplicateCollectionAt {
+        expected_revision: String,
+        collection: String,
+        name: String,
+        #[serde(default)]
+        column_names: BTreeMap<String, String>,
+        to_index: u32,
     },
     EditCells {
         expected_revision: String,
@@ -1658,8 +1672,19 @@ impl CalculationProjection {
     #[must_use]
     pub const fn number(&self) -> Option<f64> {
         match self {
-            Self::Value { value, .. } => Some(*value),
-            Self::Failure { .. } | Self::Unavailable => None,
+            Self::Value {
+                result: Some(StoredValueProjection::Number { value }),
+                ..
+            }
+            | Self::Value {
+                value,
+                result: None,
+            } => Some(*value),
+            Self::Value {
+                result: Some(_), ..
+            }
+            | Self::Failure { .. }
+            | Self::Unavailable => None,
         }
     }
 }
@@ -2614,6 +2639,10 @@ enum HistoryAction {
         styles: Vec<auto_input::CellDisplay>,
     },
     Commands(Vec<SemanticCommand>),
+    OrderedCommands {
+        commands: Vec<SemanticCommand>,
+        order: Vec<SchemaId>,
+    },
     TableCommands {
         commands: Vec<SemanticCommand>,
         default_collection: String,
@@ -2622,6 +2651,7 @@ enum HistoryAction {
         store: PresentationStore,
         bytes: usize,
     },
+    CollectionOrder(Vec<SchemaId>),
     ColumnPresentation {
         schema: SchemaId,
         field: FieldId,
@@ -2634,7 +2664,7 @@ enum HistoryAction {
     },
     FormulaInverseRestore {
         target: FieldTarget,
-        value: Number,
+        value: Value,
     },
 }
 
@@ -2652,6 +2682,13 @@ impl HistoryAction {
                         .sum::<usize>()
             }
             Self::Commands(commands) => commands.iter().map(SemanticCommand::approx_bytes).sum(),
+            Self::OrderedCommands { commands, order } => {
+                commands
+                    .iter()
+                    .map(SemanticCommand::approx_bytes)
+                    .sum::<usize>()
+                    + order.iter().map(|id| id.as_str().len()).sum::<usize>()
+            }
             Self::TableCommands {
                 commands,
                 default_collection,
@@ -2663,6 +2700,7 @@ impl HistoryAction {
                     + default_collection.len()
             }
             Self::CellPresentation { bytes, .. } => *bytes,
+            Self::CollectionOrder(order) => order.iter().map(|id| id.as_str().len()).sum(),
             Self::ColumnPresentation { schema, field, .. } => {
                 schema.as_str().len() + field.as_str().len() + 128
             }
@@ -2888,7 +2926,14 @@ fn view_value(
     }
     match &field.calculated_value {
         Some(FormulaCalculationOutcome::Value(number)) => Some(ViewValue::Number(number.get())),
-        Some(FormulaCalculationOutcome::Failure(_) | FormulaCalculationOutcome::Unavailable)
+        Some(FormulaCalculationOutcome::Date(date)) => Some(ViewValue::Date(*date)),
+        Some(FormulaCalculationOutcome::Text(text)) => Some(ViewValue::Text(text.clone())),
+        Some(FormulaCalculationOutcome::Boolean(value)) => Some(ViewValue::Boolean(*value)),
+        Some(
+            FormulaCalculationOutcome::CellFailure(_)
+            | FormulaCalculationOutcome::Failure(_)
+            | FormulaCalculationOutcome::Unavailable,
+        )
         | None => None,
     }
 }
@@ -3611,6 +3656,7 @@ impl DesignerRuntime {
             SessionProfile::Ordinary | SessionProfile::TextCapacity => 0,
         };
         self.presentation = presentation;
+        self.order_collections();
         Ok(())
     }
 
@@ -4207,6 +4253,13 @@ impl DesignerRuntime {
                 &field,
                 to_index,
             )?)),
+            DesignerRequest::MoveCollection {
+                expected_revision,
+                collection,
+                to_index,
+            } => self
+                .move_collection(&expected_revision, &collection, to_index)
+                .map(DesignerResponse::Published),
             DesignerRequest::SetColumnConstraint {
                 expected_revision,
                 collection,
@@ -4272,6 +4325,20 @@ impl DesignerRuntime {
                 &collection,
                 &name,
                 &column_names,
+                None,
+            )?)),
+            DesignerRequest::DuplicateCollectionAt {
+                expected_revision,
+                collection,
+                name,
+                column_names,
+                to_index,
+            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
+                &expected_revision,
+                &collection,
+                &name,
+                &column_names,
+                Some(to_index),
             )?)),
             DesignerRequest::EditCells {
                 expected_revision,
@@ -4716,8 +4783,11 @@ impl DesignerRuntime {
             if let Some(StoredValueProjection::Number { value }) = &mut field.stored {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
             }
-            if let Some(CalculationProjection::Value { value, .. }) = &mut field.calculated {
+            if let Some(CalculationProjection::Value { value, result }) = &mut field.calculated {
                 *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+                if let Some(StoredValueProjection::Number { value }) = result {
+                    *value = MAX_WIDTH_FINITE_JSON_NUMBER;
+                }
             }
         }
         ensure_projection_size(&post_edit_refresh).map_err(post_edit_refresh_failure)?;
@@ -4781,7 +4851,7 @@ impl DesignerRuntime {
                         .to_owned(),
             });
         }
-        if !self.presentation.is_empty() {
+        if !self.presentation.is_empty() || self.has_custom_collection_order() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message:
                     "presentation requires exportProjectV3, exportCanonicalTree or exportPortableRo"
@@ -4871,6 +4941,7 @@ impl DesignerRuntime {
         let snapshot = self.exact_snapshot(expected_revision)?;
         let bytes = if self.opened_from_v3
             || !self.presentation.is_empty()
+            || self.has_custom_collection_order()
             || document_requires_v2_evidence(snapshot.document())
         {
             ensure_export_document_profile(snapshot.document(), self.profile)?;
@@ -4939,7 +5010,14 @@ impl DesignerRuntime {
         &self,
         document: &Document,
     ) -> Result<CanonicalRoProjectV3, DesignerError> {
-        let presentation = prune_presentation(&self.presentation, document);
+        let mut presentation = prune_presentation(&self.presentation, document);
+        if self.imported.is_some() && !presentation.collection_order.is_empty() {
+            presentation.collection_order = self
+                .collections
+                .iter()
+                .map(|collection| SchemaId::from(collection.id.clone()))
+                .collect();
+        }
         Ok(encode_roproj_v3_with_presentation(document, &presentation)?)
     }
 
@@ -6017,26 +6095,34 @@ impl DesignerRuntime {
                     .cloned()
                     .unwrap_or_else(|| "Formula source unavailable".to_owned()),
             });
+        let auto = self
+            .session
+            .document()
+            .entities
+            .get(&field.field.entity)
+            .and_then(|entity| self.session.document().schemas.get(&entity.schema))
+            .and_then(|schema| schema.fields.get(&field.field.field))
+            .is_some_and(|definition| definition.field_type == FieldType::Auto);
+        let mut calculated = field.calculated_value.as_ref().map(calculation_projection);
+        if auto {
+            if let Some(CalculationProjection::Value { value, result }) = &mut calculated {
+                if result.is_none() {
+                    *result = Some(StoredValueProjection::Number { value: *value });
+                }
+            }
+        }
         FieldProjection {
             blank: false,
             target: field_target(&field.field),
             address: field.presentation_address.to_string(),
-            editable_scalar: if self
-                .session
-                .document()
-                .entities
-                .get(&field.field.entity)
-                .and_then(|entity| self.session.document().schemas.get(&entity.schema))
-                .and_then(|schema| schema.fields.get(&field.field.field))
-                .is_some_and(|definition| definition.field_type == FieldType::Auto)
-            {
+            editable_scalar: if auto {
                 Some(ScalarKind::Auto)
             } else {
                 scalar_kind(field.stored_value.as_ref())
             },
             stored,
             formula,
-            calculated: field.calculated_value.as_ref().map(calculation_projection),
+            calculated,
             diagnostics: field
                 .diagnostics
                 .iter()
@@ -7288,13 +7374,13 @@ impl DesignerRuntime {
     /// identity graph. Formula references are remapped only when both their
     /// entity and field belong to the copied collection; external references
     /// remain bound to their original stable targets.
-    #[allow(clippy::too_many_lines)] // Keep the bounded identity mapping atomic.
     fn duplicate_collection(
         &mut self,
         expected_revision: &str,
         collection: &str,
         name: &str,
         column_names: &BTreeMap<String, String>,
+        to_index: Option<u32>,
     ) -> Result<DuplicateCollectionProjection, DesignerError> {
         self.check_revision(expected_revision)?;
         let snapshot = self.session.export_snapshot();
@@ -7310,31 +7396,7 @@ impl DesignerRuntime {
             document.schemas.len().saturating_add(1),
             None,
         )?;
-        let mut failures = Vec::new();
-        let name = name_admission::check_name(
-            name,
-            Some(&name_admission::NameInput::Table),
-            &[],
-            &mut failures,
-        );
-        if let Some(name) = name {
-            let subjects = document
-                .schemas
-                .values()
-                .filter(|schema| schema.effective_name() == name)
-                .map(|schema| tachiko_workspace_engine::SemanticSubject::Schema(schema.id.clone()))
-                .collect::<Vec<_>>();
-            if !subjects.is_empty() {
-                failures.push(NameFailure {
-                    reason: "duplicate_display_name".into(),
-                    inputs: vec![name_admission::NameInput::Table],
-                    subjects,
-                    effective_name: Some(name.to_owned()),
-                });
-            }
-        }
-        name_admission::refuse(failures)?;
-        let name = name.expect("table name admitted");
+        let name = admit_duplicate_name(document, name)?;
         let occupied = document
             .schemas
             .values()
@@ -7350,143 +7412,56 @@ impl DesignerRuntime {
                 .saturating_add(source_spec.entities.len()),
             None,
         )?;
-        let source_schema = document
-            .schemas
-            .get(&SchemaId::from(source_spec.summary.id.clone()))
-            .ok_or_else(|| DesignerError::MissingCollection {
-                collection: collection.to_owned(),
-            })?;
         let mut ids = NewTableIds::with_serial(
             &format!("{}/duplicate", self.row_namespace),
             self.duplicate_serial,
         );
-        let schema_id = loop {
-            let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
-            if !document.schemas.contains_key(&id) {
-                break id;
-            }
-        };
-        let mut field_map = BTreeMap::<FieldId, FieldId>::new();
-        let mut fields = BTreeMap::new();
-        for field in source_schema.fields.values() {
-            let field_id = loop {
-                let id = FieldId::from(ids.generate(SemanticIdKind::Field));
-                if !document
-                    .schemas
-                    .values()
-                    .any(|schema| schema.fields.contains_key(&id))
-                    && !fields.contains_key(&id)
-                {
-                    break id;
-                }
-            };
-            field_map.insert(field.id.clone(), field_id.clone());
-            let mut definition = field.clone();
-            definition.id = field_id.clone();
-            if let FieldType::Reference { schema } = &mut definition.field_type {
-                if schema == &source_schema.id {
-                    *schema = schema_id.clone();
-                }
-            }
-            fields.insert(field_id, definition);
-        }
-        let schema_map = BTreeMap::from([(source_schema.id.clone(), schema_id.clone())]);
-        let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
-        for source_id in &source_spec.entities {
-            let target_id = loop {
-                let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
-                if !document.entities.contains_key(&id)
-                    && !entity_map.values().any(|used| used == &id)
-                {
-                    break id;
-                }
-            };
-            entity_map.insert(source_id.clone(), target_id);
-        }
-        let ordered_ids = entity_map.values().cloned().collect::<BTreeSet<_>>();
-        entity_map = source_spec
-            .entities
-            .iter()
-            .cloned()
-            .zip(ordered_ids)
-            .collect();
-        let mut schema = Schema {
-            headerless: source_schema.headerless,
-            // The copy keeps the source's projected column order.
-            field_order: Some(
-                source_spec
-                    .columns
-                    .iter()
-                    .filter_map(|column| field_map.get(&column.id).cloned())
-                    .collect(),
-            ),
-            id: schema_id.clone(),
-            key: SchemaKey::from(target_key.clone()),
-            display_name: Some(name.to_owned()),
-            fields,
-        };
-        for (field, name) in copied_column_names(&schema, column_names, &field_map)? {
-            if let Some(definition) = schema.fields.get_mut(&field) {
-                definition.display_name = Some(name);
-            }
-        }
-        schema.normalize_field_order();
-        let mut entities = Vec::with_capacity(source_spec.entities.len());
-        for source_id in &source_spec.entities {
-            let source = document.entities.get(source_id).ok_or_else(|| {
-                DesignerError::MissingCollection {
-                    collection: collection.to_owned(),
-                }
-            })?;
-            let target_id = entity_map
-                .get(source_id)
-                .ok_or_else(|| table_error("entity mapping is incomplete"))?;
-            let entity_key = format!("{}-{}", source.key, target_key);
-            if entity_key.len() > MAX_PROFILE_STRING_BYTES {
-                return Err(table_error("copied entity key exceeds the bounded profile"));
-            }
-            let entity_key = native_table_key(&entity_key, "copied entity key")?;
-            let mut copied = Entity {
-                rank: source.rank.clone(),
-                id: target_id.clone(),
-                key: EntityKey::from(entity_key),
-                schema: schema_id.clone(),
-                fields: BTreeMap::new(),
-            };
-            for (source_field, value) in &source.fields {
-                let target_field = field_map
-                    .get(source_field)
-                    .ok_or_else(|| table_error("field mapping is incomplete"))?;
-                let value = remap_duplicate_value(value, &entity_map, &field_map, &schema_map)?;
-                copied.fields.insert(target_field.clone(), value);
-            }
-            entities.push(copied);
-        }
+        let (schema, entities) = build_duplicate_collection(
+            document,
+            source_spec,
+            &target_key,
+            name,
+            column_names,
+            &mut ids,
+        )?;
+        let presentation = to_index
+            .map(|index| self.presentation_with_inserted_collection(schema.id.clone(), index));
+        let inverse = vec![SemanticCommand::RemoveCollection {
+            schema: schema.id.clone(),
+            entities: entities.iter().map(|entity| entity.id.clone()).collect(),
+        }];
         let forward = vec![SemanticCommand::AppendCollection { schema, entities }];
-        let inverse = match &forward[0] {
-            SemanticCommand::AppendCollection { schema, entities } => {
-                vec![SemanticCommand::RemoveCollection {
-                    schema: schema.id.clone(),
-                    entities: entities.iter().map(|entity| entity.id.clone()).collect(),
-                }]
-            }
-            _ => unreachable!("duplicate collection always creates an append command"),
-        };
+        let order_before = presentation
+            .as_ref()
+            .map(|_| self.presentation.collection_order.clone());
         let imported_before = self.imported.clone();
         let publication = self.publish_commands_with_imported(
             expected_revision,
             &forward,
             None,
             Some(&target_key),
-            None,
+            presentation,
         )?;
         self.duplicate_serial = ids.serial;
-        self.record_history_entry(
-            HistoryEntry::new(
+        let (forward, inverse) = match order_before {
+            Some(order) => (
+                HistoryAction::OrderedCommands {
+                    commands: forward,
+                    order: self.presentation.collection_order.clone(),
+                },
+                HistoryAction::OrderedCommands {
+                    commands: inverse,
+                    order,
+                },
+            ),
+            None => (
                 HistoryAction::Commands(forward),
                 HistoryAction::Commands(inverse),
-            )
-            .with_imported(imported_before, self.imported.as_ref()),
+            ),
+        };
+        self.record_history_entry(
+            HistoryEntry::new(forward, inverse)
+                .with_imported(imported_before, self.imported.as_ref()),
         );
         let collection = self
             .collection_specs
@@ -7512,6 +7487,7 @@ impl DesignerRuntime {
         source: &str,
     ) -> Result<PublicationProjection, DesignerError> {
         let mut inverse = None;
+        let source = source.strip_prefix('=').unwrap_or(source);
         let (publication, forward) =
             self.publish_formula_update(expected_revision, target, source, Some(&mut inverse))?;
         let inverse =
@@ -7541,10 +7517,12 @@ impl DesignerRuntime {
             return Ok(HistoryAction::Commands(vec![value_command(&field, None)]));
         };
         match previous {
-            Value::Number(value) => Ok(HistoryAction::FormulaInverseRestore {
-                target: target.clone(),
-                value: *value,
-            }),
+            value @ (Value::Number(_) | Value::Date(_) | Value::Text(_) | Value::Boolean(_)) => {
+                Ok(HistoryAction::FormulaInverseRestore {
+                    target: target.clone(),
+                    value: value.clone(),
+                })
+            }
             Value::Formula(_) => Ok(HistoryAction::FormulaUpdate {
                 target: target.clone(),
                 source: self
@@ -7553,8 +7531,8 @@ impl DesignerRuntime {
                     .cloned()
                     .ok_or_else(|| tracker_error("previous formula source is unavailable"))?,
             }),
-            _ => Err(tracker_error(
-                "formula authoring requires an admitted numeric prior value",
+            Value::Reference(_) => Err(tracker_error(
+                "formula authoring requires a scalar prior value",
             )),
         }
     }
@@ -7568,17 +7546,6 @@ impl DesignerRuntime {
         source: &str,
         inverse: Option<&mut Option<HistoryAction>>,
     ) -> Result<(PublicationProjection, String), DesignerError> {
-        let snapshot = self.session.export_snapshot();
-        if snapshot
-            .document()
-            .entities
-            .get(&target.as_field_ref().entity)
-            .and_then(|entity| snapshot.document().schemas.get(&entity.schema))
-            .and_then(|schema| schema.fields.get(&target.as_field_ref().field))
-            .is_some_and(|field| field.field_type == FieldType::Auto)
-        {
-            return Err(table_error("Auto formulas are unsupported"));
-        }
         self.publish_formula_update_unmapped(expected_revision, target, source, inverse)
             .map_err(|error| match &error {
                 DesignerError::Lifecycle(PatchLifecycleError::ValidationFailed { report }) => {
@@ -7725,7 +7692,7 @@ impl DesignerRuntime {
         &mut self,
         expected_revision: &str,
         target: &FieldTarget,
-        value: Number,
+        value: Value,
     ) -> Result<PublicationProjection, DesignerError> {
         let snapshot = self.session.export_snapshot();
         let mut lifecycle = designer_lifecycle(
@@ -7742,9 +7709,13 @@ impl DesignerRuntime {
                 proposal_id.clone(),
                 SemanticRevision::from(expected_revision.to_owned()),
                 target.as_field_ref(),
-                value,
+                match &value {
+                    Value::Number(number) => *number,
+                    _ => Number::new(0.0).expect("finite zero"),
+                },
                 self.principal.clone(),
-            ),
+            )
+            .with_restored_value(value.clone()),
             self.clock.tick(),
         )?;
         designer_preview(
@@ -7762,7 +7733,7 @@ impl DesignerRuntime {
             .entities
             .get_mut(&field.entity)
             .ok_or_else(|| tracker_error("formula inverse target is unavailable"))?;
-        entity.fields.insert(field.field, Value::Number(value));
+        entity.fields.insert(field.field, value);
         let mut working_admission = None;
         match self.profile {
             // Working size never rebuilds the occurrence; it re-proves only its
@@ -7859,11 +7830,11 @@ impl DesignerRuntime {
         let mut reference_probe = expression.clone();
         map_copy_references(
             &mut reference_probe,
-            &mut |reference, _| {
+            &mut |reference, _, _| {
                 references.insert(reference.clone());
                 Ok(())
             },
-            &mut |_| Ok(()),
+            &mut |_, _| Ok(()),
         )?;
         if fixed.len() != fixed_references.len() || !fixed.is_subset(&references) {
             return Err(tracker_error(
@@ -7886,14 +7857,18 @@ impl DesignerRuntime {
             let mut copied = expression.clone();
             map_copy_references(
                 &mut copied,
-                &mut |reference, numeric| {
+                &mut |reference, numeric, anchored| {
                     if fixed.contains(reference) || !rows.contains_key(&reference.entity) {
                         return require_copy_reference(document, reference, numeric);
                     }
                     let (reference_row, reference_column) = copy_position(spec, &rows, reference)?;
                     let shifted_row = copy_index(reference_row, source_row, row, relative_rows)?;
-                    let shifted_column =
-                        copy_index(reference_column, source_column, column, relative_columns)?;
+                    let shifted_column = copy_index(
+                        reference_column,
+                        source_column,
+                        column,
+                        relative_columns && !anchored,
+                    )?;
                     *reference = FieldRef::new(
                         spec.entities.get(shifted_row).cloned().ok_or_else(|| {
                             tracker_error("relative reference row is outside the collection")
@@ -7907,8 +7882,8 @@ impl DesignerRuntime {
                     );
                     require_copy_reference(document, reference, numeric)
                 },
-                &mut |field| {
-                    if relative_columns {
+                &mut |field, anchored| {
+                    if relative_columns && !anchored {
                         let reference = FieldRef::new(source.entity.clone(), field.clone());
                         let (_, reference_column) = copy_position(spec, &rows, &reference)?;
                         let shifted = copy_index(reference_column, source_column, column, true)
@@ -8003,12 +7978,6 @@ impl DesignerRuntime {
         self.check_revision(expected_revision)?;
         let keep_formula_sources = self.commands_preserve_formula_sources(commands);
         let document_scope = self.session.document_scope().clone();
-        if commands
-            .iter()
-            .any(|command| matches!(command, SemanticCommand::FormulaUpdate(_)))
-        {
-            return Err(tracker_error("unsupported history command"));
-        }
         let body = SemanticPatchBody::atomic_batch(commands.to_vec())?;
         let prepared = self
             .lifecycle
@@ -8021,11 +7990,23 @@ impl DesignerRuntime {
             auto_input::admit_presentation(input_presentation.as_ref(), candidate, self.profile)?;
         let imported = match restored_import {
             Some(state) => Some(state.clone()),
-            None => self.plan_imported_state(candidate, commands)?,
+            None => self.plan_imported_state(
+                candidate,
+                commands,
+                input_presentation
+                    .as_ref()
+                    .map(|store| store.collection_order.as_slice()),
+            )?,
         };
         if let Some(imported) = imported.as_ref().filter(|_| restored_import.is_none()) {
             self.preflight_imported_reply(&imported.metadata, |candidate| {
-                let publication = candidate.publish_commands("resident/0", commands)?;
+                let publication = candidate.publish_commands_with_imported(
+                    "resident/0",
+                    commands,
+                    None,
+                    None,
+                    input_presentation.clone(),
+                )?;
                 Ok(match added_collection {
                     Some(key) => DesignerResponse::Duplicated(DuplicateCollectionProjection {
                         publication,
@@ -8325,7 +8306,7 @@ impl DesignerRuntime {
                         .values()
                         .map(|spec| spec.summary.clone())
                         .collect();
-                    self.order_imported_collections();
+                    self.order_collections();
                 }
                 None => self.refresh_structure(),
             }
@@ -8401,7 +8382,7 @@ impl DesignerRuntime {
             .values()
             .map(|spec| spec.summary.clone())
             .collect();
-        self.order_imported_collections();
+        self.order_collections();
     }
 
     fn max_table_rows(&self) -> usize {
@@ -8865,6 +8846,17 @@ impl DesignerRuntime {
             if present && old.is_none() {
                 return Err(DesignerError::UnsupportedScalarEdit { field });
             }
+            if column.field_type == FieldType::Auto {
+                if let Some(source) = auto_input::formula_source(&edit.input) {
+                    forward.push(SemanticCommand::bind_formula_update(
+                        self.session.document(),
+                        field.clone(),
+                        source,
+                    )?);
+                    inverse.push(auto_input::inverse_formula(&field, old));
+                    continue;
+                }
+            }
             auto_input::collect_display(&column.field_type, &field, &edit.input, &mut displays);
             let value = cell_edit_value(column, old, &edit.input, &field)?;
             if value.as_ref() != old {
@@ -8919,6 +8911,17 @@ impl DesignerRuntime {
             HistoryAction::Commands(commands) => {
                 self.publish_commands_with_imported(expected, commands, imported, None, None)
             }
+            HistoryAction::OrderedCommands { commands, order } => {
+                let mut presentation = self.presentation.clone();
+                presentation.collection_order.clone_from(order);
+                self.publish_commands_with_imported(
+                    expected,
+                    commands,
+                    imported,
+                    None,
+                    Some(presentation),
+                )
+            }
             HistoryAction::TableCommands {
                 commands,
                 default_collection,
@@ -8931,6 +8934,9 @@ impl DesignerRuntime {
             HistoryAction::CellPresentation { store, .. } => {
                 self.apply_cell_presentation(expected, store.clone())
             }
+            HistoryAction::CollectionOrder(order) => {
+                self.apply_collection_order(expected, order.clone(), imported.cloned())
+            }
             HistoryAction::ColumnPresentation {
                 schema,
                 field,
@@ -8941,7 +8947,7 @@ impl DesignerRuntime {
                 .publish_formula_update(expected, target, source, None)
                 .map(|(publication, _)| publication),
             HistoryAction::FormulaInverseRestore { target, value } => {
-                self.restore_formula_inverse(expected, target, *value)
+                self.restore_formula_inverse(expected, target, value.clone())
             }
         }?;
         if entry.imported.is_some()
@@ -9259,6 +9265,23 @@ impl DesignerRuntime {
         if self.row_serial > usize::MAX - self.row_identity_reserve() {
             return Err(tracker_error("row identity allocation is exhausted"));
         }
+        let auto_formula = native_table
+            && rows.iter().any(|row| {
+                row.iter()
+                    .zip(&spec.columns[column..])
+                    .any(|(cell, definition)| {
+                        definition.field_type == FieldType::Auto
+                            && match cell {
+                                PasteCellInput::Text(text) => text.starts_with('='),
+                                PasteCellInput::Typed(input) => {
+                                    auto_input::formula_source(input).is_some()
+                                }
+                            }
+                    })
+            });
+        if auto_formula {
+            return self.paste_cells_at(expected, collection, start + 1, column + 1, rows);
+        }
         let snapshot = self.session.export_snapshot();
         let document = snapshot.document();
         let mut forward = Vec::new();
@@ -9497,8 +9520,15 @@ fn cell_edit_commands(
     value: Option<&Value>,
 ) -> (SemanticCommand, Vec<SemanticCommand>) {
     match (old, value) {
-        (Some(Value::Formula(_)), Some(Value::Number(number))) => (
-            SemanticCommand::formula_inverse_restore(field.clone(), *number),
+        (
+            Some(Value::Formula(_)),
+            Some(value @ (Value::Number(_) | Value::Date(_) | Value::Text(_) | Value::Boolean(_))),
+        ) => (
+            SemanticCommand::formula_inverse_restore_typed(
+                field.clone(),
+                Number::default(),
+                value.clone(),
+            ),
             vec![value_command(field, old)],
         ),
         (Some(Value::Formula(expression)), None) => (
@@ -9613,10 +9643,22 @@ impl NumberTotal {
 
     fn add(&mut self, field: &FieldProjection) {
         match (&field.calculated, &field.stored) {
-            (Some(CalculationProjection::Value { value, .. }), _)
+            (
+                Some(CalculationProjection::Value {
+                    value,
+                    result: None,
+                }),
+                _,
+            )
             | (None, Some(StoredValueProjection::Number { value })) => self.total += value,
             (
-                Some(CalculationProjection::Failure { .. } | CalculationProjection::Unavailable),
+                Some(
+                    CalculationProjection::Value {
+                        result: Some(_), ..
+                    }
+                    | CalculationProjection::Failure { .. }
+                    | CalculationProjection::Unavailable,
+                ),
                 _,
             )
             | (None, Some(_) | None) => self.complete = false,
@@ -9824,6 +9866,18 @@ fn field_display_text(
 ) -> Option<String> {
     let (number_format, date_format) =
         auto_input::cell_formats(presentation, column, &field.target.entity);
+    if column.field_type == FieldType::Auto {
+        if let Some(CalculationProjection::Failure { message, .. }) = &field.calculated {
+            return Some(message.clone());
+        }
+    }
+    if let Some(CalculationProjection::Value {
+        result: Some(StoredValueProjection::Date { value }),
+        ..
+    }) = &field.calculated
+    {
+        return Some(display_text::format_date(*value, date_format));
+    }
     if let (Some(StoredValueProjection::Date { value }), None) = (&field.stored, &field.calculated)
     {
         return Some(display_text::format_date(*value, date_format));
@@ -10115,6 +10169,7 @@ fn admit_portable_ro(
     let (mut candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation_from_tree(tree)?)?;
+    opened.bootstrap = candidate.bootstrap_projection();
     opened.table = candidate.query_table(&candidate.default_collection)?;
     ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
@@ -10211,6 +10266,7 @@ fn admit_project(
     };
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    opened.bootstrap = candidate.bootstrap_projection();
     opened.table = candidate.query_table(&candidate.default_collection)?;
     ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
@@ -10218,10 +10274,7 @@ fn admit_project(
 
 /// Read the optional presentation member from an already admitted v3 tree.
 fn presentation_from_tree(tree: &CanonicalRoProjectV3) -> Result<PresentationStore, DesignerError> {
-    match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
-        Some(bytes) => Ok(decode_presentation(bytes)?),
-        None => Ok(PresentationStore::default()),
-    }
+    Ok(tree.presentation()?)
 }
 
 /// Admit a canonical project as a working-size occurrence.
@@ -10306,6 +10359,7 @@ pub(crate) fn admit_imported_project(
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
+        candidate.validate_saved_collection_order(metadata)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
@@ -10384,6 +10438,7 @@ pub(crate) fn admit_imported_project_working_size(
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    candidate.validate_saved_collection_order(metadata)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
     candidate.attach_imported_metadata(metadata);
     let opened = candidate.opened_window()?;
@@ -11412,11 +11467,12 @@ fn require_copy_column_number(
 
 fn map_copy_references(
     expression: &mut Expression,
-    visit: &mut impl FnMut(&mut FieldRef, bool) -> Result<(), DesignerError>,
-    visit_same_row: &mut impl FnMut(&mut FieldId) -> Result<(), DesignerError>,
+    visit: &mut impl FnMut(&mut FieldRef, bool, bool) -> Result<(), DesignerError>,
+    visit_same_row: &mut impl FnMut(&mut FieldId, bool) -> Result<(), DesignerError>,
 ) -> Result<(), DesignerError> {
     match expression {
-        Expression::SameRowReference(field) => visit_same_row(field),
+        Expression::SameRowReference(field) => visit_same_row(field, false),
+        Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
         Expression::Number(_) | Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
             Ok(())
         }
@@ -11427,38 +11483,47 @@ fn map_copy_references(
             for criterion in criteria {
                 if let Some(expression) = &mut criterion.value {
                     match expression.as_mut() {
-                        Expression::Reference(reference) => visit(reference, false)?,
-                        Expression::SameRowReference(field) => visit_same_row(field)?,
+                        Expression::Reference(reference) => visit(reference, false, false)?,
+                        Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                        Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                        Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                         other => map_copy_references(other, visit, visit_same_row)?,
                     }
                 }
             }
             Ok(())
         }
-        Expression::Reference(reference) => visit(reference, true),
+        Expression::Reference(reference) => visit(reference, true, false),
+        Expression::AnchoredReference(reference) => visit(reference, true, true),
         Expression::DatePart {
             operand: reference, ..
         }
         | Expression::Weekday {
             operand: reference, ..
         } => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(field) => visit_same_row(field),
+            Expression::Reference(reference) => visit(reference, false, false),
+            Expression::AnchoredReference(reference) => visit(reference, false, true),
+            Expression::SameRowReference(field) => visit_same_row(field, false),
+            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
             _ => unreachable!("date function has a bound reference child"),
         },
         Expression::Days { end, start } => {
             for operand in [end, start] {
                 match operand.as_mut() {
-                    Expression::Reference(reference) => visit(reference, false)?,
-                    Expression::SameRowReference(field) => visit_same_row(field)?,
+                    Expression::Reference(reference) => visit(reference, false, false)?,
+                    Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                    Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                    Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                     _ => unreachable!("date function has a bound reference child"),
                 }
             }
             Ok(())
         }
         Expression::IsBlank(reference) => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false),
-            Expression::SameRowReference(field) => visit_same_row(field),
+            Expression::Reference(reference) => visit(reference, false, false),
+            Expression::AnchoredReference(reference) => visit(reference, false, true),
+            Expression::SameRowReference(field) => visit_same_row(field, false),
+            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
             _ => unreachable!("ISBLANK has a bound reference child"),
         },
         // A bare key reference is compared by its own type, like a criterion;
@@ -11467,8 +11532,10 @@ fn map_copy_references(
             key, if_missing, ..
         } => {
             match key.as_mut() {
-                Expression::Reference(reference) => visit(reference, false)?,
-                Expression::SameRowReference(field) => visit_same_row(field)?,
+                Expression::Reference(reference) => visit(reference, false, false)?,
+                Expression::AnchoredReference(reference) => visit(reference, false, true)?,
+                Expression::SameRowReference(field) => visit_same_row(field, false)?,
+                Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
                 other => map_copy_references(other, visit, visit_same_row)?,
             }
             if let Some(fallback) = if_missing {
@@ -11483,6 +11550,175 @@ fn map_copy_references(
             Ok(())
         }
     }
+}
+
+fn admit_duplicate_name<'a>(document: &Document, name: &'a str) -> Result<&'a str, DesignerError> {
+    let mut failures = Vec::new();
+    let name = name_admission::check_name(
+        name,
+        Some(&name_admission::NameInput::Table),
+        &[],
+        &mut failures,
+    );
+    if let Some(name) = name {
+        let subjects = document
+            .schemas
+            .values()
+            .filter(|schema| schema.effective_name() == name)
+            .map(|schema| tachiko_workspace_engine::SemanticSubject::Schema(schema.id.clone()))
+            .collect::<Vec<_>>();
+        if !subjects.is_empty() {
+            failures.push(NameFailure {
+                reason: "duplicate_display_name".into(),
+                inputs: vec![name_admission::NameInput::Table],
+                subjects,
+                effective_name: Some(name.to_owned()),
+            });
+        }
+    }
+    name_admission::refuse(failures)?;
+    Ok(name.expect("table name admitted"))
+}
+
+fn build_duplicate_collection(
+    document: &Document,
+    source_spec: &CollectionSpec,
+    target_key: &str,
+    name: &str,
+    column_names: &BTreeMap<String, String>,
+    ids: &mut NewTableIds,
+) -> Result<(Schema, Vec<Entity>), DesignerError> {
+    let source_schema = document
+        .schemas
+        .get(&SchemaId::from(source_spec.summary.id.clone()))
+        .ok_or_else(|| DesignerError::MissingCollection {
+            collection: source_spec.summary.key.clone(),
+        })?;
+    let schema_id = loop {
+        let id = SchemaId::from(ids.generate(SemanticIdKind::Schema));
+        if !document.schemas.contains_key(&id) {
+            break id;
+        }
+    };
+    let mut field_map = BTreeMap::<FieldId, FieldId>::new();
+    let mut fields = BTreeMap::new();
+    for field in source_schema.fields.values() {
+        let field_id = loop {
+            let id = FieldId::from(ids.generate(SemanticIdKind::Field));
+            if !document
+                .schemas
+                .values()
+                .any(|schema| schema.fields.contains_key(&id))
+                && !fields.contains_key(&id)
+            {
+                break id;
+            }
+        };
+        field_map.insert(field.id.clone(), field_id.clone());
+        let mut definition = field.clone();
+        definition.id = field_id.clone();
+        if let FieldType::Reference { schema } = &mut definition.field_type {
+            if schema == &source_schema.id {
+                *schema = schema_id.clone();
+            }
+        }
+        fields.insert(field_id, definition);
+    }
+    let mut schema = Schema {
+        headerless: source_schema.headerless,
+        // The copy keeps the source's projected column order.
+        field_order: Some(
+            source_spec
+                .columns
+                .iter()
+                .filter_map(|column| field_map.get(&column.id).cloned())
+                .collect(),
+        ),
+        id: schema_id,
+        key: SchemaKey::from(target_key.to_owned()),
+        display_name: Some(name.to_owned()),
+        fields,
+    };
+    for (field, name) in copied_column_names(&schema, column_names, &field_map)? {
+        if let Some(definition) = schema.fields.get_mut(&field) {
+            definition.display_name = Some(name);
+        }
+    }
+    schema.normalize_field_order();
+    let entities = copy_collection_entities(
+        document,
+        source_spec,
+        &source_schema.id,
+        &schema.id,
+        &field_map,
+        target_key,
+        ids,
+    )?;
+    Ok((schema, entities))
+}
+
+fn copy_collection_entities(
+    document: &Document,
+    source_spec: &CollectionSpec,
+    source_schema_id: &SchemaId,
+    target_schema_id: &SchemaId,
+    field_map: &BTreeMap<FieldId, FieldId>,
+    target_key: &str,
+    ids: &mut NewTableIds,
+) -> Result<Vec<Entity>, DesignerError> {
+    let schema_map = BTreeMap::from([(source_schema_id.clone(), target_schema_id.clone())]);
+    let mut entity_map = BTreeMap::<EntityId, EntityId>::new();
+    for source_id in &source_spec.entities {
+        let target_id = loop {
+            let id = EntityId::from(ids.generate(SemanticIdKind::Entity));
+            if !document.entities.contains_key(&id) && !entity_map.values().any(|used| used == &id)
+            {
+                break id;
+            }
+        };
+        entity_map.insert(source_id.clone(), target_id);
+    }
+    let ordered_ids = entity_map.values().cloned().collect::<BTreeSet<_>>();
+    entity_map = source_spec
+        .entities
+        .iter()
+        .cloned()
+        .zip(ordered_ids)
+        .collect();
+    let mut entities = Vec::with_capacity(source_spec.entities.len());
+    for source_id in &source_spec.entities {
+        let source =
+            document
+                .entities
+                .get(source_id)
+                .ok_or_else(|| DesignerError::MissingCollection {
+                    collection: source_spec.summary.key.clone(),
+                })?;
+        let target_id = entity_map
+            .get(source_id)
+            .ok_or_else(|| table_error("entity mapping is incomplete"))?;
+        let entity_key = format!("{}-{}", source.key, target_key);
+        if entity_key.len() > MAX_PROFILE_STRING_BYTES {
+            return Err(table_error("copied entity key exceeds the bounded profile"));
+        }
+        let entity_key = native_table_key(&entity_key, "copied entity key")?;
+        let mut copied = Entity {
+            rank: source.rank.clone(),
+            id: target_id.clone(),
+            key: EntityKey::from(entity_key),
+            schema: target_schema_id.clone(),
+            fields: BTreeMap::new(),
+        };
+        for (source_field, value) in &source.fields {
+            let target_field = field_map
+                .get(source_field)
+                .ok_or_else(|| table_error("field mapping is incomplete"))?;
+            let value = remap_duplicate_value(value, &entity_map, field_map, &schema_map)?;
+            copied.fields.insert(target_field.clone(), value);
+        }
+        entities.push(copied);
+    }
+    Ok(entities)
 }
 
 /// Admits the column names a copy is given, before anything is published.
@@ -11568,7 +11804,7 @@ fn map_duplicate_expression(
 ) -> Result<(), DesignerError> {
     match expression {
         Expression::Number(_) => Ok(()),
-        Expression::Reference(reference) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
             if let Some(entity) = entities.get(&reference.entity) {
                 reference.entity = entity.clone();
                 reference.field = fields.get(&reference.field).cloned().ok_or_else(|| {
@@ -11580,7 +11816,7 @@ fn map_duplicate_expression(
             }
             Ok(())
         }
-        Expression::SameRowReference(field) => {
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             // The copy has its own field IDs; the reference follows its row.
             *field = fields.get(field).cloned().ok_or_else(|| {
                 table_error(&format!(
@@ -12381,7 +12617,7 @@ fn ensure_formula_reference_profile(
             });
         }
         match expression {
-            Expression::Reference(reference) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                 ensure_profile_string(
                     profile_string_bytes,
                     "formula reference entity identity",
@@ -12393,7 +12629,7 @@ fn ensure_formula_reference_profile(
                     reference.field.as_str(),
                 )?;
             }
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 ensure_profile_string(
                     profile_string_bytes,
                     "formula same-row field identity",
@@ -12873,6 +13109,24 @@ fn calculation_projection(outcome: &FormulaCalculationOutcome) -> CalculationPro
             value: value.get(),
             result: None,
         },
+        FormulaCalculationOutcome::Date(date) => CalculationProjection::Value {
+            value: f64::from(tachiko_formula_engine::days_from_civil(*date)),
+            result: Some(StoredValueProjection::Date { value: *date }),
+        },
+        FormulaCalculationOutcome::Text(text) => CalculationProjection::Value {
+            value: 0.0,
+            result: Some(StoredValueProjection::Text {
+                value: text.clone(),
+            }),
+        },
+        FormulaCalculationOutcome::Boolean(value) => CalculationProjection::Value {
+            value: 0.0,
+            result: Some(StoredValueProjection::Boolean { value: *value }),
+        },
+        FormulaCalculationOutcome::CellFailure(failure) => CalculationProjection::Failure {
+            code: failure.code.code().to_owned(),
+            message: failure.code.display().to_owned(),
+        },
         FormulaCalculationOutcome::Failure(failure) => CalculationProjection::Failure {
             code: calculation_failure_code(failure).to_owned(),
             message: calculation_failure_message(failure).to_owned(),
@@ -13118,17 +13372,22 @@ fn column_fill_formulas(
 }
 
 fn row_relative_formula(expression: &mut Expression, owner: &EntityId) -> bool {
-    if let Expression::Reference(reference) = expression {
-        if reference.entity != *owner {
-            return false;
+    *expression = match expression {
+        Expression::Reference(reference) if reference.entity == *owner => {
+            Expression::SameRowReference(reference.field.clone())
         }
-        *expression = Expression::SameRowReference(reference.field.clone());
-        return true;
-    }
-    expression
-        .children_mut()
-        .into_iter()
-        .all(|child| row_relative_formula(child, owner))
+        Expression::AnchoredReference(reference) if reference.entity == *owner => {
+            Expression::AnchoredSameRowReference(reference.field.clone())
+        }
+        Expression::Reference(_) | Expression::AnchoredReference(_) => return false,
+        _ => {
+            return expression
+                .children_mut()
+                .into_iter()
+                .all(|child| row_relative_formula(child, owner));
+        }
+    };
+    true
 }
 
 /// Fill new cells where possible without making an otherwise valid addition fail.
@@ -13309,10 +13568,11 @@ fn has_scalar_row_authoring_shape(
                                         | Value::Text(_)
                                         | Value::Boolean(_)
                                         | Value::Date(_)
+                                        | Value::Formula(_)
                                 ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
-                                    | (FieldType::Date, Value::Date(_))
+                                    | (FieldType::Date, Value::Date(_) | Value::Formula(_))
                             )
                         })
                     })
@@ -13333,10 +13593,10 @@ fn expression_references(
 ) {
     match expression {
         Expression::Number(_) => {}
-        Expression::Reference(reference) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
             references.insert(reference.clone());
         }
-        Expression::SameRowReference(field) => {
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             references.insert(FieldRef::new(owner.entity.clone(), field.clone()));
         }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
@@ -16503,11 +16763,11 @@ mod tests {
         let mut visited = Vec::new();
         super::map_copy_references(
             &mut expression,
-            &mut |reference, numeric| {
+            &mut |reference, numeric, _| {
                 visited.push((reference.field.as_str().to_owned(), numeric));
                 Ok(())
             },
-            &mut |_| Ok(()),
+            &mut |_, _| Ok(()),
         )
         .expect("the lookup copy walk succeeds");
         assert_eq!(

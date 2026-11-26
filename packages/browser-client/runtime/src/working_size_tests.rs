@@ -974,7 +974,7 @@ fn every_command_succeeds_and_keeps_the_working_size_profile() {
         .unwrap();
     let current = revision(&runtime);
     runtime
-        .duplicate_collection(&current, "grid", "Copy", &BTreeMap::new())
+        .duplicate_collection(&current, "grid", "Copy", &BTreeMap::new(), None)
         .unwrap();
     assert_eq!(runtime.profile, SessionProfile::WorkingSize);
 
@@ -3668,6 +3668,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     };
     let style_id = style_id(&style).unwrap();
     let presentation = PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([(style_id.clone(), style)]),
         tables: BTreeMap::from([(
             SchemaId::from("entries"),

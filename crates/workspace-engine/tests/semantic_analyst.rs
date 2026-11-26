@@ -129,7 +129,12 @@ fn formula_analysis_returns_source_ast_value_and_transitive_upstream_trace() {
 
     assert_eq!(analysis.source.document_id, document.id);
     assert_eq!(analysis.source.source_label, "balance-v1");
-    assert_eq!(analysis.calculated_value, Some(Number::new(45.0).unwrap()));
+    assert_eq!(
+        analysis.calculated_value,
+        Some(tachiko_workspace_engine::CalculatedValue::Number(
+            Number::new(45.0).unwrap()
+        ))
+    );
     assert_eq!(
         analysis.formula_source.as_deref(),
         Some("([iron_sword.dps] + 5)")
@@ -168,16 +173,16 @@ fn field_analysis_returns_transitive_downstream_impact_trace() {
         analysis
             .downstream_impacts
             .iter()
-            .map(|impact| (impact.field.clone(), impact.value))
+            .map(|impact| (impact.field.clone(), impact.value.clone()))
             .collect::<Vec<_>>(),
         vec![
             (
                 FieldRef::new("iron_sword", "dps"),
-                Number::new(40.0).unwrap(),
+                tachiko_workspace_engine::CalculatedValue::Number(Number::new(40.0).unwrap()),
             ),
             (
                 FieldRef::new("iron_sword", "power"),
-                Number::new(45.0).unwrap(),
+                tachiko_workspace_engine::CalculatedValue::Number(Number::new(45.0).unwrap()),
             ),
         ]
     );
@@ -206,8 +211,8 @@ fn change_analysis_returns_semantic_diff_and_affected_areas() {
         change,
         SemanticChange::FormulaImpact { field, before, after, causes }
             if field == &FieldRef::new("iron_sword", "dps")
-                && *before == Number::new(40.0).unwrap()
-                && *after == Number::new(50.0).unwrap()
+                && *before == tachiko_formula_engine::CalculatedValue::Number(Number::new(40.0).unwrap())
+                && *after == tachiko_formula_engine::CalculatedValue::Number(Number::new(50.0).unwrap())
                 && causes.as_slice() == [FieldRef::new("iron_sword", "damage")]
     )));
     assert_eq!(

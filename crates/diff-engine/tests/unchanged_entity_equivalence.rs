@@ -98,14 +98,14 @@ fn impacts() -> Vec<Change> {
         },
         Change::FormulaImpact {
             field: FieldRef::new("b", "f"),
-            before: number(4.0),
-            after: number(6.0),
+            before: tachiko_formula_engine::CalculatedValue::Number(number(4.0)),
+            after: tachiko_formula_engine::CalculatedValue::Number(number(6.0)),
             causes: vec![FieldRef::new("a", "n")],
         },
         Change::FormulaImpact {
             field: FieldRef::new("c", "f"),
-            before: number(5.0),
-            after: number(7.0),
+            before: tachiko_formula_engine::CalculatedValue::Number(number(5.0)),
+            after: tachiko_formula_engine::CalculatedValue::Number(number(7.0)),
             causes: vec![FieldRef::new("a", "n")],
         },
     ]

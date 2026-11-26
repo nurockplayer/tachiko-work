@@ -139,6 +139,8 @@ pub struct ConditionalRule {
 /// Stored presentation records, keyed by their stable identity.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PresentationStore {
+    /// Explicit worksheet order, keyed by stable schema identity.
+    pub collection_order: Vec<SchemaId>,
     pub styles: BTreeMap<StyleId, CellStyle>,
     pub tables: BTreeMap<SchemaId, TablePresentation>,
     pub rules: BTreeMap<RuleId, ConditionalRule>,
@@ -146,6 +148,7 @@ pub struct PresentationStore {
 }
 
 impl PresentationStore {
+    /// Whether the optional JSONL member has records. Worksheet order lives in the manifest.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.styles.is_empty()
@@ -447,12 +450,12 @@ fn validate_rule_condition(
             });
         }
         match node {
-            Expression::Reference(_) => {
+            Expression::Reference(_) | Expression::AnchoredReference(_) => {
                 return Err(PresentationError::RuleConditionReference {
                     rule: rule_id.clone(),
                 });
             }
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 if !schema.fields.contains_key(field) {
                     return Err(PresentationError::MissingField {
                         schema: schema.id.clone(),
@@ -587,11 +590,32 @@ pub fn prune_presentation(store: &PresentationStore, document: &Document) -> Pre
         .collect();
 
     PresentationStore {
+        collection_order: active_collection_order(&store.collection_order, document),
         styles,
         tables,
         rules,
         cells,
     }
+}
+
+fn active_collection_order(order: &[SchemaId], document: &Document) -> Vec<SchemaId> {
+    if order.is_empty() {
+        return Vec::new();
+    }
+    let mut order = order
+        .iter()
+        .filter(|id| document.schemas.contains_key(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let listed = order.iter().cloned().collect::<BTreeSet<_>>();
+    let mut unlisted = document
+        .schemas
+        .values()
+        .filter(|schema| !listed.contains(&schema.id))
+        .collect::<Vec<_>>();
+    unlisted.sort_unstable_by(|left, right| left.key.cmp(&right.key));
+    order.extend(unlisted.into_iter().map(|schema| schema.id.clone()));
+    order
 }
 
 fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {
@@ -608,7 +632,7 @@ fn rule_survives_prune(rule: &ConditionalRule, document: &Document) -> bool {
     let mut stack = vec![&rule.condition];
     while let Some(node) = stack.pop() {
         match node {
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 if !schema.fields.contains_key(field) {
                     return false;
                 }

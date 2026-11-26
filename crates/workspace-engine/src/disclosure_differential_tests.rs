@@ -409,8 +409,8 @@ fn mixed_batch_matches_the_reference() {
             },
             SemanticChange::FormulaImpact {
                 field: field("r2", "total"),
-                before: Number::new(2.0).unwrap(),
-                after: Number::new(2.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(2.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(2.0).unwrap()),
                 causes: vec![field("r1", "amount")],
             },
         ],
@@ -495,8 +495,8 @@ fn column_in_another_schema_matches_the_reference() {
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
-                before: Number::new(0.0).unwrap(),
-                after: Number::new(0.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(0.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(0.0).unwrap()),
                 causes: vec![field("t1", "rate")],
             },
         ],
@@ -536,14 +536,14 @@ fn formula_chain_across_columns_matches_the_reference() {
             },
             SemanticChange::FormulaImpact {
                 field: field("row", "b"),
-                before: Number::new(1.0).unwrap(),
-                after: Number::new(5.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(1.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(5.0).unwrap()),
                 causes: vec![field("row", "a")],
             },
             SemanticChange::FormulaImpact {
                 field: field("row", "c"),
-                before: Number::new(1.0).unwrap(),
-                after: Number::new(5.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(1.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(5.0).unwrap()),
                 causes: vec![field("row", "b")],
             },
         ],
@@ -590,8 +590,8 @@ fn column_in_an_if_branch_matches_the_reference() {
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
-                before: Number::new(0.0).unwrap(),
-                after: Number::new(0.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(0.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(0.0).unwrap()),
                 causes: vec![field("t1", "rate")],
             },
         ],
@@ -634,8 +634,8 @@ fn blank_column_slots_match_the_reference() {
             },
             SemanticChange::FormulaImpact {
                 field: field("r1", "total"),
-                before: Number::new(1.0).unwrap(),
-                after: Number::new(2.0).unwrap(),
+                before: tachiko_formula_engine::CalculatedValue::Number(Number::new(1.0).unwrap()),
+                after: tachiko_formula_engine::CalculatedValue::Number(Number::new(2.0).unwrap()),
                 causes: vec![field("r1", "amount")],
             },
         ],
@@ -726,8 +726,8 @@ fn one_edit_walks_a_read_column_a_bounded_number_of_times() {
     }];
     changes.extend((0..ROWS).map(|index| SemanticChange::FormulaImpact {
         field: field(&format!("row-{index}"), "total"),
-        before: Number::new(1.0).unwrap(),
-        after: Number::new(2.0).unwrap(),
+        before: tachiko_formula_engine::CalculatedValue::Number(Number::new(1.0).unwrap()),
+        after: tachiko_formula_engine::CalculatedValue::Number(Number::new(2.0).unwrap()),
         causes: vec![field("row-0", "amount")],
     }));
 

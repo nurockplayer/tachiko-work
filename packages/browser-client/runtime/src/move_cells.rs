@@ -153,11 +153,18 @@ fn transition(field: &FieldRef, old: Option<&Value>, value: Option<&Value>) -> S
 }
 
 fn preserve_source_row(expression: &mut Expression, source: &EntityId) {
-    if let Expression::SameRowReference(field) = expression {
-        *expression = Expression::Reference(FieldRef::new(source.clone(), field.clone()));
-    } else {
-        for child in expression.children_mut() {
-            preserve_source_row(child, source);
+    match expression {
+        Expression::SameRowReference(field) => {
+            *expression = Expression::Reference(FieldRef::new(source.clone(), field.clone()));
+        }
+        Expression::AnchoredSameRowReference(field) => {
+            *expression =
+                Expression::AnchoredReference(FieldRef::new(source.clone(), field.clone()));
+        }
+        _ => {
+            for child in expression.children_mut() {
+                preserve_source_row(child, source);
+            }
         }
     }
 }

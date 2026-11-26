@@ -35,7 +35,7 @@ version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
 that exception to a closed list of constructs until #579 freezes v3. None of them
 is part of this contract until its own Accepted ADR amends this text.
 
-V3's only DTO changes are: manifest version `3`; FieldDefinition's five
+V3's DTO changes include manifest version `3` and optional `collection_order`; FieldDefinition's five
 required members plus optional `display_name` and `number_format`; optional Schema `display_name`;
 the added `date` FieldType; the added `date` Value; and the constraint union
 below. All other v2 members, tags, requiredness, ordering,
@@ -60,7 +60,8 @@ a previously saved CORE package preserves its exact canonical/package bytes.
 
 ## Manifest and tree envelope
 
-`manifest.json` has fixed member order `format`, `format_version`, `document`:
+`manifest.json` has fixed member order `format`, `format_version`, `document`,
+then `collection_order` when present:
 
 ```json
 {
@@ -77,6 +78,16 @@ a previously saved CORE package preserves its exact canonical/package bytes.
 integer `3`; `document` has fixed member order `id`, `title`. Version dispatch
 happens before any other file or record is decoded. A missing, malformed,
 unsupported, or non-lexical version fails closed.
+
+`collection_order` is a Work-owned worksheet presentation order. When present,
+it is a JSON array of stable Schema IDs and lists every schema exactly once.
+The writer emits this member only for a permutation that differs from ascending
+collection-key order. Absence gives that native default and preserves existing
+canonical bytes. Imported sessions continue to use their source order from the
+import companion until a worksheet move. A companion supplied with an explicit
+saved order must list worksheets in that order. Pre-amendment strict v3 readers
+refuse manifests containing this member. This compatibility break is accepted
+for files that carry a custom order.
 
 ## Schema and field definition
 
@@ -239,18 +250,19 @@ decoder rejects duplicate or noncanonical input without repairing it.
 ### Auto field type and tagged literals — ADR-0047
 
 Implementation state: Auto scalar fields and their tagged Number, Text, Boolean
-and Date values are implemented (#887). Auto fields are always optional and
-unconstrained. Auto formula entry is explicitly unsupported until #668 PR5;
-the new bound literals and host input below remain pending. Frozen direct-ro/v2,
+and Date values are implemented (#887). #949 admits existing bound formulas in
+Auto fields. Auto fields are always optional and unconstrained. The new bound
+literals and host input below remain pending. Frozen direct-ro/v2,
 roproj/v1 and v2, and semantic delta/conflict v1 writers refuse Auto fields;
 semantic delta/conflict v2 preserve the tag.
 
 [ADR-0047](../decisions/ADR-0047-auto-columns-tagged-results-and-cell-failures.md)
 adds the FieldType tag `auto`, whose sole member is `type`. An Auto field has
 `required: false` and constraint `none`; anything else fails admission. Its entity
-values in this scalar slice are Number, Text, Boolean or Date, never Reference.
-Formula storage and evaluation remain pending under #668 PR5. Optional
-`number_format` is admitted, as on a Number field.
+values can be Number, Text, Boolean, Date or Formula. A Reference fails
+admission. Formulas use the existing tagged bound Formula encoding. Readers
+recalculate results and per-cell errors on reopen. Optional `number_format`
+applies to Number results and values.
 
 Bound Expression gains three literals, in the existing `op` and `args` form:
 `{"op":"text","args":"..."}`, `{"op":"boolean","args":true}` and

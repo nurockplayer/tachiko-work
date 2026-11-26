@@ -516,7 +516,7 @@ fn incremental_conditionals_match_full_recomputation_across_failures_and_blanks(
 }
 
 #[test]
-fn absent_non_number_fields_are_only_valid_as_presence_probes() {
+fn absent_scalar_fields_are_valid_presence_probes() {
     for field_type in [FieldType::Text, FieldType::Date, FieldType::Boolean] {
         let mut document = document();
         document
@@ -526,12 +526,17 @@ fn absent_non_number_fields_are_only_valid_as_presence_probes() {
             .fields
             .get_mut("note")
             .unwrap()
-            .field_type = field_type;
+            .field_type = field_type.clone();
         let source = parse_expression("[.note] + 1").unwrap();
-        assert!(matches!(
-            bind_expression(&document, &owner("output"), &source),
-            Err(FormulaBindError::NonNumericTarget { .. })
-        ));
+        let bound = bind_expression(&document, &owner("output"), &source);
+        if field_type == FieldType::Date {
+            assert!(bound.is_ok());
+        } else {
+            assert!(matches!(
+                bound,
+                Err(FormulaBindError::NonNumericTarget { .. })
+            ));
+        }
         set_formula(&mut document, "output", "IF(ISBLANK([.note]), 3, 4)");
         assert_eq!(number_at(&calculate_complete(&document), "output"), 3.0);
     }

@@ -22,7 +22,7 @@ use tachiko_diff_engine::{
     CANONICAL_SEMANTIC_DELTA_V2, CanonicalSemanticDelta, DiffScope, canonical_delta,
     canonical_delta_scoped,
 };
-use tachiko_formula_engine::Calculation;
+use tachiko_formula_engine::{CalculatedValue, Calculation};
 use tachiko_semantic_core::{
     FieldConstraint, KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, Schema,
 };
@@ -460,9 +460,36 @@ impl SemanticCommand {
         Self::SetFieldValue { field, value }
     }
 
+    /// Bind a host-authored formula against the candidate's existing cell identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns the formula parse, bind, or target admission error.
+    pub fn bind_formula_update(
+        document: &Document,
+        field: FieldRef,
+        source: &str,
+    ) -> Result<Self, WorkspaceError> {
+        let expression = crate::bind_formula_update(document, &field, source)?;
+        Ok(Self::FormulaUpdate(FormulaUpdateCommand::new(
+            document, field, expression,
+        )))
+    }
+
     #[must_use]
     pub fn formula_inverse_restore(field: FieldRef, value: Number) -> Self {
         Self::FormulaInverseRestore(FormulaInverseRestoreCommand::new(field, value))
+    }
+
+    #[must_use]
+    pub fn formula_inverse_restore_typed(
+        field: FieldRef,
+        value: Number,
+        restored_value: Value,
+    ) -> Self {
+        Self::FormulaInverseRestore(
+            FormulaInverseRestoreCommand::new(field, value).with_restored_value(restored_value),
+        )
     }
 
     /// Host-history only: the expression must be one the host read from an
@@ -640,8 +667,12 @@ fn expression_approx_bytes(expression: &Expression) -> usize {
 /// Heap owned directly by one expression node, without its child nodes.
 fn expression_node_approx_bytes(node: &Expression) -> usize {
     match node {
-        Expression::Reference(field) => field_approx_bytes(field),
-        Expression::SameRowReference(field) => field.as_str().len(),
+        Expression::Reference(field) | Expression::AnchoredReference(field) => {
+            field_approx_bytes(field)
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            field.as_str().len()
+        }
         Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
             column_ref_approx_bytes(column)
         }
@@ -834,11 +865,29 @@ impl FormulaUpdateCommand {
 pub struct FormulaInverseRestoreCommand {
     target: FieldRef,
     value: Number,
+    restored_value: Option<Value>,
 }
 
 impl FormulaInverseRestoreCommand {
     pub(crate) fn new(target: FieldRef, value: Number) -> Self {
-        Self { target, value }
+        Self {
+            target,
+            value,
+            restored_value: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_restored_value(mut self, value: Value) -> Self {
+        self.restored_value = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn restored_value(&self) -> Value {
+        self.restored_value
+            .clone()
+            .unwrap_or(Value::Number(self.value))
     }
 
     #[must_use]
@@ -1039,8 +1088,8 @@ pub struct PatchRisk {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormulaImpactEvidence {
     pub field: FieldRef,
-    pub before: Number,
-    pub after: Number,
+    pub before: CalculatedValue,
+    pub after: CalculatedValue,
     pub causes: Vec<FieldRef>,
 }
 
@@ -4761,7 +4810,7 @@ impl PatchLifecycle {
                     formula_inverse_restore_candidate_in_place(
                         &mut candidate,
                         field,
-                        command.value(),
+                        command.restored_value(),
                         &mut field_edits,
                     )?;
                 }
@@ -5052,16 +5101,28 @@ impl PatchLifecycle {
                         source: Box::new(WorkspaceError::CanonicalDelta(Box::new(source))),
                     },
                 )?;
-                let formula_projection = super::diff_with_calculations(
-                    &formula_projection_document(base),
-                    &formula_projection_document(candidate),
+                let scope = DiffScope {
+                    schemas: base
+                        .schemas
+                        .keys()
+                        .chain(candidate.schemas.keys())
+                        .cloned()
+                        .collect(),
+                    entities: base
+                        .entities
+                        .keys()
+                        .chain(candidate.entities.keys())
+                        .cloned()
+                        .collect(),
+                };
+                let formula_changes = super::diff_changes_scoped(
+                    &scoped_formula_projection_document(base, &scope),
+                    &scoped_formula_projection_document(candidate, &scope),
                     &base_calculation,
                     &candidate_calculation,
-                )
-                .map_err(|source| PatchLifecycleError::CommandRejected {
-                    source: Box::new(source.into()),
-                })?;
-                (report, delta, formula_projection.changes().to_vec())
+                    &scope,
+                );
+                (report, delta, formula_changes)
             };
         let formula_impacts = formula_impacts(&formula_changes);
         let disclosure_requirements =
@@ -5845,7 +5906,7 @@ impl<'a> DisclosureDerivation<'a> {
                 self.insert_value_disclosures_for(
                     OperationFamily::FormulaInverseRestore,
                     command.target(),
-                    &Value::Number(command.value()),
+                    &command.restored_value(),
                 )
             }
             SemanticCommand::UpsertKeyedGroupedSumDefinition { .. }
@@ -5923,13 +5984,25 @@ impl<'a> DisclosureDerivation<'a> {
                 // SetFieldValue command; arbitrary added fields remain closed.
                 // The formula exceptions are an authored formula update and
                 // the app-private restore of a formula the host cleared; both
-                // can only target an optional Number slot through their own
+                // can only target an optional Number or Date slot through their own
                 // commands.
                 let definition = crate::field_definition(self.before, field)
+                    .or_else(|error| {
+                        if families == BTreeSet::from([OperationFamily::FormulaUpdate]) {
+                            crate::field_definition(self.after, field)
+                                .ok()
+                                .filter(|definition| definition.field_type == FieldType::Auto)
+                                .ok_or(error)
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .map_err(|_| PatchLifecycleError::ScopeDerivationFailed)?;
                 let existing = self.before.entities[&field.entity].fields.get(&field.field);
-                let formula_restore = definition.field_type == FieldType::Number
-                    && !definition.required
+                let formula_restore = matches!(
+                    definition.field_type,
+                    FieldType::Auto | FieldType::Number | FieldType::Date
+                ) && !definition.required
                     && matches!(value, Value::Formula(_))
                     && families.contains(&OperationFamily::FormulaUpdate);
                 if existing.is_some()
@@ -6302,6 +6375,7 @@ fn has_native_scalar_shape(document: &Document, schema: &super::Schema) -> bool 
                                         | Value::Text(_)
                                         | Value::Boolean(_)
                                         | Value::Date(_)
+                                        | Value::Formula(_)
                                 ) | (FieldType::Text, Value::Text(_))
                                     | (FieldType::Number, Value::Number(_) | Value::Formula(_))
                                     | (FieldType::Boolean, Value::Boolean(_))
@@ -6340,8 +6414,8 @@ fn formula_impacts(changes: &[SemanticChange]) -> Vec<FormulaImpactEvidence> {
                 causes,
             } => Some(FormulaImpactEvidence {
                 field: field.clone(),
-                before: *before,
-                after: *after,
+                before: before.clone(),
+                after: after.clone(),
                 causes: causes.clone(),
             }),
             _ => None,
@@ -6552,7 +6626,7 @@ fn constraint_affected_values(
         .collect()
 }
 
-// Used only for derived formula impacts after complete v2 admission, never direct evidence.
+#[cfg(test)]
 fn formula_projection_document(document: &Document) -> Document {
     let mut document = document.clone();
     document.keyed_grouped_sum_definitions.clear();
@@ -6565,11 +6639,7 @@ fn formula_projection_document(document: &Document) -> Document {
     document
 }
 
-/// The formula projection of only the schemas and entities `scope` names.
-///
-/// `diff_changes_scoped` reads the document id and title and the scoped schemas
-/// and entities, nothing else, so it reports the same changes on this as on
-/// [`formula_projection_document`] without copying the rest of the document.
+/// The scoped projection for derived formula impacts after complete v2 admission.
 fn scoped_formula_projection_document(document: &Document, scope: &DiffScope) -> Document {
     let mut projection = Document::empty(document.id.clone(), document.title.clone());
     for schema_id in &scope.schemas {
@@ -8333,4 +8403,26 @@ mod tests {
             14,
         );
     }
+}
+
+#[test]
+fn calculated_date_formula_impacts_reach_patch_evidence() {
+    let before = CalculatedValue::Date("2026-11-19".parse().unwrap());
+    let after = CalculatedValue::Date("2026-11-20".parse().unwrap());
+    let field = FieldRef::new("r", "end");
+    let causes = vec![FieldRef::new("r", "d")];
+    assert_eq!(
+        formula_impacts(&[SemanticChange::FormulaImpact {
+            field: field.clone(),
+            before: before.clone(),
+            after: after.clone(),
+            causes: causes.clone(),
+        }]),
+        vec![FormulaImpactEvidence {
+            field,
+            before,
+            after,
+            causes
+        }]
+    );
 }

@@ -337,10 +337,10 @@ fn formula_usage<'a>(
     while let Some(expression) = pending.pop() {
         nodes += 1;
         match expression {
-            Expression::Reference(reference) => {
+            Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                 dependencies.insert((&reference.entity, &reference.field));
             }
-            Expression::SameRowReference(field) => {
+            Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
                 dependencies.insert((owner, field));
             }
             Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {

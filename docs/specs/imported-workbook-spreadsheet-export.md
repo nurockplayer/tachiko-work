@@ -100,8 +100,9 @@ schema ID. The independently admitted Text-capacity metadata rules remain intact
 
 XLSX inventories formula **tokens independently of cached results**. Its closed
 emitted grammar consists of finite Number literals, stable references projected
-to an unqualified relative A1 address for a same-row reference or a quoted
-worksheet name plus absolute A1 coordinates for another, arithmetic and MIN/MAX.
+to an unqualified A1 address with a relative row and optional column anchor for
+a same-row reference or a quoted worksheet name plus absolute A1 coordinates
+for another, arithmetic and MIN/MAX.
 Every numeric literal passes the same Cell Number policy, including subnormals
 and precision disclosure. Semantic Numbers normalize either zero sign to `0`;
 NaN/infinity cannot enter the typed document. String and Boolean formula literals
@@ -149,8 +150,8 @@ New worksheet/style/format/width refusals affect output that could previously be
 changed, truncated or rounded by Excel, or refused only with a generic workbook
 diagnostic. Scalar precision
 policy remains disclosure, without rounding the file's decimal text. Formulas are
-rebuilt from stable references using relative A1 for a same-row reference (so a
-spreadsheet fill-down follows the row) and current absolute A1 coordinates for
+rebuilt from stable references using a relative row for a same-row reference (so a
+spreadsheet fill-down follows the row), preserving any column anchor, and current absolute A1 coordinates for
 other references, including column removal and row deletion; missing references
 or unsupported formulas refuse the whole export. A conditional aggregate exports
 as Excel's plural `SUMIFS`, `AVERAGEIFS` or `COUNTIFS` call over whole-column
@@ -221,7 +222,7 @@ integers, never raw source markup.
 | Formula text/operators/functions | Closed numeric/reference/arithmetic/MIN/MAX wire grammar; 4,096-byte / 256-formula bounds; XML text escaping | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Every formula numeric literal | Same Cell Number policy, independently of cache; includes subnormal, minimum normal, canonical -0, precision | `imported_formula_literals_and_cached_results_share_the_number_policy` |
 | Formula string/Boolean/NaN/infinity literals | No corresponding AST variant or nonfinite Number; reject before publication; unknown future wire tokens also refuse | `imported_formula_grammar_and_nonfinite_numbers_cannot_reach_file_output` |
-| References and names inside formulas | Import binds a row-relative reference to the formula's own row as a same-row reference and a `$`-row or other-row reference as a stable identity; export writes a same-row reference as unqualified relative A1 and any other reference as a quoted worksheet plus current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
+| References and names inside formulas | Import binds a row-relative reference to the formula's own row as a same-row reference and a `$`-row or other-row reference as a stable identity; export writes a same-row reference as unqualified A1 with a relative row and optional column anchor, and any other reference as a quoted worksheet plus current absolute coordinates; quoted/doubled apostrophe names; shared worksheet-name policy; never scan name digits as numbers | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `structural_export_preserves_untouched_formulas_styles_and_workbook_coverage` |
 | Headers | Current/historical fallback and caseless allocation; format-specific text checks; XML/CSV escaping and header-insertion disclosure | `imported_reference_names_headers_and_csv_quoting_preserve_spelling`, `header_mapping_discloses_requested_spelling_even_when_output_equals_history`, `unrepresentable_structures_refuse_whole_files_with_located_findings` |
 | Worksheet names | Name policy: 31 UTF-16 units, illegal/reserved/escape/caseless checks; no rename; CSV does not emit them | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks`, `imported_reference_names_headers_and_csv_quoting_preserve_spelling` |
 | Number-format codes and literal display text | Closed classifier; ST_Xstring/XML refusal, <255 UTF-16 units; attribute character references preserve TAB/LF/CR | `imported_xlsx_presentation_surfaces_have_located_shared_policy_checks` |
@@ -311,13 +312,18 @@ must be representable; zero is accepted only for a headerless schema.
 geometry})` (wire `render_a1_formula`) renders the stored formula using the same
 geometry and returns `a1_translation` with A1 text in `source` and empty `notes`.
 It is read-only and revision-pinned. Same-row references render relatively;
-fixed identities render with absolute rows and columns. Whole-column aggregates
+legacy fixed identities render with an absolute row and relative column, matching
+their sideways-copy behavior. Stored column anchors render with `$` before the
+column letter. XLSX export also preserves stored column anchors, such as `$A2`
+and `$A$2`, and retains the existing spelling of legacy references. Whole-column aggregates
 render over the supplied complete data rows, starting at row 1 when `header_row`
 is zero. References outside the geometry refuse with `out_of_bounds`.
 
 A same-row reference with a relative row becomes `[.field]`. A fixed row or
-other row becomes `[entity.field]`. Relative references becoming fixed identities
-carry `relative_copy_semantics_changed`; a `$` column alone has no effect.
+other row becomes `[entity.field]`. A `$` column is stored before the field key
+as `[.$field]` or `[entity.$field]` and keeps that field when copied with relative
+columns enabled. Relative rows becoming fixed identities carry
+`relative_copy_semantics_changed`.
 `SUM`, `AVERAGE`, and `COUNT` over exactly one whole numeric data column, starting
 at the header or first data row and ending at the last data row, become
 `[collection.field:total]`, `:average`, and `:count`, with `range_tracks_collection`.

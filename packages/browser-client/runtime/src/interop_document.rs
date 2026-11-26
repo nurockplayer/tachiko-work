@@ -1278,7 +1278,11 @@ fn import_workbook_document(
         pending.insert(target, (source, references, (sheet_index, row, column)));
     }
     let mut referenced = BTreeMap::<EntityId, BTreeSet<FieldId>>::new();
-    for (_, references, _) in pending.values() {
+    for (target, (_, references, _)) in &pending {
+        referenced
+            .entry(target.entity.clone())
+            .or_default()
+            .insert(target.field.clone());
         for reference in &references.cells {
             referenced
                 .entry(reference.entity.clone())
@@ -2228,7 +2232,8 @@ fn export_a1_maps(
                             entity.fields.get(definition.field_id.as_str()),
                         ),
                         field.is_some_and(|field| !field.required),
-                    ),
+                    )
+                    .with_collection(&sheet.schema_id),
                 );
             }
         }
@@ -2866,8 +2871,9 @@ impl A1Geometry for ImportA1Geometry<'_> {
         let field = &document.schemas[&entity.schema].fields[&reference.field];
         references.cells.insert(reference);
         Ok(format!(
-            "[{}.{}]",
+            "[{}.{}{}]",
             if same_row { "" } else { entity.key.as_str() },
+            if address.starts_with('$') { "$" } else { "" },
             field.key.as_str()
         ))
     }
@@ -5269,6 +5275,8 @@ pub(crate) struct ExportCell {
     row: usize,
     criterion_type: Option<FieldType>,
     optional: bool,
+    legacy_relative_column: bool,
+    collection: String,
 }
 
 impl ExportCell {
@@ -5285,15 +5293,31 @@ impl ExportCell {
             row,
             criterion_type,
             optional,
+            legacy_relative_column: false,
+            collection: String::new(),
         }
+    }
+
+    pub(crate) fn with_collection(mut self, collection: &str) -> Self {
+        collection.clone_into(&mut self.collection);
+        self
+    }
+
+    pub(crate) fn with_legacy_relative_column(mut self) -> Self {
+        self.legacy_relative_column = true;
+        self
     }
 
     /// The absolute, sheet-qualified address of a stable identity.
     fn absolute(&self) -> String {
+        let column_anchor = if self.legacy_relative_column { "" } else { "$" };
         if self.sheet.is_empty() {
-            format!("${}${}", self.column, self.row)
+            format!("{column_anchor}{}${}", self.column, self.row)
         } else {
-            format!("'{}'!${}${}", self.sheet, self.column, self.row)
+            format!(
+                "'{}'!{column_anchor}{}${}",
+                self.sheet, self.column, self.row
+            )
         }
     }
 
@@ -5355,8 +5379,10 @@ pub(crate) fn export_expression(
 /// The field a direct reference names, resolved against the formula's owner.
 fn direct_reference(argument: &Expression, owner: &FieldRef) -> Option<FieldRef> {
     match argument {
-        Expression::Reference(reference) => Some(reference.clone()),
-        Expression::SameRowReference(field) => {
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            Some(reference.clone())
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
             Some(FieldRef::new(owner.entity.clone(), field.clone()))
         }
         _ => None,
@@ -5396,7 +5422,26 @@ fn export_in(
         // A fixed identity keeps pointing at that identity when filled down.
         Expression::Reference(reference) => addresses
             .get(reference)
-            .map(ExportCell::absolute)
+            .map(|cell| {
+                let mut cell = cell.clone();
+                let owner_cell = addresses
+                    .get(owner)
+                    .expect("formula owner is outside the export mapping");
+                cell.legacy_relative_column = cell.collection == owner_cell.collection;
+                cell.absolute()
+            })
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
+        Expression::AnchoredSameRowReference(field) => addresses
+            .get(&FieldRef::new(owner.entity.clone(), field.clone()))
+            .map(|cell| format!("${}", cell.relative()))
+            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
+        Expression::AnchoredReference(reference) => addresses
+            .get(reference)
+            .map(|cell| {
+                let mut anchored = cell.clone();
+                anchored.legacy_relative_column = false;
+                anchored.absolute()
+            })
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::ColumnTotal(column) => export_column("SUM", column, columns),
         Expression::ColumnAggregate { function, column } => {
@@ -5696,8 +5741,10 @@ fn export_criterion(
     let value_type = match criterion.value.as_deref() {
         None => None,
         Some(Expression::Number(_)) => Some(&FieldType::Number),
-        Some(Expression::Reference(reference)) => cell_type(reference),
-        Some(Expression::SameRowReference(field)) => {
+        Some(Expression::Reference(reference) | Expression::AnchoredReference(reference)) => {
+            cell_type(reference)
+        }
+        Some(Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field)) => {
             cell_type(&FieldRef::new(owner.entity.clone(), field.clone()))
         }
         Some(_) => {
@@ -5907,11 +5954,11 @@ mod import_dependency_tests {
             }],
         };
         let referenced = BTreeMap::from([
-            ("a".into(), BTreeSet::from(["value".into()])),
+            ("a".into(), BTreeSet::from(["value".into(), "total".into()])),
             ("b".into(), BTreeSet::from(["value".into()])),
         ]);
         let maps = export_a1_maps(&document, &metadata, Some(&referenced));
-        assert_eq!(maps.0.len(), 2);
+        assert_eq!(maps.0.len(), 3);
         assert_eq!(maps.1.len(), 2);
         assert_eq!(
             maps.0[&FieldRef::new("a", "value")].absolute(),
