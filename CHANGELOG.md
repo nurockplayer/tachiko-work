@@ -8,6 +8,9 @@ All notable changes to Tachiko Work are documented in this file.
   attributes, releasing the decoded source before rebuilding the export proof,
   and limiting reply-buffer growth (#932, part of #678 Stage 5c; MVP item 7).
 
+- Cover the WASM XLSX reservation ceiling and 256 MiB inspect/import budget in
+  the browser carrier capacity boundary job (#933).
+
 - Copy worksheets to a destination index with `duplicateCollection`. One
   Undo removes the copy and restores worksheet order. Saves and XLSX round
   trips retain the order, and imported workbook metadata follows it (#953).

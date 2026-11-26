@@ -1,0 +1,944 @@
+rule	path	item	ceiling
+args	crates/ai-api/src/security_boundary.rs	submit_semantic_proposal	6
+args	crates/cli/src/commands.rs	analyze_query	7
+args	crates/diff-engine/src/canonical_delta.rs	canonical_delta_scoped	6
+args	crates/diff-engine/src/lib.rs	compare_entities	6
+args	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_row	6
+args	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	6
+args	crates/formula-engine/src/lib.rs	render_bound_binary	6
+args	crates/merge-engine/src/conflict_v2.rs	<MergeConflictV2>::new	6
+args	crates/merge-engine/src/conflict_v2.rs	add_field_subject_conflicts	6
+args	crates/merge-engine/src/conflict_v2.rs	name_conflict	6
+args	crates/merge-engine/src/lib.rs	<MergeConflict>::new	6
+args	crates/merge-engine/src/lib.rs	merge_entities	6
+args	crates/merge-engine/src/lib.rs	merge_entity	7
+args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
+args	crates/merge-engine/src/lib.rs	merge_field_definition	7
+args	crates/merge-engine/src/lib.rs	merge_optional	6
+args	crates/merge-engine/src/lib.rs	merge_scalar	6
+args	crates/merge-engine/src/lib.rs	merge_schema	6
+args	crates/merge-engine/src/lib.rs	merge_schema_fields	6
+args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	6
+args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	9
+args	crates/semantic-core/src/validation.rs	validate_column_conditional	6
+args	crates/semantic-core/src/validation.rs	validate_formula_reference	6
+args	crates/semantic-core/src/validation.rs	validate_lookup	7
+args	crates/semantic-core/src/validation.rs	validate_present_entity_field	7
+args	crates/semantic-core/src/validation.rs	validate_value	8
+args	crates/storage/src/portable_package/v1.rs	parse_local_record	6
+args	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	6
+args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::evaluate_analysis	7
+args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::query_analysis	7
+args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::query_analysis_pair	12
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::authorize_and_classify_overrides	6
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::complete_validation_projection	7
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_inverse_restore	6
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	6
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_formula_reasoning	7
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_number_override_scenario	7
+args	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::require_scenario_source_query	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::approve	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::authorize_publication_boundary	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::evaluate_candidate	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::evaluate_candidate_v2	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute_profile	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute_v2	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::finalize_evaluation	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::new	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::new_v2	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::new_with_profile	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_collection	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_entity	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_schema_field	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_collection	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_schema_field	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_rename_schema_field	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_profile	10
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_proposal_witnessed	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_v2	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_v2_proposal_witnessed	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_v2_witnessed	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_witnessed	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_inner	9
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_prepared	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_prepared_witnessed	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::require_execution_approval_active	7
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::restore_after_publication_failure	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::validate_execution_approval	6
+args	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::verify_publication	7
+args	crates/workspace-engine/src/resident_session.rs	<ResidentDerivedState>::validation_report_for_update	6
+args	crates/workspace-engine/src/resident_session.rs	locally_validated_report	7
+args	crates/workspace-engine/src/resident_session.rs	projection_invalidation	6
+args	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::paste_cells_at	6
+args	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::write_cell_at	6
+args	packages/browser-client/runtime/src/blank_workbook.rs	check_position	6
+args	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style	6
+args	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style_range	7
+args	packages/browser-client/runtime/src/interop_adapter.rs	xlsx_attempted_data_rows	6
+args	packages/browser-client/runtime/src/interop_date_format.rs	cell_style	6
+args	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	7
+args	packages/browser-client/runtime/src/interop_document.rs	<ImportA1Geometry<'_> as A1Geometry>::aggregate	6
+args	packages/browser-client/runtime/src/interop_document.rs	<ImportA1Geometry<'_> as A1Geometry>::column	6
+args	packages/browser-client/runtime/src/interop_document.rs	A1Geometry::aggregate	6
+args	packages/browser-client/runtime/src/interop_document.rs	A1Geometry::column	6
+args	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula	8
+args	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet	10
+args	packages/browser-client/runtime/src/interop_document.rs	column_source	6
+args	packages/browser-client/runtime/src/interop_document.rs	export_binary	7
+args	packages/browser-client/runtime/src/interop_document.rs	export_conditional	6
+args	packages/browser-client/runtime/src/interop_document.rs	export_criterion	6
+args	packages/browser-client/runtime/src/interop_document.rs	export_function	6
+args	packages/browser-client/runtime/src/interop_document.rs	finish_import	6
+args	packages/browser-client/runtime/src/interop_document.rs	keep_import_cache	6
+args	packages/browser-client/runtime/src/interop_document.rs	translate_a1	7
+args	packages/browser-client/runtime/src/interop_document.rs	translate_conditional_call	7
+args	packages/browser-client/runtime/src/interop_document.rs	translate_conditional_criterion	6
+args	packages/browser-client/runtime/src/interop_document.rs	translate_lookup_call	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness	7
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::apply_column_presentation	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::build_window_rows	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	7
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::duplicate_collection	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cells	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_distinct_values	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals	6
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_table_window	7
+args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::record_column_presentation	8
+args	packages/browser-client/runtime/src/lib.rs	budget_item	7
+args	packages/browser-client/runtime/src/lib.rs	build_duplicate_collection	6
+args	packages/browser-client/runtime/src/lib.rs	copy_collection_entities	7
+args	packages/browser-client/runtime/src/lib.rs	designer_preview	7
+args	packages/browser-client/runtime/src/lib.rs	designer_preview_witnessed	6
+args	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	7
+args	packages/browser-client/runtime/src/native_tables_export.rs	projected_cell	7
+args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::aggregate	6
+args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::column	6
+body	crates/cli/src/commands.rs	analysis_failure_output	62
+body	crates/cli/src/commands.rs	parse_analysis_predicate	69
+body	crates/cli/src/commands.rs	schema_change_output	65
+body	crates/cli/src/main.rs	execute	121
+body	crates/diff-engine/src/canonical_delta.rs	<CanonicalDirectFact>::ordering_key	71
+body	crates/diff-engine/src/canonical_delta.rs	compare_entity	72
+body	crates/diff-engine/src/canonical_delta.rs	compare_schema	109
+body	crates/diff-engine/src/lib.rs	<SemanticDiff>::render_text	75
+body	crates/diff-engine/src/lib.rs	render_change	91
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	64
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	61
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	89
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	136
+body	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	97
+body	crates/formula-engine/src/lib.rs	<RetainedCalculationState>::update	72
+body	crates/formula-engine/src/lib.rs	bind_node	193
+body	crates/formula-engine/src/lib.rs	cyclic_components	88
+body	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	70
+body	crates/formula-engine/src/lib.rs	pregraph_failures	104
+body	crates/formula-engine/src/lib.rs	render_bound	152
+body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	88
+body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
+body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
+body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
+body	crates/formula-engine/src/parser.rs	push_children	89
+body	crates/merge-engine/src/conflict_v2.rs	merge_v2	71
+body	crates/merge-engine/src/lib.rs	merge_supported	90
+body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
+body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
+body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
+body	crates/semantic-core/src/presentation.rs	prune_presentation	84
+body	crates/semantic-core/src/presentation.rs	validate_presentation	183
+body	crates/semantic-core/src/presentation.rs	validate_rule_condition	67
+body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
+body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	99
+body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
+body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	72
+body	crates/semantic-core/src/validation.rs	validate_column_conditional	80
+body	crates/semantic-core/src/validation.rs	validate_formula_reference	71
+body	crates/semantic-core/src/validation.rs	validate_schemas	89
+body	crates/semantic-core/src/validation.rs	validate_value	66
+body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	97
+body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	92
+body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	99
+body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	87
+body	crates/storage/src/direct_ro/v2.rs	write_expression	140
+body	crates/storage/src/migration.rs	rewrite_document	79
+body	crates/storage/src/portable_package/v1.rs	build_zip	64
+body	crates/storage/src/portable_package/v1.rs	parse_container_at_end	83
+body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
+body	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	67
+body	crates/storage/src/presentation.rs	parse_presentation	124
+body	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	62
+body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
+body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
+body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
+body	crates/storage/src/roproj/v2.rs	<ExpressionV2>::from_semantic	61
+body	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	62
+body	crates/storage/src/roproj/v2.rs	write_definition	65
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	144
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	99
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	115
+body	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	144
+body	crates/storage/src/roproj/v3.rs	write_definition	65
+body	crates/storage/src/roproj/v3.rs	write_expression	249
+body	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	76
+body	crates/workspace-engine/src/analysis_operations.rs	evaluate_authorized	69
+body	crates/workspace-engine/src/analysis_operations.rs	resolve_candidate_domain	72
+body	crates/workspace-engine/src/capability_discovery.rs	<PatchLifecycle>::query_field_capabilities	67
+body	crates/workspace-engine/src/capability_discovery.rs	describe_field_capabilities	82
+body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	71
+body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_formula_reasoning	91
+body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_number_override_scenario	98
+body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::scenario_target_outcome	83
+body	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum	178
+body	crates/workspace-engine/src/lib.rs	drop_expression_iteratively	63
+body	crates/workspace-engine/src/lib.rs	explain_field	61
+body	crates/workspace-engine/src/lib.rs	formula_diagnostics	110
+body	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	156
+body	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	118
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchBodyIndex>::new	97
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::approve	69
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::evaluate_candidate	80
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::evaluate_candidate_v2	99
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute_profile	187
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::keyed_grouped_sum_query_disclosures	80
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_collection	77
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_entity	64
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_schema_field	98
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_candidate	505
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_collection	68
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_schema_field	143
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_profile	75
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_inner	174
+body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::publish_candidate	84
+body	crates/workspace-engine/src/patch_lifecycle.rs	admit_command_names	88
+body	crates/workspace-engine/src/patch_lifecycle.rs	command_payload_approx_bytes	82
+body	crates/workspace-engine/src/patch_lifecycle.rs	scope_covers	68
+body	crates/workspace-engine/src/resident_session.rs	<ResidentPublicationAuthority<'_,Time> as SemanticPublicationAuthority>::publish_if_current	67
+body	crates/workspace-engine/src/resident_session.rs	<ResidentPublicationAuthority<'_,Time> as SemanticPublicationAuthority>::publish_owned_if_current	61
+body	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_selection_statistics	68
+body	crates/workspace-engine/src/resident_session.rs	collect_entity_projection_changes	79
+body	crates/workspace-engine/src/resident_session.rs	collect_schema_projection_changes	95
+body	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::paste_cells_at	162
+body	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::write_cell_at	96
+body	packages/browser-client/runtime/src/header_promotion.rs	<DesignerRuntime>::promote_first_row_to_headers	64
+body	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsheet	102
+body	packages/browser-client/runtime/src/host_bridge.rs	export_native_budget_spreadsheet	73
+body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_spreadsheet	66
+body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	83
+body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	99
+body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	68
+body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_worksheet	63
+body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	88
+body	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	67
+body	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	94
+body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	307
+body	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	82
+body	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	176
+body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	568
+body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_admission	91
+body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_call	67
+body	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility	336
+body	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_xlsx_number_findings	80
+body	packages/browser-client/runtime/src/interop_adapter.rs	parse_styles	101
+body	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile	242
+body	packages/browser-client/runtime/src/interop_adapter.rs	root_inventory	88
+body	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function	129
+body	packages/browser-client/runtime/src/interop_adapter.rs	validate_import_geometry_profile	79
+body	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile	141
+body	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	81
+body	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	71
+body	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argument	69
+body	packages/browser-client/runtime/src/interop_date_format.rs	cell_style	64
+body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::export_imported_workbook_with_maps	69
+body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::prepare_cleanup	76
+body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	121
+body	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula	95
+body	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet	149
+body	packages/browser-client/runtime/src/interop_document.rs	cleanup_commands	102
+body	packages/browser-client/runtime/src/interop_document.rs	current_import_metadata	122
+body	packages/browser-client/runtime/src/interop_document.rs	excel_extremum	75
+body	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	67
+body	packages/browser-client/runtime/src/interop_document.rs	export_in	178
+body	packages/browser-client/runtime/src/interop_document.rs	finish_import	96
+body	packages/browser-client/runtime/src/interop_document.rs	import_formula_order	65
+body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	149
+body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	69
+body	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	67
+body	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	239
+body	packages/browser-client/runtime/src/interop_document.rs	native_tracker_metadata	62
+body	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation	276
+body	packages/browser-client/runtime/src/interop_document.rs	reconcile_import_rows	64
+body	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	219
+body	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	91
+body	packages/browser-client/runtime/src/interop_document.rs	validate_selection	102
+body	packages/browser-client/runtime/src/interop_number_format.rs	inspect	97
+body	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	125
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness	85
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_table	91
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::budget_document	118
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::build_table_projection_unbounded	63
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column_type	152
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	75
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	127
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::delete_table	86
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	565
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::duplicate_collection	92
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::edit_cells	93
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::export_project_with_metadata	64
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::from_document_profile_baseline	76
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::history_edit	95
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::insert_row	88
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs	161
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported	324
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_formula_update_unmapped	82
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_distinct_values	84
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_fields	66
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals	106
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::remove_column	72
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::restore_formula_inverse	87
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::working_value_edit_totals	99
+body	packages/browser-client/runtime/src/lib.rs	admit_imported_project	69
+body	packages/browser-client/runtime/src/lib.rs	build_duplicate_collection	68
+body	packages/browser-client/runtime/src/lib.rs	collection_specs	80
+body	packages/browser-client/runtime/src/lib.rs	constraint_failure	74
+body	packages/browser-client/runtime/src/lib.rs	decode_project_bundle_for	85
+body	packages/browser-client/runtime/src/lib.rs	decode_project_files	64
+body	packages/browser-client/runtime/src/lib.rs	designer_lifecycle_profile	89
+body	packages/browser-client/runtime/src/lib.rs	ensure_cheap_entity_profile	67
+body	packages/browser-client/runtime/src/lib.rs	ensure_formula_reference_profile	76
+body	packages/browser-client/runtime/src/lib.rs	ensure_static_profile	105
+body	packages/browser-client/runtime/src/lib.rs	formula_failure_projection	110
+body	packages/browser-client/runtime/src/lib.rs	map_copy_references	77
+body	packages/browser-client/runtime/src/lib.rs	map_duplicate_expression	65
+body	packages/browser-client/runtime/src/lib.rs	plan_filter	95
+body	packages/browser-client/runtime/src/lib.rs	predicate_matches	71
+body	packages/browser-client/runtime/src/lib.rs	process_wire_request	100
+body	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	171
+body	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	119
+body	packages/browser-client/runtime/src/native_tables_export.rs	projected_cell	90
+body	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	98
+body	packages/browser-client/runtime/src/save_size.rs	expression_bytes	293
+body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	99
+body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	207
+body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadsheet	73
+body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadsheet	66
+body	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	64
+body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	83
+body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	99
+body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	99
+branches	crates/cli/src/commands.rs	analysis_failure_output	14
+branches	crates/cli/src/commands.rs	parse_analysis_predicate	19
+branches	crates/cli/src/main.rs	execute	34
+branches	crates/diff-engine/src/canonical_delta.rs	<CanonicalDirectFact>::ordering_key	27
+branches	crates/diff-engine/src/canonical_delta.rs	compare_entity	13
+branches	crates/diff-engine/src/canonical_delta.rs	compare_schema	31
+branches	crates/diff-engine/src/lib.rs	compare_entities	15
+branches	crates/diff-engine/src/lib.rs	compare_schema	17
+branches	crates/diff-engine/src/lib.rs	render_change	17
+branches	crates/diff-engine/src/lib.rs	require_diff_supported	17
+branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::criterion_index	17
+branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	24
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	26
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	22
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_over	16
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	44
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	56
+branches	crates/formula-engine/src/evaluation.rs	exact_sum	21
+branches	crates/formula-engine/src/evaluation.rs	round_decimal	15
+branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	22
+branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	24
+branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::reaching_fields	17
+branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::replace_formula	22
+branches	crates/formula-engine/src/lib.rs	bind_conditional	13
+branches	crates/formula-engine/src/lib.rs	bind_node	40
+branches	crates/formula-engine/src/lib.rs	column_failures	14
+branches	crates/formula-engine/src/lib.rs	cyclic_components	34
+branches	crates/formula-engine/src/lib.rs	depth_first_finish_order	15
+branches	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	49
+branches	crates/formula-engine/src/lib.rs	pregraph_failures	50
+branches	crates/formula-engine/src/lib.rs	render_bound	31
+branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_comparison	28
+branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_conditional_arguments	17
+branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	32
+branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	27
+branches	crates/formula-engine/src/parser.rs	format_unbound_expression	32
+branches	crates/formula-engine/src/partitioned.rs	compare_entries	14
+branches	crates/merge-engine/src/conflict_v2.rs	add_field_order_conflicts	17
+branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_constraints	35
+branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_field_orders	15
+branches	crates/merge-engine/src/conflict_v2.rs	merge_v2	15
+branches	crates/merge-engine/src/conflict_v2.rs	upgrade_fact	22
+branches	crates/semantic-core/src/address.rs	<AddressIndex>::build	16
+branches	crates/semantic-core/src/criterion.rs	<CriterionTest>::parse	23
+branches	crates/semantic-core/src/input_classification.rs	parse_currency	13
+branches	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	26
+branches	crates/semantic-core/src/model.rs	<Expression>::reference_uses	20
+branches	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	22
+branches	crates/semantic-core/src/presentation.rs	rule_survives_prune	29
+branches	crates/semantic-core/src/presentation.rs	validate_presentation	66
+branches	crates/semantic-core/src/presentation.rs	validate_rule_condition	23
+branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	23
+branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	15
+branches	crates/semantic-core/src/validation.rs	validate_column_conditional	20
+branches	crates/semantic-core/src/validation.rs	validate_field_constraint	16
+branches	crates/semantic-core/src/validation.rs	validate_schemas	15
+branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	26
+branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	24
+branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	33
+branches	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	21
+branches	crates/storage/src/direct_ro/v2.rs	write_expression	33
+branches	crates/storage/src/lib.rs	enforce_v2_number_token_limit	27
+branches	crates/storage/src/lib.rs	normalize_v2_number_tokens	16
+branches	crates/storage/src/portable_package/v1.rs	parse_container_at_end	17
+branches	crates/storage/src/portable_package/v1.rs	parse_manifest	15
+branches	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	13
+branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	33
+branches	crates/storage/src/presentation.rs	parse_presentation	28
+branches	crates/storage/src/presentation.rs	write_style_object	22
+branches	crates/storage/src/presentation.rs	write_table_record	23
+branches	crates/storage/src/roproj/host.rs	collect_entity_records	13
+branches	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	31
+branches	crates/storage/src/roproj/host.rs	resolve_component_path	16
+branches	crates/storage/src/roproj/v1.rs	decode_entities	14
+branches	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	24
+branches	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	22
+branches	crates/storage/src/roproj/v2.rs	<UnorderedRoProjectV2>::prove_scoped_uniqueness	15
+branches	crates/storage/src/roproj/v2.rs	canonicalize_unordered	21
+branches	crates/storage/src/roproj/v2.rs	decode_entities	14
+branches	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	24
+branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	33
+branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	29
+branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	38
+branches	crates/storage/src/roproj/v3.rs	decode_entities	14
+branches	crates/storage/src/roproj/v3.rs	validate_conditional	15
+branches	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	62
+branches	crates/storage/src/roproj/v3.rs	validate_text_literals	14
+branches	crates/storage/src/roproj/v3.rs	write_expression	49
+branches	crates/storage/src/roproj/v3.rs	write_schema	14
+branches	crates/storage/src/strict_json.rs	inspect_object	17
+branches	crates/storage/src/strict_json.rs	json_nesting_depth	20
+branches	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	15
+branches	crates/workspace-engine/src/analysis_operations.rs	group_entities	13
+branches	crates/workspace-engine/src/analysis_operations.rs	resolve_candidate_domain	17
+branches	crates/workspace-engine/src/analysis_operations.rs	select_entities	21
+branches	crates/workspace-engine/src/analysis_operations.rs	validate_targets	16
+branches	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum	44
+branches	crates/workspace-engine/src/lib.rs	explain_field	17
+branches	crates/workspace-engine/src/lib.rs	formula_diagnostics	31
+branches	crates/workspace-engine/src/lib.rs	merge_documents	14
+branches	crates/workspace-engine/src/lib.rs	parse_scalar	13
+branches	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	14
+branches	crates/workspace-engine/src/lib.rs	runtime_value	13
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_calculation_dependency_disclosures	14
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	64
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	32
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchBodyIndex>::new	15
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute_profile	34
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::keyed_grouped_sum_query_disclosures	15
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_append_schema_field	14
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_candidate	93
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_schema_field	21
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_inner	27
+branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::restore_after_publication_failure	13
+branches	crates/workspace-engine/src/patch_lifecycle.rs	admit_command_names	16
+branches	crates/workspace-engine/src/patch_lifecycle.rs	command_payload_approx_bytes	21
+branches	crates/workspace-engine/src/patch_lifecycle.rs	duplicate_constraint_write	26
+branches	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_column_totals	16
+branches	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_selection_statistics	14
+branches	crates/workspace-engine/src/resident_session.rs	collect_entity_projection_changes	33
+branches	crates/workspace-engine/src/resident_session.rs	collect_schema_projection_changes	43
+branches	crates/workspace-engine/src/row_order.rs	plan_insertion	15
+branches	packages/browser-client/runtime/src/auto_input.rs	value	13
+branches	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::paste_cells_at	60
+branches	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::write_cell_at	16
+branches	packages/browser-client/runtime/src/capacity.rs	formula_usage	20
+branches	packages/browser-client/runtime/src/capacity.rs	value_edit_usage	14
+branches	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style	20
+branches	packages/browser-client/runtime/src/display_text.rs	format_formatted	16
+branches	packages/browser-client/runtime/src/display_text.rs	js_number_to_string	19
+branches	packages/browser-client/runtime/src/display_text.rs	natural_folded_cmp	13
+branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::open_candidate	16
+branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsheet	21
+branches	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	24
+branches	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	18
+branches	packages/browser-client/runtime/src/interop_adapter.rs	archive	17
+branches	packages/browser-client/runtime/src/interop_adapter.rs	builtin_format	29
+branches	packages/browser-client/runtime/src/interop_adapter.rs	c_unknown	25
+branches	packages/browser-client/runtime/src/interop_adapter.rs	call_argument	18
+branches	packages/browser-client/runtime/src/interop_adapter.rs	cap_ledger	15
+branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_bindings	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_node	31
+branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_parts	18
+branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	41
+branches	packages/browser-client/runtime/src/interop_adapter.rs	cell_value	22
+branches	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	70
+branches	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	27
+branches	packages/browser-client/runtime/src/interop_adapter.rs	conditional_shape	21
+branches	packages/browser-client/runtime/src/interop_adapter.rs	contains_lookup_call	35
+branches	packages/browser-client/runtime/src/interop_adapter.rs	criterion_form	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	date_admission	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	decode_xstring	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	22
+branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	87
+branches	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	107
+branches	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	39
+branches	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	63
+branches	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	230
+branches	packages/browser-client/runtime/src/interop_adapter.rs	infer_column_number_format	30
+branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_workbook_children	22
+branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_worksheet_children	17
+branches	packages/browser-client/runtime/src/interop_adapter.rs	lookup_admission	33
+branches	packages/browser-client/runtime/src/interop_adapter.rs	lookup_call	24
+branches	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility	140
+branches	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_xlsx_number_findings	50
+branches	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile	123
+branches	packages/browser-client/runtime/src/interop_adapter.rs	plain_tag	34
+branches	packages/browser-client/runtime/src/interop_adapter.rs	refuse_foreign_aggregates	16
+branches	packages/browser-client/runtime/src/interop_adapter.rs	root_inventory	39
+branches	packages/browser-client/runtime/src/interop_adapter.rs	split_arguments	19
+branches	packages/browser-client/runtime/src/interop_adapter.rs	summary_cells	16
+branches	packages/browser-client/runtime/src/interop_adapter.rs	top_level_colon	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function	90
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_capacity_source_inspection	13
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_import_geometry_profile	15
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile	91
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	53
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	19
+branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_zip_directory	14
+branches	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argument	33
+branches	packages/browser-client/runtime/src/interop_adapter.rs	xlsx_attempted_data_rows	19
+branches	packages/browser-client/runtime/src/interop_date_format.rs	cell_style	30
+branches	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::export_imported_workbook_with_maps	16
+branches	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	42
+branches	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula	22
+branches	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet	29
+branches	packages/browser-client/runtime/src/interop_document.rs	cleanup_commands	28
+branches	packages/browser-client/runtime/src/interop_document.rs	convert_value	16
+branches	packages/browser-client/runtime/src/interop_document.rs	current_import_metadata	35
+branches	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	24
+branches	packages/browser-client/runtime/src/interop_document.rs	export_criterion	14
+branches	packages/browser-client/runtime/src/interop_document.rs	export_in	37
+branches	packages/browser-client/runtime/src/interop_document.rs	finish_import	15
+branches	packages/browser-client/runtime/src/interop_document.rs	import_formula_order	22
+branches	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	18
+branches	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	21
+branches	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	24
+branches	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	62
+branches	packages/browser-client/runtime/src/interop_document.rs	normalize_import_date_styles	13
+branches	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation	129
+branches	packages/browser-client/runtime/src/interop_document.rs	reconcile_import_rows	14
+branches	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	143
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	51
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_historical_sheet	14
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_metadata_envelope	15
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_selection	35
+branches	packages/browser-client/runtime/src/interop_document.rs	validate_tracker_rows	17
+branches	packages/browser-client/runtime/src/interop_number_format.rs	bracket	24
+branches	packages/browser-client/runtime/src/interop_number_format.rs	currency_code	29
+branches	packages/browser-client/runtime/src/interop_number_format.rs	inspect	77
+branches	packages/browser-client/runtime/src/interop_number_format.rs	token_prefix	17
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::failure_projection	15
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	43
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column_type	24
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	15
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	26
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	65
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::edit_cells	33
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::ensure_supported_project	15
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::export_project_with_metadata	13
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::history_edit	18
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs	41
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported	78
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_distinct_values	14
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals	27
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::working_value_edit_totals	24
+branches	packages/browser-client/runtime/src/lib.rs	build_duplicate_collection	18
+branches	packages/browser-client/runtime/src/lib.rs	column_fill_formulas	15
+branches	packages/browser-client/runtime/src/lib.rs	compare_view_rows	20
+branches	packages/browser-client/runtime/src/lib.rs	declaration_failure	21
+branches	packages/browser-client/runtime/src/lib.rs	decode_project_bundle_for	19
+branches	packages/browser-client/runtime/src/lib.rs	decode_project_files	19
+branches	packages/browser-client/runtime/src/lib.rs	ensure_capacity_document_identities	15
+branches	packages/browser-client/runtime/src/lib.rs	ensure_cheap_entity_profile	21
+branches	packages/browser-client/runtime/src/lib.rs	ensure_formula_reference_profile	16
+branches	packages/browser-client/runtime/src/lib.rs	ensure_static_profile	15
+branches	packages/browser-client/runtime/src/lib.rs	expression_references	13
+branches	packages/browser-client/runtime/src/lib.rs	fill_new_rows	36
+branches	packages/browser-client/runtime/src/lib.rs	map_copy_references	55
+branches	packages/browser-client/runtime/src/lib.rs	map_duplicate_expression	20
+branches	packages/browser-client/runtime/src/lib.rs	native_table_row	21
+branches	packages/browser-client/runtime/src/lib.rs	plan_filter	15
+branches	packages/browser-client/runtime/src/lib.rs	process_wire_request	37
+branches	packages/browser-client/runtime/src/lib.rs	view_value	13
+branches	packages/browser-client/runtime/src/move_cells.rs	plan	16
+branches	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	29
+branches	packages/browser-client/runtime/src/native_tables_export.rs	mapped_name	16
+branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	44
+branches	packages/browser-client/runtime/src/save_size.rs	expression_bytes	34
+branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	20
+branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	22
+branches	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	13
+branches	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	24
+branches	packages/browser-client/runtime/src/wasm.rs	process_portable_ro_candidate	17
+branches	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	24
+branches	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	18
+branches	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	26
+depth	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	4
+depth	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	5
+depth	crates/formula-engine/src/lib.rs	<DependencyGraph>::reaching_fields	5
+depth	crates/formula-engine/src/lib.rs	<DependencyGraph>::replace_formula	5
+depth	crates/formula-engine/src/lib.rs	collect_calculation_nodes	4
+depth	crates/formula-engine/src/lib.rs	cyclic_components	4
+depth	crates/formula-engine/src/lib.rs	depth_first_finish_order	4
+depth	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	7
+depth	crates/formula-engine/src/lib.rs	pregraph_failures	5
+depth	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_comparison	7
+depth	crates/merge-engine/src/conflict_v2.rs	apply_selected_constraints	5
+depth	crates/merge-engine/src/conflict_v2.rs	apply_selected_field_orders	4
+depth	crates/merge-engine/src/lib.rs	merge_entity_fields	4
+depth	crates/semantic-core/src/criterion.rs	<CriterionTest>::parse	6
+depth	crates/semantic-core/src/model.rs	<Expression>::reference_uses	4
+depth	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	4
+depth	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	4
+depth	crates/semantic-core/src/validation.rs	validate_column_conditional	4
+depth	crates/semantic-core/src/validation.rs	validate_schemas	4
+depth	crates/storage/src/lib.rs	enforce_v2_number_token_limit	5
+depth	crates/storage/src/presentation.rs	parse_presentation	4
+depth	crates/storage/src/roproj/host.rs	collect_entity_records	4
+depth	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	6
+depth	crates/storage/src/roproj/host.rs	resolve_component_path	4
+depth	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	4
+depth	crates/storage/src/roproj/v2.rs	canonicalize_unordered	4
+depth	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	4
+depth	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	5
+depth	crates/storage/src/roproj/v3.rs	write_constraint	4
+depth	crates/storage/src/strict_json.rs	inspect_object	4
+depth	crates/storage/src/strict_json.rs	json_nesting_depth	5
+depth	crates/workspace-engine/src/analysis_operations.rs	select_entities	4
+depth	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	4
+depth	crates/workspace-engine/src/lib.rs	preflight_formula_projections	4
+depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	4
+depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	4
+depth	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::insert_keyed_grouped_sum_formula_roots	4
+depth	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_candidate	4
+depth	crates/workspace-engine/src/patch_lifecycle.rs	duplicate_constraint_write	4
+depth	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_column_totals	4
+depth	crates/workspace-engine/src/resident_session.rs	collect_entity_projection_changes	4
+depth	crates/workspace-engine/src/resident_session.rs	collect_schema_projection_changes	5
+depth	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::paste_cells_at	5
+depth	packages/browser-client/runtime/src/capacity.rs	formula_usage	4
+depth	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style	4
+depth	packages/browser-client/runtime/src/display_text.rs	js_number_to_string	4
+depth	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::open_candidate	5
+depth	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	8
+depth	packages/browser-client/runtime/src/interop_adapter.rs	contains_lookup_call	6
+depth	packages/browser-client/runtime/src/interop_adapter.rs	decode_xstring	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	5
+depth	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	8
+depth	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	6
+depth	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	7
+depth	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	8
+depth	packages/browser-client/runtime/src/interop_adapter.rs	infer_column_number_format	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	inventory_workbook_children	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_xlsx_number_findings	6
+depth	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile	6
+depth	packages/browser-client/runtime/src/interop_adapter.rs	refuse_foreign_aggregates	5
+depth	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function	7
+depth	packages/browser-client/runtime/src/interop_adapter.rs	validate_capacity_source_inspection	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile	5
+depth	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	5
+depth	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	4
+depth	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argument	4
+depth	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	6
+depth	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet	4
+depth	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	4
+depth	packages/browser-client/runtime/src/interop_document.rs	import_workbook_working_size_candidate	4
+depth	packages/browser-client/runtime/src/interop_document.rs	native_budget_active_csv_styles	4
+depth	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata	5
+depth	packages/browser-client/runtime/src/interop_document.rs	normalize_import_date_styles	4
+depth	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation	5
+depth	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	8
+depth	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	5
+depth	packages/browser-client/runtime/src/interop_document.rs	validate_tracker_rows	4
+depth	packages/browser-client/runtime/src/interop_number_format.rs	bracket	4
+depth	packages/browser-client/runtime/src/interop_number_format.rs	inspect	7
+depth	packages/browser-client/runtime/src/interop_number_format.rs	token_prefix	4
+depth	packages/browser-client/runtime/src/lib.rs	declaration_failure	5
+depth	packages/browser-client/runtime/src/lib.rs	ensure_cheap_entity_profile	4
+depth	packages/browser-client/runtime/src/lib.rs	fill_new_rows	5
+depth	packages/browser-client/runtime/src/lib.rs	map_copy_references	4
+depth	packages/browser-client/runtime/src/lib.rs	native_table_row	4
+depth	packages/browser-client/runtime/src/lib.rs	process_wire_request	4
+depth	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	5
+depth	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	4
+depth	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	4
+file	crates/cli/src/commands.rs		1559
+file	crates/diff-engine/src/canonical_delta.rs		867
+file	crates/diff-engine/src/lib.rs		974
+file	crates/formula-engine/src/evaluation.rs		1331
+file	crates/formula-engine/src/lib.rs		3298
+file	crates/formula-engine/src/parser.rs		1298
+file	crates/merge-engine/src/conflict_v2.rs		982
+file	crates/merge-engine/src/lib.rs		1118
+file	crates/semantic-core/src/model.rs		1515
+file	crates/semantic-core/src/presentation.rs		889
+file	crates/semantic-core/src/validation.rs		1925
+file	crates/storage/src/direct_ro/v2.rs		1457
+file	crates/storage/src/portable_package/v1.rs		1202
+file	crates/storage/src/roproj/host.rs		806
+file	crates/storage/src/roproj/v1.rs		1484
+file	crates/storage/src/roproj/v2.rs		1722
+file	crates/storage/src/roproj/v3.rs		2914
+file	crates/workspace-engine/src/analysis_operations.rs		1436
+file	crates/workspace-engine/src/formula_operations.rs		1225
+file	crates/workspace-engine/src/lib.rs		4009
+file	crates/workspace-engine/src/patch_lifecycle.rs		6780
+file	crates/workspace-engine/src/resident_session.rs		1811
+file	packages/browser-client/runtime/src/host_bridge.rs		1146
+file	packages/browser-client/runtime/src/interop_adapter.rs		6697
+file	packages/browser-client/runtime/src/interop_document.rs		5678
+file	packages/browser-client/runtime/src/lib.rs		13723
+file	packages/browser-client/runtime/src/native_tables_export.rs		850
+file	packages/browser-client/runtime/src/save_size.rs		922
+file	packages/browser-client/runtime/src/wasm.rs		1310
+inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
+inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
+inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
+inline-test	crates/formula-engine/src/partitioned.rs	tests[cfg(test)]	225
+inline-test	crates/merge-engine/src/lib.rs	tests[cfg(test)]	11
+inline-test	crates/semantic-core/src/criterion.rs	tests[cfg(test)]	250
+inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
+inline-test	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::tests[cfg(test)]	204
+inline-test	crates/storage/src/legacy_direct_ro/v1.rs	tests[cfg(test)]	109
+inline-test	crates/storage/src/migration.rs	tests[cfg(test)]	28
+inline-test	crates/storage/src/portable_package/host.rs	tests[cfg(test)]	76
+inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
+inline-test	crates/storage/src/roproj/host.rs	tests[cfg(test)]	56
+inline-test	crates/storage/src/roproj/v1.rs	tests[cfg(test)]	10
+inline-test	crates/storage/src/roproj/v2.rs	tests[cfg(test)]	73
+inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
+inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
+inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
+inline-test	crates/workspace-engine/src/patch_lifecycle.rs	calculated_date_formula_impacts_reach_patch_evidence	21
+inline-test	crates/workspace-engine/src/patch_lifecycle.rs	disclosure_slot_walk_count[cfg(test)]	22
+inline-test	crates/workspace-engine/src/patch_lifecycle.rs	tests[cfg(test)]	1415
+inline-test	crates/workspace-engine/src/resident_session.rs	installation_counters[cfg(test)]	19
+inline-test	crates/workspace-engine/src/resident_session.rs	local_validation_counters[cfg(test)]	30
+inline-test	crates/workspace-engine/src/resident_session.rs	tests[cfg(test)]	326
+inline-test	packages/browser-client/runtime/src/capacity.rs	iferror_tests[cfg(test)]	23
+inline-test	packages/browser-client/runtime/src/display_text.rs	tests[cfg(test)]	166
+inline-test	packages/browser-client/runtime/src/host_bridge.rs	source_reuse_tests[cfg(test)]	56
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	capacity_proof_tests[cfg(test)]	309
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	column_number_format_inference_tests[cfg(test)]	47
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	date_guard_inventory_tests[cfg(test)]	23
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_tests[cfg(test)]	43
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	ledger_cap_tests[cfg(test)]	263
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]	988
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	scalar_carrier_tests[cfg(test)]	47
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	xml_scope_tests[cfg(test)]	42
+inline-test	packages/browser-client/runtime/src/interop_adapter.rs	xstring_tests[cfg(test)]	233
+inline-test	packages/browser-client/runtime/src/interop_date_format.rs	tests[cfg(test)]	24
+inline-test	packages/browser-client/runtime/src/interop_document.rs	a1_import_boundary_tests[cfg(test)]	17
+inline-test	packages/browser-client/runtime/src/interop_document.rs	extremum_tests[cfg(test)]	92
+inline-test	packages/browser-client/runtime/src/interop_document.rs	import_dependency_tests[cfg(test)]	315
+inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
+inline-test	packages/browser-client/runtime/src/interop_number_format.rs	tests[cfg(test)]	278
+inline-test	packages/browser-client/runtime/src/lib.rs	admission_counters[cfg(test)]	25
+inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2870
+inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
+inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
+inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
+inline-test	packages/browser-client/runtime/src/source_reuse.rs	tests[cfg(test)]	64
+inline-test	packages/browser-client/runtime/src/wasm.rs	native_tables_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	85
+inline-test	packages/browser-client/runtime/src/wasm.rs	ranked_import_ingress_tests[cfg(all(test,not(target_arch="wasm32")))]	46
+inline-test	packages/browser-client/runtime/src/wasm.rs	row_rank_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	251
+pub	crates/ai-api/src/lib.rs		41
+pub	crates/ai-api/src/security_boundary.rs		43
+pub	crates/formula-engine/src/lib.rs		75
+pub	crates/merge-engine/src/lib.rs		47
+pub	crates/semantic-core/src/model.rs		112
+pub	crates/workspace-engine/src/analysis_operations.rs		62
+pub	crates/workspace-engine/src/formula_operations.rs		69
+pub	crates/workspace-engine/src/lib.rs		177
+pub	crates/workspace-engine/src/patch_lifecycle.rs		186
+pub	crates/workspace-engine/src/resident_session.rs		79
+pub	packages/browser-client/runtime/src/interop_adapter.rs		84
+pub	packages/browser-client/runtime/src/interop_document.rs		74
+pub	packages/browser-client/runtime/src/lib.rs		335
+reason	crates/cli/src/main.rs	execute allow(clippy::too_many_lines)	1
+reason	crates/diff-engine/src/canonical_delta.rs	compare_schema allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/src/evaluation.rs	exact_sum allow(clippy::float_cmp)	1
+reason	crates/formula-engine/src/evaluation.rs	shift_date allow(clippy::cast_possible_truncation)	1
+reason	crates/formula-engine/src/lib.rs	bind_node allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
+reason	crates/formula-engine/src/lib.rs	bind_node allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/src/lib.rs	bind_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
+reason	crates/formula-engine/src/lib.rs	pregraph_failures allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/src/lib.rs	render_bound allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/src/parser.rs	format_unbound_expression allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/tests/conditional_aggregate.rs	a_criterion_can_read_another_cell allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
+reason	crates/formula-engine/tests/conditional_aggregate.rs	update allow(clippy::needless_pass_by_value)	1
+reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
+reason	crates/semantic-core/src/criterion.rs	<CriterionTest>::matches_equal allow(clippy::float_cmp)	1
+reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
+reason	crates/semantic-core/src/presentation.rs	validate_presentation allow(clippy::too_many_lines)	1
+reason	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value allow(clippy::too_many_arguments)	1
+reason	crates/semantic-core/src/validation.rs	validate_value allow(clippy::too_many_arguments)	1
+reason	crates/semantic-core/tests/diagnostic_contract.rs	duplicate_keys_identify_distinct_store_entries_when_declared_ids_match allow(clippy::too_many_lines)	1
+reason	crates/storage/src/direct_ro/v2.rs	deserialize_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
+reason	crates/storage/src/direct_ro/v2.rs	write_expression allow(clippy::too_many_lines)	1
+reason	crates/storage/src/presentation.rs	parse_presentation allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	issue_175_admit_a0_a1 allow(dead_code) cfg_attr(test)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	admit_one_pass_host allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	admit_one_pass_host_controlled allow(clippy::too_many_arguments,clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	emit_host_sample allow(clippy::too_many_arguments)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	emit_matrix_sample allow(clippy::too_many_arguments)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	issue_175_progressive_background_interference_and_cancellation allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	issue_175_sidecar_child allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	late_invalid_pressure_document allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	require_release_profile allow(clippy::assertions_on_constants)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	run_a0_host_sample allow(clippy::too_many_arguments)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	run_a1_host_sample allow(clippy::too_many_arguments)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	run_matrix_arm allow(clippy::too_many_arguments)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	scan_spine_host allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v1/issue_175_research.rs	validate_structural_coverage allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v3.rs	deserialize_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
+reason	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits allow(clippy::too_many_lines)	1
+reason	crates/storage/src/roproj/v3.rs	write_expression allow(clippy::too_many_lines)	1
+reason	crates/storage/tests/roproj_v3_acceptance.rs	field_member_order_and_constraint_bytes_are_fixed allow(clippy::unicode_not_nfc)	1
+reason	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::query_analysis_pair allow(clippy::too_many_arguments)	1
+reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::derive_disclosures allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::insert_change_disclosures allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::insert_command_disclosures allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/formula_operations.rs	FormulaReasoningOutcome allow(clippy::large_enum_variant)	1
+reason	crates/workspace-engine/src/incremental_preparation_tests.rs	prepared_evaluation_matches_full_validation_for_every_candidate_kind allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/lib.rs	formula_diagnostics allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/lib.rs	serialize_optional_calculated_value allow(clippy::ref_option)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::execute_profile allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_candidate allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_remove_schema_field allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::preview_profile allow(clippy::too_many_arguments)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_inner allow(clippy::too_many_arguments)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propose_inner allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	tests[cfg(test)]::keyed_grouped_sum_document allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/src/patch_lifecycle.rs	tests[cfg(test)]::nested_storage_grows_the_weight allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/capability_discovery.rs	document allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/common/mod.rs	allow(dead_code)	1
+reason	crates/workspace-engine/tests/constraint_publication_v2_acceptance.rs	constraint_review_requires_query_for_transitive_formula_dependencies allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/constraint_publication_v2_acceptance.rs	formula_impact_requires_query_for_unchanged_calculation_operand allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/constraint_publication_v2_acceptance.rs	valid_set_clear_and_inverse_publish_one_complete_fact_each allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/issue_175_residency.rs	require_release_profile allow(clippy::assertions_on_constants)	1
+reason	crates/workspace-engine/tests/issue_523_definition_batch_acceptance.rs	Outcome allow(clippy::large_enum_variant)	1
+reason	crates/workspace-engine/tests/issue_523_definition_batch_acceptance.rs	keyed_grouped_sum_document allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/issue_523_definition_batch_acceptance.rs	named_definition_case allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/issue_523_definition_batch_acceptance.rs	v2_definition_invalid_unauthorized_approval_and_stale_refusals_remain_atomic allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	constraint_review_requires_disclosure_before_review_credit allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	constraint_review_requires_transitive_formula_dependency_query allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	constraint_review_tracks_candidate_values_formula_results_and_stable_order allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	text_constraint_review_marks_nonnumeric_instances_without_calculation allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	v2_entity_and_schema_commands_publish_complete_facts_on_constrained_base allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	v2_value_edit_on_constrained_base_keeps_formula_impact_and_query_disclosure allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/lifecycle_v2.rs	wrong_profile_preview_and_execute_refuse_without_publication_or_fake_evidence allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/resident_session.rs	an_edit_publishes_the_same_result_through_the_borrowed_publication_seam allow(clippy::too_many_lines)	1
+reason	crates/workspace-engine/tests/retained_state_oracle.rs	apply_specific_check allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::paste_cells_at allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_809_bench.rs	capacity_809_formula_table allow(clippy::assertions_on_constants,clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_bench.rs	capacity_formula_count_sweep allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_bench.rs	capacity_stage_a_baseline allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_bench.rs	qualify_working_size_edits allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_bench.rs	qualify_working_size_shape allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_fixtures.rs	capacity_document allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/capacity_stage5_bench.rs	capacity_stage5_qualification allow(clippy::assertions_on_constants)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	CellStyle allow(clippy::struct_excessive_bools)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	date_from_serial allow(clippy::cast_possible_truncation,clippy::float_cmp)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx allow(clippy::format_push_string,clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile allow(clippy::format_push_string,clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	is_zero allow(clippy::trivially_copy_pass_by_ref)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]::native_tables_compatibility_cell_inventory_boundaries allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]::native_tables_compatibility_name_inventory_boundaries allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]::native_tables_torture_workbook_for_independent_reader allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	parse_xml_profile allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	root_inventory allow(clippy::case_sensitive_file_extension_comparisons)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	unsupported_formula_function allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_profile allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula allow(clippy::too_many_arguments)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	build_import_sheet allow(clippy::too_many_arguments,clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	current_import_metadata allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	export_in allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	import_dependency_tests[cfg(test)]::import_binding_matches_canonical_rebinding_and_reuses_number_slot_maps allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	native_budget_metadata allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_document.rs	validate_selection allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_presentation_tests.rs	imported_store_overrides_metadata_and_csv_ignores_presentation allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_presentation_tests.rs	native_presentation_is_projected_and_survives_xlsx allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/interop_presentation_tests.rs	stage5_promotion_export_reopen_and_working_size allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness allow(clippy::too_many_arguments)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::budget_document allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column_type allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::query_group_totals allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::record_column_presentation allow(clippy::too_many_arguments)	1
+reason	packages/browser-client/runtime/src/lib.rs	ensure_static_profile allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	formula_failure_projection allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	is_default_text_order allow(clippy::trivially_copy_pass_by_ref)	1
+reason	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]::saved_definitions_survive_named_nameless_transitions_and_history allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/lib.rs	wasm[cfg(all(test,not(target_arch="wasm32")))] allow(clippy::cast_possible_truncation)	1
+reason	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/save_size.rs	expression_bytes allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/src/wasm/import_capacity_tests.rs	source_xlsx allow(clippy::format_push_string)	1
+reason	packages/browser-client/runtime/src/wasm/import_capacity_tests.rs	working_xlsx allow(clippy::format_push_string)	1
+reason	packages/browser-client/runtime/src/working_size_tests.rs	allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/capacity_date_boolean.rs	typed_6304_by_4_complete_lifecycle allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/designer_runtime.rs	budget_open_and_formula_updates_use_the_authoritative_cross_collection_lifecycle allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/group_totals.rs	allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/imported_structural_export.rs	imported_style_inventory_refuses_before_excel_format_resource_limits allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/interop_document.rs	date_functions_round_trip_through_xlsx allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/move_cells.rs	fixture allow(clippy::unnecessary_wraps)	1
+reason	packages/browser-client/runtime/tests/native_tracker_export.rs	native_tracker_exports_all_128_rows_without_import_provenance_or_mutation allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/optional_native_fields.rs	blank_editability_matches_native_authoring_for_imported_collections allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/optional_native_fields.rs	runtime_clear_of_optional_formula_input_calculates_zero_and_round_trips_history allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/optional_native_fields.rs	wire_journey_preserves_sparse_values_and_atomic_history allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs	assert_resident_unchanged allow(clippy::too_many_arguments)	1
+reason	packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs	fixture allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs	native_rectangular_capacity_complete_lifecycle allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/rectangular_capacity_acceptance.rs	native_required_mixed_65_to_64_refusal_preserves_resident_and_history allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/table_window.rs	allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/translate_a1.rs	translate_a1_conditional_aggregates_translate_whole_columns allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/translate_a1.rs	translate_a1_steward_acceptance allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_acceptance_fixtures/mod.rs	inspect_existing_api allow(dead_code)	1
+reason	packages/browser-client/runtime/tests/v3_acceptance_fixtures/mod.rs	open_existing_api allow(dead_code)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	assert_opened_fixture allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	exact_full_catalogue_opened_projection_boundary_and_plus_one allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	independent_opened_projection allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	prepared allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	roundtrip allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	successful_legacy_replacement_clears_v3_origin_marker allow(clippy::too_many_lines)	1
+reason	packages/browser-client/runtime/tests/v3_project_acceptance.rs	version_gate_and_opaque_transfer_malformed_vectors_are_distinct_and_atomic allow(clippy::too_many_lines)	1
