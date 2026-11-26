@@ -7,7 +7,7 @@ const {instance: {exports: wasm}} = await WebAssembly.instantiate(await readFile
 const source = await readFile(workbookPath);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const budget = 64 * 1024 * 1024;
+const budget = 256 * 1024 * 1024;
 let peak = wasm.memory.buffer.byteLength;
 const common = {format: "xlsx", csv_options: {delimiter: ",", header: true}};
 

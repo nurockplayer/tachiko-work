@@ -25,13 +25,13 @@ use std::sync::Arc;
 
 use tachiko_semantic_core::{
     AddressIndex, AddressIndexError, ColumnAddress, ColumnCriterion, ColumnRef, ComparisonOperator,
-    ConditionalAggregate, Document, Expression, FieldAddress, FieldRef, FieldType,
+    ConditionalAggregate, Date, Document, Expression, FieldAddress, FieldRef, FieldType,
     FormulaExpressionType, MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, Number, Value,
 };
 use thiserror::Error;
 
 // Shared arithmetic only; this does not evaluate formulas.
-pub use evaluation::{average as numeric_average, exact_sum as numeric_sum};
+pub use evaluation::{average as numeric_average, days_from_civil, exact_sum as numeric_sum};
 
 pub use parser::{
     ExpressionComplexityError, FormulaParseError, UnboundColumnCriterion,
@@ -115,7 +115,7 @@ pub fn bind_expression_with_index(
 ) -> Result<Expression, FormulaBindError> {
     validate_unbound_expression_structure(expression)?;
     let bound = bind_node(document, index, owner, expression)?;
-    if bound.expression_type() != Some(FormulaExpressionType::Number) {
+    if !formula_type_is_valid(document, owner, &bound) {
         return Err(FormulaBindError::TypeMismatch {
             message:
                 "conditions are only valid in IF, AND, OR, or NOT; ROUND requires a numeric value"
@@ -123,6 +123,27 @@ pub fn bind_expression_with_index(
         });
     }
     Ok(bound)
+}
+
+fn field_type<'a>(document: &'a Document, field: &FieldRef) -> Option<&'a FieldType> {
+    let entity = document.entities.get(&field.entity)?;
+    Some(
+        &document
+            .schemas
+            .get(&entity.schema)?
+            .fields
+            .get(&field.field)?
+            .field_type,
+    )
+}
+
+fn formula_type_is_valid(document: &Document, owner: &FieldRef, expression: &Expression) -> bool {
+    let auto = field_type(document, owner) == Some(&FieldType::Auto);
+    match expression.expression_type_with_auto(auto) {
+        Some(FormulaExpressionType::Number) => true,
+        Some(FormulaExpressionType::Condition) => auto,
+        None => false,
+    }
 }
 
 /// Resolve one human address to a numeric stable target.
@@ -174,7 +195,10 @@ fn bind_numeric_reference(
     address: &FieldAddress,
 ) -> Result<FieldRef, FormulaBindError> {
     let (reference, field_type) = resolve_reference_target(document, index, address)?;
-    if field_type != FieldType::Number {
+    if !matches!(
+        field_type,
+        FieldType::Auto | FieldType::Number | FieldType::Date
+    ) {
         return Err(FormulaBindError::NonNumericTarget {
             address: address.clone(),
             reference,
@@ -345,6 +369,21 @@ fn bind_criterion_value(
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
     match expression {
+        UnboundExpression::AnchoredReference(address) => Ok(Expression::AnchoredReference(
+            bind_scalar_reference(document, index, address)?,
+        )),
+        UnboundExpression::AnchoredSameRowReference(field) => {
+            let normal = bind_criterion_value(
+                document,
+                index,
+                owner,
+                &UnboundExpression::SameRowReference(field.clone()),
+            )?;
+            let Expression::SameRowReference(field) = normal else {
+                unreachable!()
+            };
+            Ok(Expression::AnchoredSameRowReference(field))
+        }
         UnboundExpression::Reference(address) => Ok(Expression::Reference(bind_scalar_reference(
             document, index, address,
         )?)),
@@ -373,8 +412,12 @@ fn lookup_key_type<'a>(
     key: &Expression,
 ) -> Option<&'a FieldType> {
     let (entity, field) = match key {
-        Expression::Reference(reference) => (&reference.entity, &reference.field),
-        Expression::SameRowReference(field) => (&owner.entity, field),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            (&reference.entity, &reference.field)
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            (&owner.entity, field)
+        }
         _ => {
             return (key.expression_type() == Some(FormulaExpressionType::Number))
                 .then_some(&FieldType::Number);
@@ -400,6 +443,21 @@ fn bind_node(
 ) -> Result<Expression, FormulaBindError> {
     Ok(match expression {
         UnboundExpression::Number(number) => Expression::Number(*number),
+        UnboundExpression::AnchoredReference(address) => {
+            Expression::AnchoredReference(bind_numeric_reference(document, index, address)?)
+        }
+        UnboundExpression::AnchoredSameRowReference(field) => {
+            let normal = bind_node(
+                document,
+                index,
+                owner,
+                &UnboundExpression::SameRowReference(field.clone()),
+            )?;
+            let Expression::SameRowReference(field) = normal else {
+                unreachable!()
+            };
+            Expression::AnchoredSameRowReference(field)
+        }
         UnboundExpression::Reference(address) => {
             Expression::Reference(bind_numeric_reference(document, index, address)?)
         }
@@ -616,7 +674,10 @@ fn bind_date_reference(
 ) -> Result<Expression, FormulaBindError> {
     if !matches!(
         expression,
-        UnboundExpression::Reference(_) | UnboundExpression::SameRowReference(_)
+        UnboundExpression::Reference(_)
+            | UnboundExpression::SameRowReference(_)
+            | UnboundExpression::AnchoredReference(_)
+            | UnboundExpression::AnchoredSameRowReference(_)
     ) {
         return Err(FormulaBindError::TypeMismatch {
             message: format!("{name} requires a Date field reference"),
@@ -624,8 +685,12 @@ fn bind_date_reference(
     }
     let bound = bind_blank_reference(document, index, owner, expression)?;
     let reference = match &bound {
-        Expression::Reference(reference) => reference.clone(),
-        Expression::SameRowReference(field) => FieldRef::new(owner.entity.clone(), field.clone()),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            reference.clone()
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            FieldRef::new(owner.entity.clone(), field.clone())
+        }
         _ => unreachable!(),
     };
     let is_date = document
@@ -633,7 +698,7 @@ fn bind_date_reference(
         .get(&reference.entity)
         .and_then(|entity| document.schemas.get(&entity.schema))
         .and_then(|schema| schema.fields.get(&reference.field))
-        .is_some_and(|field| field.field_type == FieldType::Date);
+        .is_some_and(|field| matches!(field.field_type, FieldType::Auto | FieldType::Date));
     if !is_date {
         return Err(FormulaBindError::TypeMismatch {
             message: format!("{name} requires a Date field reference"),
@@ -648,10 +713,16 @@ fn bind_blank_reference(
     owner: &FieldRef,
     expression: &UnboundExpression,
 ) -> Result<Expression, FormulaBindError> {
+    let anchored = matches!(
+        expression,
+        UnboundExpression::AnchoredReference(_) | UnboundExpression::AnchoredSameRowReference(_)
+    );
     let (address, same_row) =
         match expression {
-            UnboundExpression::Reference(address) => (address.clone(), false),
-            UnboundExpression::SameRowReference(field) => {
+            UnboundExpression::Reference(address)
+            | UnboundExpression::AnchoredReference(address) => (address.clone(), false),
+            UnboundExpression::SameRowReference(field)
+            | UnboundExpression::AnchoredSameRowReference(field) => {
                 let entity = document.entities.get(&owner.entity).ok_or_else(|| {
                     FormulaBindError::Index {
                         source: Box::new(AddressIndexError::MissingBoundEntity {
@@ -674,10 +745,11 @@ fn bind_blank_reference(
                 address,
                 source: Box::new(source),
             })?;
-    Ok(if same_row {
-        Expression::SameRowReference(reference.field)
-    } else {
-        Expression::Reference(reference)
+    Ok(match (same_row, anchored) {
+        (true, true) => Expression::AnchoredSameRowReference(reference.field),
+        (true, false) => Expression::SameRowReference(reference.field),
+        (false, true) => Expression::AnchoredReference(reference),
+        (false, false) => Expression::Reference(reference),
     })
 }
 
@@ -800,6 +872,14 @@ fn render_bound(
         Expression::SameRowReference(field) => {
             let reference = FieldRef::new(owner.entity.clone(), field.clone());
             format!("[.{}]", addresses[&reference].field)
+        }
+        Expression::AnchoredReference(reference) => {
+            let address = &addresses[reference];
+            format!("[{}.${}]", address.entity, address.field)
+        }
+        Expression::AnchoredSameRowReference(field) => {
+            let reference = FieldRef::new(owner.entity.clone(), field.clone());
+            format!("[.${}]", addresses[&reference].field)
         }
         Expression::ColumnTotal(column) => {
             let address = &columns[column];
@@ -1124,9 +1204,28 @@ pub fn extract_dependencies(
     dependencies
 }
 
+/// A successful, runtime-only formula result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CalculatedValue {
+    Number(Number),
+    Date(Date),
+    Text(String),
+    Boolean(bool),
+}
+
+impl CalculatedValue {
+    fn number(&self) -> Option<&Number> {
+        match self {
+            Self::Number(number) => Some(number),
+            Self::Date(_) | Self::Text(_) | Self::Boolean(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Calculation {
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
+    cell_failures: CellFailures,
     graph: DependencyGraph,
 }
 
@@ -1181,8 +1280,9 @@ pub struct IncrementalCalculationTransition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RetainedNodeProjection {
-    Value(Number),
+    Value(CalculatedValue),
     Failure(CalculationFailure),
+    CellFailure(CellFailure),
     Unavailable,
 }
 
@@ -1195,8 +1295,9 @@ struct DirtyCalculationImpact {
 
 struct FullCalculationParts {
     nodes: PartitionedSet<FieldRef>,
-    values: PartitionedMap<FieldRef, Number>,
+    values: PartitionedMap<FieldRef, CalculatedValue>,
     failures: FailureMap,
+    cell_failures: CellFailures,
     graph: DependencyGraph,
 }
 
@@ -1209,6 +1310,7 @@ impl RetainedCalculationState {
             nodes,
             values,
             failures,
+            cell_failures,
             graph,
         } = full_calculation_parts(document);
         let work = IncrementalCalculationWork {
@@ -1219,7 +1321,11 @@ impl RetainedCalculationState {
         (
             Self {
                 nodes,
-                calculation: Calculation { values, graph },
+                calculation: Calculation {
+                    values,
+                    cell_failures,
+                    graph,
+                },
                 failures,
             },
             work,
@@ -1468,6 +1574,7 @@ impl RetainedCalculationState {
 
         for field in dirty {
             self.failures.remove(field);
+            self.calculation.cell_failures.remove(field);
             self.calculation.values.remove(field);
         }
         self.failures
@@ -1481,6 +1588,7 @@ impl RetainedCalculationState {
             &dirty_formulas,
             &self.calculation.graph,
             &mut self.failures,
+            &mut self.calculation.cell_failures,
             &mut self.calculation.values,
         );
     }
@@ -1502,6 +1610,7 @@ impl RetainedCalculationState {
         } else {
             CalculationOutcome::Failed(CalculationFailures {
                 failures: self.failures.clone(),
+                cell_failures: self.calculation.cell_failures.clone(),
                 graph: self.calculation.graph.clone(),
             })
         }
@@ -1518,14 +1627,22 @@ impl RetainedCalculationState {
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
         self.failures
             .is_empty()
-            .then(|| self.calculation.values.get(field).copied())
+            .then(|| self.calculation.value(field))
+            .flatten()
+    }
+
+    #[must_use]
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.failures
+            .is_empty()
+            .then(|| self.calculation.calculated_value(field))
             .flatten()
     }
 
     /// Return the complete published value map only for an atomic successful
     /// outcome.
     #[must_use]
-    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, Number>> {
+    pub fn complete_values(&self) -> Option<&PartitionedMap<FieldRef, CalculatedValue>> {
         self.failures.is_empty().then_some(&self.calculation.values)
     }
 
@@ -1533,6 +1650,18 @@ impl RetainedCalculationState {
     #[must_use]
     pub fn failure(&self, field: &FieldRef) -> Option<&CalculationFailure> {
         self.failures.get(field)
+    }
+
+    /// Return a calculated error that can be published in an Auto cell.
+    #[must_use]
+    pub fn cell_failure(&self, field: &FieldRef) -> Option<&CellFailure> {
+        self.calculation.cell_failure(field)
+    }
+
+    /// Published Auto failures, including those read by refused formulas.
+    #[must_use]
+    pub fn cell_failures(&self) -> &BTreeMap<FieldRef, CellFailure> {
+        &self.calculation.cell_failures
     }
 
     /// Return all primary failures retained for the current revision.
@@ -1580,12 +1709,14 @@ impl RetainedCalculationState {
                 .map_or(RetainedNodeProjection::Unavailable, |failure| {
                     RetainedNodeProjection::Failure(failure.clone())
                 })
+        } else if let Some(failure) = self.cell_failure(field) {
+            RetainedNodeProjection::CellFailure(failure.clone())
         } else {
             self.calculation
                 .values
                 .get(field)
                 .map_or(RetainedNodeProjection::Unavailable, |value| {
-                    RetainedNodeProjection::Value(*value)
+                    RetainedNodeProjection::Value(value.clone())
                 })
         }
     }
@@ -1607,6 +1738,7 @@ impl RetainedCalculationState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CalculationFailures {
     failures: BTreeMap<FieldRef, CalculationFailure>,
+    cell_failures: CellFailures,
     graph: DependencyGraph,
 }
 
@@ -1615,6 +1747,12 @@ impl CalculationFailures {
     #[must_use]
     pub fn failures(&self) -> &BTreeMap<FieldRef, CalculationFailure> {
         &self.failures
+    }
+
+    /// Auto cells whose calculated errors are available to a refused formula.
+    #[must_use]
+    pub fn cell_failures(&self) -> &BTreeMap<FieldRef, CellFailure> {
+        &self.cell_failures
     }
 
     /// Return every statically extracted formula dependency set, including
@@ -1833,6 +1971,79 @@ pub enum CalculationFailure {
     },
 }
 
+/// A calculated error published in an Auto cell, with the cell where it began.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CellFailure {
+    pub code: CellFailureCode,
+    pub origin: FieldRef,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellFailureCode {
+    DivisionByZero,
+    Value,
+    Number,
+    Reference,
+}
+
+impl CellFailureCode {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "division_by_zero",
+            Self::Value => "value",
+            Self::Number => "number",
+            Self::Reference => "reference",
+        }
+    }
+
+    #[must_use]
+    pub const fn display(self) -> &'static str {
+        match self {
+            Self::DivisionByZero => "#DIV/0!",
+            Self::Value => "#VALUE!",
+            Self::Number => "#NUM!",
+            Self::Reference => "#REF!",
+        }
+    }
+}
+
+impl CellFailure {
+    fn from_error(
+        owner: &FieldRef,
+        failure: &CalculationFailure,
+        cell_failures: &CellFailures,
+    ) -> Self {
+        let code = match failure {
+            CalculationFailure::DivisionByZero | CalculationFailure::EmptyAggregate => {
+                CellFailureCode::DivisionByZero
+            }
+            CalculationFailure::TypeMismatch => CellFailureCode::Value,
+            CalculationFailure::NonFiniteResult => CellFailureCode::Number,
+            CalculationFailure::FailedDependencies { dependencies } => {
+                let origin = dependencies
+                    .first()
+                    .expect("a failed dependency names its target");
+                return cell_failures.get(origin).cloned().unwrap_or_else(|| Self {
+                    code: CellFailureCode::Reference,
+                    origin: origin.clone(),
+                });
+            }
+            CalculationFailure::LookupMissingKey => CellFailureCode::Reference,
+            CalculationFailure::InvalidExpression { .. }
+            | CalculationFailure::InvalidReferences { .. }
+            | CalculationFailure::Cycle { .. }
+            | CalculationFailure::InvalidColumn { .. } => {
+                unreachable!("formula definition failures precede evaluation")
+            }
+        };
+        Self {
+            code,
+            origin: owner.clone(),
+        }
+    }
+}
+
 /// Binding/type classification for one directly referenced stable value node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReferenceFailure {
@@ -1851,11 +2062,24 @@ pub enum ColumnFailure {
 impl Calculation {
     #[must_use]
     pub fn value(&self, field: &FieldRef) -> Option<Number> {
-        self.values.get(field).copied()
+        self.values
+            .get(field)
+            .and_then(CalculatedValue::number)
+            .copied()
     }
 
     #[must_use]
-    pub fn values(&self) -> &PartitionedMap<FieldRef, Number> {
+    pub fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.values.get(field).cloned()
+    }
+
+    #[must_use]
+    pub fn cell_failure(&self, field: &FieldRef) -> Option<&CellFailure> {
+        self.cell_failures.get(field)
+    }
+
+    #[must_use]
+    pub fn values(&self) -> &PartitionedMap<FieldRef, CalculatedValue> {
         &self.values
     }
 
@@ -1864,13 +2088,16 @@ impl Calculation {
     /// A key must be a formula in either calculation and have a value in both.
     /// Shared immutable value partitions are skipped without reading entries.
     #[must_use]
-    pub fn changed_formula_values(&self, after: &Self) -> Vec<(FieldRef, Number, Number)> {
+    pub fn changed_formula_values(
+        &self,
+        after: &Self,
+    ) -> Vec<(FieldRef, CalculatedValue, CalculatedValue)> {
         self.values
             .differing_entries(&after.values)
             .into_iter()
             .filter_map(|(field, before, value)| {
                 if self.graph.is_formula(field) || after.graph.is_formula(field) {
-                    Some((field.clone(), *before?, *value?))
+                    Some((field.clone(), before?.clone(), value?.clone()))
                 } else {
                     None
                 }
@@ -1974,20 +2201,30 @@ pub fn calculate_complete(document: &Document) -> CalculationOutcome {
     let FullCalculationParts {
         values,
         failures,
+        cell_failures,
         graph,
         ..
     } = full_calculation_parts(document);
 
     if failures.is_empty() {
-        CalculationOutcome::Complete(Calculation { values, graph })
+        CalculationOutcome::Complete(Calculation {
+            values,
+            cell_failures,
+            graph,
+        })
     } else {
-        CalculationOutcome::Failed(CalculationFailures { failures, graph })
+        CalculationOutcome::Failed(CalculationFailures {
+            failures,
+            cell_failures,
+            graph,
+        })
     }
 }
 
 type ValueNodes<'document> = BTreeMap<FieldRef, &'document Value>;
 type FormulaNodes<'document> = BTreeMap<FieldRef, &'document Expression>;
 type FailureMap = BTreeMap<FieldRef, CalculationFailure>;
+type CellFailures = BTreeMap<FieldRef, CellFailure>;
 
 fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     #[cfg(feature = "test-instrumentation")]
@@ -1996,11 +2233,20 @@ fn full_calculation_parts(document: &Document) -> FullCalculationParts {
     let mut failures = pregraph_failures(document, &nodes, &formulas);
     assign_cycle_failures(&formulas, &graph, &mut failures);
     let mut values = initial_values(&nodes, &failures);
-    evaluate_remaining_formulas(document, &formulas, &graph, &mut failures, &mut values);
+    let mut cell_failures = BTreeMap::new();
+    evaluate_remaining_formulas(
+        document,
+        &formulas,
+        &graph,
+        &mut failures,
+        &mut cell_failures,
+        &mut values,
+    );
     FullCalculationParts {
         nodes: nodes.into_keys().collect(),
         values: PartitionedMap::from_sorted_iter(values),
         failures,
+        cell_failures,
         graph,
     }
 }
@@ -2012,7 +2258,7 @@ fn collect_calculation_nodes(
     let mut formulas = BTreeMap::new();
     for (entity_id, entity) in &document.entities {
         for (field_id, value) in &entity.fields {
-            if matches!(value, Value::Number(_) | Value::Formula(_)) {
+            if matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)) {
                 let field = FieldRef::new(entity_id.clone(), field_id.clone());
                 nodes.insert(field.clone(), value);
                 if let Value::Formula(expression) = value {
@@ -2033,7 +2279,7 @@ fn calculation_value<'document>(
         .entities
         .get(&field.entity)
         .and_then(|entity| entity.fields.get(&field.field))
-        .filter(|value| matches!(value, Value::Number(_) | Value::Formula(_)))
+        .filter(|value| matches!(value, Value::Number(_) | Value::Date(_) | Value::Formula(_)))
 }
 
 /// The cells and columns one formula reads, from a document snapshot.
@@ -2516,7 +2762,7 @@ fn pregraph_failures(
                 formula.clone(),
                 CalculationFailure::InvalidExpression { error },
             );
-        } else if expression.expression_type() != Some(FormulaExpressionType::Number) {
+        } else if !formula_type_is_valid(document, formula, expression) {
             failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
         }
     }
@@ -2571,16 +2817,7 @@ fn pregraph_failures(
             continue;
         }
         let mut invalid_targets = BTreeMap::new();
-        let auto_scalar = !matches!(value, Value::Formula(_))
-            && document.entities.get(&field.entity).is_some_and(|entity| {
-                document.schemas.get(&entity.schema).is_some_and(|schema| {
-                    schema
-                        .fields
-                        .get(&field.field)
-                        .is_some_and(|definition| definition.field_type == FieldType::Auto)
-                })
-            });
-        if let Some(failure) = reference_failure(document, field, !auto_scalar) {
+        if let Some(failure) = reference_failure(document, field, true) {
             invalid_targets.insert(field.clone(), failure);
         }
         if let Value::Formula(expression) = value {
@@ -2662,14 +2899,20 @@ fn assign_cycle_failures(
     }
 }
 
-fn initial_values(nodes: &ValueNodes<'_>, failures: &FailureMap) -> BTreeMap<FieldRef, Number> {
+fn initial_values(
+    nodes: &ValueNodes<'_>,
+    failures: &FailureMap,
+) -> BTreeMap<FieldRef, CalculatedValue> {
     // Valid stored numbers are the initial ready values. Failed stored nodes
     // remain primary failures but never become partial published state.
     nodes
         .iter()
         .filter_map(|(field, value)| match value {
             Value::Number(number) if !failures.contains_key(field) => {
-                Some((field.clone(), *number))
+                Some((field.clone(), CalculatedValue::Number(*number)))
+            }
+            Value::Date(date) if !failures.contains_key(field) => {
+                Some((field.clone(), CalculatedValue::Date(*date)))
             }
             _ => None,
         })
@@ -2719,18 +2962,32 @@ fn remaining_counts(
     (dependency_counts, column_counts)
 }
 
-trait ValueStore: tachiko_semantic_core::FormulaValueLookup {
-    fn put(&mut self, field: FieldRef, value: Number);
+trait ValueStore {
+    fn number_value(&self, field: &FieldRef) -> Option<&Number>;
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue>;
+    fn put(&mut self, field: FieldRef, value: CalculatedValue);
 }
 
-impl ValueStore for BTreeMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for BTreeMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).cloned()
+    }
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
 
-impl ValueStore for PartitionedMap<FieldRef, Number> {
-    fn put(&mut self, field: FieldRef, value: Number) {
+impl ValueStore for PartitionedMap<FieldRef, CalculatedValue> {
+    fn calculated_value(&self, field: &FieldRef) -> Option<CalculatedValue> {
+        self.get(field).cloned()
+    }
+    fn number_value(&self, field: &FieldRef) -> Option<&Number> {
+        self.get(field).and_then(CalculatedValue::number)
+    }
+    fn put(&mut self, field: FieldRef, value: CalculatedValue) {
         self.insert(field, value);
     }
 }
@@ -2740,6 +2997,7 @@ fn evaluate_remaining_formulas<V: ValueStore>(
     formulas: &FormulaNodes<'_>,
     graph: &DependencyGraph,
     failures: &mut FailureMap,
+    cell_failures: &mut CellFailures,
     values: &mut V,
 ) {
     // Phases 3 and 4: process the remaining acyclic graph dependency-first.
@@ -2777,23 +3035,18 @@ fn evaluate_remaining_formulas<V: ValueStore>(
             values,
             columns: &mut columns,
         };
-        let failed_dependencies = evaluation.failed_required_references(expression, failures);
-        if failed_dependencies.is_empty() {
-            match evaluation.number(expression) {
-                Ok(value) => {
-                    values.put(formula.clone(), value);
-                }
-                Err(failure) => {
-                    failures.insert(formula.clone(), failure);
-                }
+        let result = evaluate_formula(&mut evaluation, expression, failures, cell_failures);
+        match result {
+            Ok(value) => values.put(formula.clone(), value),
+            Err(failure) if field_type(document, &formula) == Some(&FieldType::Auto) => {
+                cell_failures.insert(
+                    formula.clone(),
+                    CellFailure::from_error(&formula, &failure, cell_failures),
+                );
             }
-        } else {
-            failures.insert(
-                formula.clone(),
-                CalculationFailure::FailedDependencies {
-                    dependencies: failed_dependencies,
-                },
-            );
+            Err(failure) => {
+                failures.insert(formula.clone(), failure);
+            }
         }
 
         // Release this cell's direct readers, then the column it is a slot of.
@@ -2829,6 +3082,33 @@ fn evaluate_remaining_formulas<V: ValueStore>(
         remaining_dependency_counts.is_empty(),
         "SCC condensation must be acyclic"
     );
+}
+
+fn evaluate_formula<V: ValueStore>(
+    evaluation: &mut evaluation::Evaluation<'_, V>,
+    expression: &Expression,
+    failures: &FailureMap,
+    cell_failures: &CellFailures,
+) -> Result<CalculatedValue, CalculationFailure> {
+    let kind =
+        field_type(evaluation.document, evaluation.owner).expect("formula owner has a field");
+    if *kind == FieldType::Auto {
+        evaluation.calculated(expression)
+    } else {
+        let dependencies =
+            evaluation.failed_required_references(expression, failures, cell_failures);
+        if dependencies.is_empty() {
+            evaluation
+                .calculated(expression)
+                .and_then(|value| match (kind, &value) {
+                    (FieldType::Number, CalculatedValue::Number(_))
+                    | (FieldType::Date, CalculatedValue::Date(_)) => Ok(value),
+                    _ => Err(CalculationFailure::TypeMismatch),
+                })
+        } else {
+            Err(CalculationFailure::FailedDependencies { dependencies })
+        }
+    }
 }
 
 fn column_failures(
@@ -2892,7 +3172,12 @@ fn structural_reference_failure(
     else {
         return Some(ReferenceFailure::Missing);
     };
-    (numeric && definition.field_type != FieldType::Number).then_some(ReferenceFailure::NonNumeric)
+    (numeric
+        && !matches!(
+            definition.field_type,
+            FieldType::Auto | FieldType::Number | FieldType::Date
+        ))
+    .then_some(ReferenceFailure::NonNumeric)
 }
 
 fn reference_failure(
@@ -2903,14 +3188,14 @@ fn reference_failure(
     if let Some(failure) = structural_reference_failure(document, field, numeric) {
         return Some(failure);
     }
-    if !numeric {
-        return None;
-    }
     let entity = &document.entities[&field.entity];
     let definition = &document.schemas[&entity.schema].fields[&field.field];
+    if !numeric || definition.field_type == FieldType::Auto {
+        return None;
+    }
     match entity.fields.get(&field.field) {
-        Some(Value::Number(_) | Value::Formula(_)) => None,
-        Some(Value::Text(_) | Value::Boolean(_) | Value::Date(_) | Value::Reference(_)) => {
+        Some(Value::Number(_) | Value::Date(_) | Value::Formula(_)) => None,
+        Some(Value::Text(_) | Value::Boolean(_) | Value::Reference(_)) => {
             Some(ReferenceFailure::NonNumeric)
         }
         None if !definition.required => None,
@@ -3093,8 +3378,8 @@ mod causal_visits {
     }
 }
 
-impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, Number> {
+impl tachiko_semantic_core::FormulaValueLookup for PartitionedMap<FieldRef, CalculatedValue> {
     fn formula_value(&self, field: &FieldRef) -> Option<&Number> {
-        self.get(field)
+        self.get(field).and_then(CalculatedValue::number)
     }
 }

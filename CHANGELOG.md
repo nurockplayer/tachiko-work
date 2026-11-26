@@ -7,8 +7,28 @@ All notable changes to Tachiko Work are documented in this file.
 - Cover the WASM XLSX reservation ceiling and 256 MiB inspect/import budget in
   the browser carrier capacity boundary job (#933).
 
+- Copy worksheets to a destination index with `duplicateCollection`. One
+  Undo removes the copy and restores worksheet order. Saves and XLSX round
+  trips retain the order, and imported workbook metadata follows it (#953).
+
+- Move worksheets with `moveCollection`, with one-step Undo and Redo.
+  V3 and portable `.ro` saves and XLSX round trips retain worksheet order.
+  V3 emits the order only when it differs from stable Schema ID order (#953).
+
+- Evaluate formulas in Auto cells, including blank workbooks. Publish tagged
+  results and per-cell calculation errors, restore prior cells with one Undo,
+  and recalculate saved formulas when reopening v3 or portable `.ro` (#949).
+
+- Formula calculations retain Date results for Date references and whole-day
+  addition and subtraction, and publish their Date tag to browser clients (#860).
+  Date differences compose with numeric functions; impact previews, field
+  explanations, native-table row authoring and CSV/XLSX export retain calculated Dates.
+
 - Add `set_cell_style_range` for compact formatting requests over stored rows
   and selected fields, with one Undo/Redo step for the whole range (#922).
+
+- Preserve A1 column anchors in formula editing, sideways copy, and XLSX export.
+  Rendering shows a relative column for legacy fixed-row references (#921).
 
 - Translate and render headerless A1 formulas with row 1 as the first data row.
   Add `render_a1_formula` and atomic `paste_cells_at`: positional block paste

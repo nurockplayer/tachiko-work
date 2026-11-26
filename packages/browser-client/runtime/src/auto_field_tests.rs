@@ -474,44 +474,43 @@ fn auto_empty_text_clear_and_undo_remain_distinct() {
 }
 
 #[test]
-fn auto_formula_edit_and_paste_refuse_atomically_and_legacy_export_refuses() {
+fn auto_formula_edit_undo_and_invalid_formula_paste_are_atomic() {
     let (mut runtime, collection, field) = auto_table();
     samples(&mut runtime, &collection, &field);
     let target = FieldTarget {
-        entity: runtime.query_table(&collection).unwrap().rows[0].id.clone(),
+        entity: runtime.query_table(&collection).unwrap().rows[1].id.clone(),
         field: field.clone(),
     };
     let revision = runtime.current_revision().to_owned();
     let before = tags(&runtime, &collection);
-    let refusal = runtime
+    runtime
         .edit_scalar(&revision, &target, &auto("=1+1"))
-        .unwrap_err();
-    assert!(
-        refusal
-            .to_string()
-            .contains("Auto formulas are unsupported")
+        .unwrap();
+    let revision = runtime.current_revision().to_owned();
+    assert_eq!(
+        runtime
+            .query_fields(&revision, std::slice::from_ref(&target))
+            .unwrap()
+            .fields[0]
+            .calculated
+            .as_ref()
+            .unwrap()
+            .number(),
+        Some(2.0)
     );
-    let refusal = runtime
-        .publish_formula_update(&revision, &target, "1+1", None)
-        .unwrap_err();
+    runtime.history_edit(&revision, false).unwrap();
+    assert_eq!(tags(&runtime, &collection), before);
+    let revision = runtime.current_revision().to_owned();
     assert!(
-        refusal
-            .to_string()
-            .contains("Auto formulas are unsupported")
-    );
-    let refusal = runtime
-        .paste_cells(
-            &revision,
-            &collection,
-            Some(&target.entity),
-            &field,
-            &[vec!["9".into()], vec!["=1+1".into()]],
-        )
-        .unwrap_err();
-    assert!(
-        refusal
-            .to_string()
-            .contains("Auto formulas are unsupported")
+        runtime
+            .paste_cells(
+                &revision,
+                &collection,
+                Some(&target.entity),
+                &field,
+                &[vec!["9".into()], vec!["=1+".into()]],
+            )
+            .is_err()
     );
     assert_eq!(runtime.current_revision(), revision);
     assert_eq!(tags(&runtime, &collection), before);
@@ -522,6 +521,80 @@ fn auto_formula_edit_and_paste_refuse_atomically_and_legacy_export_refuses() {
             .to_string()
             .contains("Auto")
     );
+}
+
+#[test]
+fn auto_formulas_can_read_declared_numbers_and_declared_failures_refuse() {
+    let mut runtime = DesignerRuntime::new_table(
+        OCCURRENCE,
+        "Mixed",
+        &[
+            NewTableColumnInput {
+                name: "Input".into(),
+                field_type: "auto".into(),
+                required: false,
+            },
+            NewTableColumnInput {
+                name: "Result".into(),
+                field_type: "auto".into(),
+                required: false,
+            },
+            NewTableColumnInput {
+                name: "Typed".into(),
+                field_type: "number".into(),
+                required: false,
+            },
+        ],
+    )
+    .unwrap();
+    let collection = runtime.collection_specs.keys().next().unwrap().clone();
+    let columns = runtime.query_table(&collection).unwrap().columns;
+    runtime
+        .paste_cells(
+            "resident/0",
+            &collection,
+            None,
+            &columns[0].id,
+            &[vec!["00123".into(), "old".into(), "2".into()]],
+        )
+        .unwrap();
+    let row = runtime.query_table(&collection).unwrap().rows[0].id.clone();
+    let result = FieldTarget {
+        entity: row.clone(),
+        field: columns[1].id.clone(),
+    };
+    let typed = FieldTarget {
+        entity: row,
+        field: columns[2].id.clone(),
+    };
+    runtime
+        .update_formula("resident/1", &result, "[.input] + [.typed]")
+        .unwrap();
+    let fields = runtime
+        .query_fields("resident/2", std::slice::from_ref(&result))
+        .unwrap()
+        .fields;
+    assert_eq!(fields[0].calculated.as_ref().unwrap().number(), Some(125.0));
+    assert!(runtime.update_formula("resident/2", &typed, "1/0").is_err());
+    let publication = runtime
+        .update_formula("resident/2", &result, "1/0")
+        .unwrap();
+    assert_eq!(publication.resulting_revision, "resident/3");
+    let refusal = runtime
+        .update_formula("resident/3", &typed, "[.result]")
+        .unwrap_err();
+    let crate::DesignerError::Lifecycle(crate::PatchLifecycleError::ValidationFailed { report }) =
+        refusal
+    else {
+        panic!("declared value must refuse with validation diagnostics: {refusal}");
+    };
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("failed Auto cell"))
+    );
+    assert_eq!(runtime.current_revision(), "resident/3");
 }
 
 #[test]

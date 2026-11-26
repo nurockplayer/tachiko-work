@@ -634,6 +634,7 @@ export type TrackerCommand =
   | { type: "set_cell_style_range"; expected_revision: string; collection: string; row: number; row_count: number; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
+  | { type: "move_collection"; expected_revision: string; collection: string; to_index: number }
   | { type: "rename_table"; expected_revision: string; collection: string; name: string }
   | { type: "rename_column"; expected_revision: string; collection: string; field: string; name: string }
   | { type: "remove_column"; expected_revision: string; collection: string; field: string }
@@ -689,6 +690,7 @@ export type DesignerRequest =
   | { type: "new_blank_workbook"; occurrence_id: string; profile: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
+  | { type: "duplicate_collection_at"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string>; to_index: number }
   | { type: "delete_table"; expected_revision: string; collection: string }
   | { type: "add_table"; expected_revision: string; name: string; columns: NewTableColumnInput[] }
   | { type: "bootstrap"; occurrence_id: string }

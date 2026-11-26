@@ -1216,6 +1216,12 @@ fn formula_impact_requires_query_for_unchanged_calculation_operand() {
         preview.formula_impacts[0].field,
         FieldRef::new("entity", "result")
     );
-    assert_eq!(preview.formula_impacts[0].before, Number::new(3.5).unwrap());
-    assert_eq!(preview.formula_impacts[0].after, Number::new(4.5).unwrap());
+    assert_eq!(
+        preview.formula_impacts[0].before,
+        tachiko_formula_engine::CalculatedValue::Number(Number::new(3.5).unwrap())
+    );
+    assert_eq!(
+        preview.formula_impacts[0].after,
+        tachiko_formula_engine::CalculatedValue::Number(Number::new(4.5).unwrap())
+    );
 }

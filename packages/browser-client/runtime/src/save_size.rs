@@ -166,6 +166,24 @@ fn compact_number(name: &str, number: Number, comma: bool) -> u64 {
 }
 
 fn manifest_bytes(document: &Document) -> u64 {
+    let count = document.schemas.len();
+    // Reserve the optional manifest member across structural edits. Each
+    // schema can occur once in the worksheet order, with a two-byte separator.
+    let collection_order = if count > 1 {
+        pretty_literal(
+            1,
+            "collection_order",
+            total(
+                document
+                    .schemas
+                    .keys()
+                    .map(|id| string_bytes(id.as_str()) + 2),
+            ),
+            true,
+        )
+    } else {
+        0
+    };
     total([
         2, // "{\n"
         pretty_string(1, "format", "tachiko.roproj", true),
@@ -176,6 +194,7 @@ fn manifest_bytes(document: &Document) -> u64 {
         pretty_string(2, "title", &document.title, false),
         indent_bytes(1),
         2, // "}\n"
+        collection_order,
         2, // "}\n"
     ])
 }
@@ -643,6 +662,21 @@ fn expression_bytes(expression: &Expression) -> u64 {
         Expression::SameRowReference(field) => total([
             1,
             compact_string("op", "same_row_reference", true),
+            compact_string("args", field.as_str(), false),
+            1,
+        ]),
+        Expression::AnchoredReference(reference) => total([
+            1,
+            compact_string("op", "anchored_reference", true),
+            compact_prefix("args"),
+            1,
+            compact_string("entity", reference.entity.as_str(), true),
+            compact_string("field", reference.field.as_str(), false),
+            2,
+        ]),
+        Expression::AnchoredSameRowReference(field) => total([
+            1,
+            compact_string("op", "anchored_same_row_reference", true),
             compact_string("args", field.as_str(), false),
             1,
         ]),

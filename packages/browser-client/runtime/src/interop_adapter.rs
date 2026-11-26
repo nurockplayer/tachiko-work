@@ -866,7 +866,7 @@ fn strip_column_range(source: &str) -> Option<&str> {
 
 /// Inventory the closed formula wire grammar, independently of its cached
 /// result. Quoted worksheet references are names, never strings or numbers;
-/// a same-row reference is an unqualified relative A1 address.
+/// unqualified references allow either row and column anchor.
 /// A future serializer token outside this grammar refuses until it is governed.
 fn compatible_formula(
     formula: &str,
@@ -910,21 +910,21 @@ fn compatible_formula(
         {
             let open = remaining.find('(').ok_or_else(refuse)?;
             remaining = &remaining[open + 1..];
-        } else if remaining
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_uppercase)
+        } else if remaining.starts_with('$')
+            || remaining
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_uppercase)
         {
-            // A same-row reference is the owner's row as relative A1.
+            remaining = remaining.strip_prefix('$').unwrap_or(remaining);
             let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
-            let rows = remaining[columns..]
-                .bytes()
-                .take_while(u8::is_ascii_digit)
-                .count();
-            if rows == 0 {
+            remaining = &remaining[columns..];
+            remaining = remaining.strip_prefix('$').unwrap_or(remaining);
+            let rows = remaining.bytes().take_while(u8::is_ascii_digit).count();
+            if columns == 0 || rows == 0 {
                 return Err(refuse());
             }
-            remaining = &remaining[columns + rows..];
+            remaining = &remaining[rows..];
         } else if remaining.starts_with(['(', ')', '+', '-', '*', '/', ',', '=', '<', '>']) {
             remaining = &remaining[1..];
         } else {
@@ -960,7 +960,7 @@ fn compatible_formula(
     })
 }
 
-/// Consume one quoted, sheet-qualified absolute A1 reference, including an
+/// Consume one quoted, sheet-qualified A1 reference, including an
 /// optional whole-column range end in the same `$COL$ROW` shape.
 fn strip_quoted_formula_reference<'a>(
     mut remaining: &'a str,
@@ -992,12 +992,14 @@ fn strip_quoted_formula_reference<'a>(
         },
         &format!("{location}/reference/sheet-name"),
     )?;
-    remaining = remaining.strip_prefix("!$").ok_or_else(refuse)?;
+    remaining = remaining.strip_prefix('!').ok_or_else(refuse)?;
+    remaining = remaining.strip_prefix('$').unwrap_or(remaining);
     let columns = remaining.bytes().take_while(u8::is_ascii_uppercase).count();
     if columns == 0 {
         return Err(refuse());
     }
-    remaining = remaining[columns..].strip_prefix('$').ok_or_else(refuse)?;
+    remaining = &remaining[columns..];
+    remaining = remaining.strip_prefix('$').unwrap_or(remaining);
     let rows = remaining.bytes().take_while(u8::is_ascii_digit).count();
     if rows == 0 {
         return Err(refuse());
@@ -7137,6 +7139,17 @@ mod native_tables_output_tests {
                 .collect(),
             rows: vec![vec![SourceCell::default(); columns]; rows],
             layout: SourceLayout::default(),
+        }
+    }
+
+    #[test]
+    fn formula_compatibility_accepts_all_cell_anchor_forms() {
+        for prefix in ["", "'Data'!"] {
+            for address in ["$A$2", "$A2", "A$2", "A2"] {
+                let formula = format!("{prefix}{address}");
+                native_tables_compatibility(NativeTablesCheck::Formula(&formula), "test")
+                    .unwrap_or_else(|error| panic!("{formula}: {error:?}"));
+            }
         }
     }
 

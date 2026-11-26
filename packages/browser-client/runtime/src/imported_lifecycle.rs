@@ -1,6 +1,6 @@
 //! Runtime ownership of imported worksheet identity, names and source order.
 use tachiko_workspace_engine::patch_lifecycle::SemanticCommand;
-use tachiko_workspace_engine::{Document, Schema};
+use tachiko_workspace_engine::{Document, Schema, SchemaId};
 
 use crate::interop_document::{
     InteropColumnMetadata, InteropMetadata, InteropSheetMetadata,
@@ -47,20 +47,7 @@ impl DesignerRuntime {
             metadata: metadata.clone(),
             lifecycle_changed: false,
         });
-        self.order_imported_collections();
-    }
-
-    pub(super) fn order_imported_collections(&mut self) {
-        if let Some(state) = self.imported.as_ref() {
-            self.collections.sort_by_key(|collection| {
-                state
-                    .metadata
-                    .sheets
-                    .iter()
-                    .position(|sheet| sheet.schema_id == collection.id)
-                    .unwrap_or(usize::MAX)
-            });
-        }
+        self.order_collections();
     }
 
     /// Run the existing publisher against an independent occurrence before
@@ -149,6 +136,7 @@ impl DesignerRuntime {
         &self,
         document: &Document,
         commands: &[SemanticCommand],
+        order: Option<&[SchemaId]>,
     ) -> Result<Option<ImportedState>, DesignerError> {
         let Some(before) = &self.imported else {
             return Ok(None);
@@ -190,6 +178,14 @@ impl DesignerRuntime {
             {
                 state.metadata.sheets.push(added_sheet_metadata(schema));
             }
+        }
+        if let Some(order) = order {
+            state.metadata.sheets.sort_by_key(|sheet| {
+                order
+                    .iter()
+                    .position(|id| id.as_str() == sheet.schema_id)
+                    .unwrap_or(usize::MAX)
+            });
         }
         state.lifecycle_changed |= !same_mapping(&before.metadata, &state.metadata);
         validate_import_metadata_for_profile(document, &state.metadata, self.profile)?;

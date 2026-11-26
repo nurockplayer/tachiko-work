@@ -60,10 +60,9 @@ fn scalar_mapping(document: &Document, spec: &CollectionSpec) -> bool {
                 .all(|column| match entity.fields.get(&column.id) {
                     None => !column.required,
                     Some(Value::Text(_)) => column.field_type == FieldType::Text,
-                    // Formula cells require a current computed Number, also
-                    // used as the cached value when XLSX carries the formula.
-                    Some(Value::Number(_) | Value::Formula(_)) => {
-                        column.field_type == FieldType::Number
+                    Some(Value::Number(_)) => column.field_type == FieldType::Number,
+                    Some(Value::Formula(_)) => {
+                        matches!(column.field_type, FieldType::Number | FieldType::Date)
                     }
                     Some(Value::Boolean(_)) => column.field_type == FieldType::Boolean,
                     Some(Value::Date(_)) => column.field_type == FieldType::Date,
@@ -152,7 +151,7 @@ fn collection_findings(
         })
     {
         ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_values_only", &spec.summary.id,
-                "Formula cells export their current computed Number values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
+                "Formula cells export their current computed value values; formula definitions are not written to the spreadsheet. Retain the Tachiko source to keep the formulas.".into()));
     }
 }
 
@@ -182,23 +181,19 @@ fn write_formulas(
                 ExportColumn::new(range, Some(column.field_type.clone())),
             );
             for (i, entity) in spec.entities.iter().enumerate() {
+                let value = document.entities[entity].fields.get(&column.id);
                 addresses.insert(
                     FieldRef::new(entity.clone(), column.id.clone()),
                     ExportCell::new(
                         quoted.clone(),
                         letters.clone(),
                         i + 2,
-                        criterion_type(
-                            Some(&column.field_type),
-                            document.entities[entity].fields.get(&column.id),
-                        ),
+                        criterion_type(Some(&column.field_type), value),
                         column.field_type == FieldType::Date && !column.required,
-                    ),
+                    )
+                    .with_collection(&spec.summary.id),
                 );
-                count += usize::from(matches!(
-                    document.entities[entity].fields.get(&column.id),
-                    Some(Value::Formula(_))
-                ));
+                count += usize::from(matches!(value, Some(Value::Formula(_))));
             }
         }
         formula_counts.push(count);
@@ -226,29 +221,33 @@ fn write_formulas(
                     "collection {}/field {}/row {entity}",
                     spec.summary.id, column.id
                 );
-                let reason = match export_expression(expression, &target, &addresses, &columns) {
-                    Ok(text) if text.len() > crate::MAX_PROFILE_STRING_BYTES => {
-                        "the formula is longer than the export profile allows".into()
+                let reason = if column.field_type == FieldType::Date {
+                    "Date formula definitions are outside the native XLSX formula grammar".into()
+                } else {
+                    match export_expression(expression, &target, &addresses, &columns) {
+                        Ok(text) if text.len() > crate::MAX_PROFILE_STRING_BYTES => {
+                            "the formula is longer than the export profile allows".into()
+                        }
+                        Ok(text)
+                            if native_tables_compatibility(
+                                NativeTablesCheck::Formula(&text),
+                                &location,
+                            )
+                            .is_err()
+                                || crate::interop_adapter::unsupported_formula_function(
+                                    &text, true,
+                                ) =>
+                        {
+                            "the formula is outside the native XLSX formula grammar".into()
+                        }
+                        Ok(text) => {
+                            sheet.rows[i][j].formula = Some(text);
+                            written = true;
+                            continue;
+                        }
+                        Err(DesignerError::InvalidTrackerOperation { message }) => message,
+                        Err(error) => error.to_string(),
                     }
-                    Ok(text)
-                        if native_tables_compatibility(
-                            NativeTablesCheck::Formula(&text),
-                            &location,
-                        )
-                        .is_err()
-                            || crate::interop_adapter::unsupported_formula_function(
-                                &text, true,
-                            ) =>
-                    {
-                        "the formula is outside the native XLSX formula grammar".into()
-                    }
-                    Ok(text) => {
-                        sheet.rows[i][j].formula = Some(text);
-                        written = true;
-                        continue;
-                    }
-                    Err(DesignerError::InvalidTrackerOperation { message }) => message,
-                    Err(error) => error.to_string(),
                 };
                 ledger.push(finding(FidelityCategory::LossyOnExport, "native_tables_formula_value_only", &location,
                     format!("Formula cell exports its current computed value only: {reason}. Retain the Tachiko source to keep the formula.")));
@@ -256,12 +255,12 @@ fn write_formulas(
         }
         if written {
             ledger.push(finding(FidelityCategory::Converted, "native_tables_formulas_written", &spec.summary.id,
-                "Formula cells export as Excel formulas over the exported cells, with their current computed Number kept as the cached value.".into()));
+                "Formula cells export as Excel formulas over the exported cells, with their current computed value kept as the cached value.".into()));
         }
     }
 }
 
-/// Current calculated Number for every formula cell in the selected collection.
+/// Current calculated value for every formula cell in the selected collection.
 /// The resident snapshot is authoritative; no stored or cached result is read.
 fn computed_formula_values(
     runtime: &DesignerRuntime,
@@ -350,7 +349,7 @@ fn mapped_name(source: &str, worksheet: bool, used: &mut BTreeSet<String>) -> St
     unreachable!("the finite export profile cannot exhaust name suffixes")
 }
 
-/// Project one stored scalar or one formula's current computed Number. A
+/// Project one stored scalar or one formula's current computed value. A
 /// formula without a current result refuses instead of writing a blank.
 fn projected_cell(
     document: &Document,
@@ -390,13 +389,36 @@ fn projected_cell(
         spec.summary.id, column.id
     );
     let value = match computed.get(&target) {
-        Some(crate::CalculationProjection::Value { value, .. }) => *value,
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Date { value }),
+            ..
+        }) => crate::interop_adapter::SourceValue::Date {
+            value: value.to_string(),
+        },
+        Some(crate::CalculationProjection::Value {
+            value,
+            result: None | Some(crate::StoredValueProjection::Number { .. }),
+        }) => crate::interop_adapter::SourceValue::Number { value: *value },
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Text { value }),
+            ..
+        }) => crate::interop_adapter::SourceValue::Text {
+            value: value.clone(),
+        },
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Boolean { value }),
+            ..
+        }) => crate::interop_adapter::SourceValue::Boolean { value: *value },
+        Some(crate::CalculationProjection::Value {
+            result: Some(crate::StoredValueProjection::Reference { .. }),
+            ..
+        }) => unreachable!("a formula cannot calculate a Reference"),
         Some(crate::CalculationProjection::Failure { code, message }) => {
             return Err(refused(
                 "native_tables_formula_value_unavailable",
                 &location,
                 format!(
-                    "Formula cell has no current Number result ({code}: {message}); export refuses rather than writing a blank or a stale value."
+                    "Formula cell has no current result ({code}: {message}); export refuses rather than writing a blank or a stale value."
                 ),
             ));
         }
@@ -404,11 +426,10 @@ fn projected_cell(
             return Err(refused(
                 "native_tables_formula_value_unavailable",
                 &location,
-                "Formula cell has no current Number result; export refuses rather than writing a blank or a stale value.",
+                "Formula cell has no current result; export refuses rather than writing a blank or a stale value.",
             ));
         }
     };
-    let value = crate::interop_adapter::SourceValue::Number { value };
     let style = if csv {
         crate::interop_adapter::CellStyle::default()
     } else {

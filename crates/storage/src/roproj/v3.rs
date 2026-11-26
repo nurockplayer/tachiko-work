@@ -183,7 +183,7 @@ impl CanonicalRoProjectV3 {
         let tree = CanonicalRoProjectV3 {
             files: canonical_files,
         };
-        let document =
+        let (document, collection_order) =
             decode_unvalidated(&tree).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         profile(&document).map_err(CanonicalRoProjectV3AdmissionError::Profile)?;
         check_v3_document(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
@@ -198,8 +198,8 @@ impl CanonicalRoProjectV3 {
                 .map_err(|error| presentation_error(&error))
                 .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         }
-        let expected =
-            encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+        let expected = encode_validated(&document, &collection_order)
+            .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         // `decode_presentation` already proved the optional member canonical, so
         // only the required nineteen files participate in this comparison.
         if expected.files.as_slice() != &tree.files[..ROPROJ_V3_PATHS.len()] {
@@ -211,6 +211,24 @@ impl CanonicalRoProjectV3 {
         }
         Ok((tree, document))
     }
+
+    /// Read the stored presentation, including worksheet order, from this canonical tree.
+    ///
+    /// # Errors
+    /// Returns a format error if the manifest or presentation records cannot be decoded.
+    pub fn presentation(&self) -> Result<PresentationStore, FormatError> {
+        let mut store = match self.file(ROPROJ_V3_PRESENTATION_PATH) {
+            Some(bytes) => decode_presentation(bytes)?,
+            None => PresentationStore::default(),
+        };
+        store.collection_order = decode_manifest(self.files[0].bytes())?
+            .collection_order
+            .unwrap_or_default()
+            .into_iter()
+            .map(SchemaId::from)
+            .collect();
+        Ok(store)
+    }
 }
 
 #[derive(Deserialize)]
@@ -219,6 +237,7 @@ struct ManifestV3 {
     format: String,
     format_version: u32,
     document: DocumentIdentityV3,
+    collection_order: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -409,6 +428,8 @@ pub(crate) enum ExpressionV3 {
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
+    AnchoredReference(FieldRefV3),
+    AnchoredSameRowReference(String),
     ColumnTotal(ColumnRefV3),
     ColumnAggregate(ColumnAggregateArgsV3),
     ColumnConditional(ColumnConditionalArgsV3),
@@ -649,6 +670,13 @@ impl DefinitionV3 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
+    encode_with_collection_order(document, &[])
+}
+
+fn encode_with_collection_order(
+    document: &Document,
+    order: &[SchemaId],
+) -> Result<CanonicalRoProjectV3, FormatError> {
     check_v3_document(document)?;
     validate_semantic_expression_limits(document)?;
     validate_keyed_grouped_sum_definitions(document).map_err(|error| {
@@ -656,11 +684,15 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> 
             message: format!("invalid keyed grouped-sum definition: {error}"),
         }
     })?;
-    encode_validated(document)
+    validate_collection_order(document, order)?;
+    encode_validated(document, order)
 }
 
-fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
-    let manifest = ManifestV3::from_semantic(document);
+fn encode_validated(
+    document: &Document,
+    order: &[SchemaId],
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    let manifest = ManifestV3::from_semantic(document, order);
     let mut schemas = document
         .schemas
         .values()
@@ -715,7 +747,7 @@ fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV3, FormatE
 /// representation error, or [`FormatError::InvalidDocument`] when semantic
 /// validation fails.
 pub fn decode(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
-    let document = decode_unvalidated(tree)?;
+    let (document, _) = decode_unvalidated(tree)?;
     check_v3_document(&document)?;
     validate_semantic_expression_limits(&document)?;
     Ok(document)
@@ -735,7 +767,7 @@ pub fn encode_with_presentation(
     store: &PresentationStore,
 ) -> Result<CanonicalRoProjectV3, FormatError> {
     validate_presentation(store, document).map_err(|error| presentation_error(&error))?;
-    let mut tree = encode(document)?;
+    let mut tree = encode_with_collection_order(document, &store.collection_order)?;
     if let Some(bytes) = encode_presentation(store)? {
         tree.files.push(CanonicalRoProjectFileV3 {
             path: ROPROJ_V3_PRESENTATION_PATH.to_owned(),
@@ -758,10 +790,7 @@ pub fn decode_with_presentation(
     tree: &CanonicalRoProjectV3,
 ) -> Result<(Document, PresentationStore), FormatError> {
     let document = decode(tree)?;
-    let store = match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
-        Some(bytes) => decode_presentation(bytes)?,
-        None => PresentationStore::default(),
-    };
+    let store = tree.presentation()?;
     validate_presentation(&store, &document).map_err(|error| presentation_error(&error))?;
     Ok((document, store))
 }
@@ -801,7 +830,9 @@ pub fn migrate_v2(
     encode(&document)
 }
 
-fn decode_unvalidated(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
+fn decode_unvalidated(
+    tree: &CanonicalRoProjectV3,
+) -> Result<(Document, Vec<SchemaId>), FormatError> {
     let manifest = decode_manifest(tree.file(ROPROJ_V3_PATHS[0]).ok_or_else(|| {
         FormatError::InvalidRoProjectRepresentation {
             message: "canonical tree is missing manifest.json".to_owned(),
@@ -829,7 +860,30 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV3) -> Result<Document, FormatErr
         entities,
         keyed_grouped_sum_definitions: definitions,
     };
-    Ok(document)
+    let order = manifest
+        .collection_order
+        .unwrap_or_default()
+        .into_iter()
+        .map(SchemaId::from)
+        .collect::<Vec<_>>();
+    validate_collection_order(&document, &order)?;
+    Ok((document, order))
+}
+
+fn validate_collection_order(document: &Document, order: &[SchemaId]) -> Result<(), FormatError> {
+    if !order.is_empty()
+        && (order.len() != document.schemas.len()
+            || order
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .ne(document.schemas.keys()))
+    {
+        return invalid_representation(
+            "collection_order must list every schema exactly once".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn check_v3_document(document: &Document) -> Result<(), FormatError> {
@@ -1191,7 +1245,10 @@ impl NumberV3 {
 fn require_date_operand(operand: &ExpressionV3) -> Result<(), FormatError> {
     if !matches!(
         operand,
-        ExpressionV3::Reference(_) | ExpressionV3::SameRowReference(_)
+        ExpressionV3::Reference(_)
+            | ExpressionV3::SameRowReference(_)
+            | ExpressionV3::AnchoredReference(_)
+            | ExpressionV3::AnchoredSameRowReference(_)
     ) {
         return invalid_representation("date function requires a field reference".to_owned());
     }
@@ -1216,11 +1273,11 @@ impl ExpressionV3 {
                 ));
             }
             match node {
-                Self::Reference(reference) => {
+                Self::Reference(reference) | Self::AnchoredReference(reference) => {
                     require_id("formula entity id", &reference.entity)?;
                     require_id("formula field id", &reference.field)?;
                 }
-                Self::SameRowReference(field) => {
+                Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     require_id("formula field id", field)?;
                 }
                 Self::ColumnTotal(column)
@@ -1299,7 +1356,10 @@ impl ExpressionV3 {
                 Self::IsBlank(expression) => {
                     if !matches!(
                         expression.as_ref(),
-                        Self::Reference(_) | Self::SameRowReference(_)
+                        Self::Reference(_)
+                            | Self::SameRowReference(_)
+                            | Self::AnchoredReference(_)
+                            | Self::AnchoredSameRowReference(_)
                     ) {
                         return invalid_representation(
                             "ISBLANK requires a field reference".to_owned(),
@@ -1320,6 +1380,12 @@ impl ExpressionV3 {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
             Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::AnchoredReference(reference) => {
+                Expression::AnchoredReference(FieldRef::new(reference.entity, reference.field))
+            }
+            Self::AnchoredSameRowReference(field) => {
+                Expression::AnchoredSameRowReference(FieldId::from(field))
+            }
             Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
                 SchemaId::from(column.schema),
                 FieldId::from(column.field),
@@ -1331,15 +1397,7 @@ impl ExpressionV3 {
                     FieldId::from(args.column.field),
                 ),
             },
-            Self::Lookup(args) => Expression::Lookup {
-                key: Box::new(args.key.into_semantic()?),
-                key_column: ColumnRef::new(args.key_column.schema, args.key_column.field),
-                result_column: ColumnRef::new(args.result_column.schema, args.result_column.field),
-                if_missing: args
-                    .if_missing
-                    .map(|value| value.into_semantic().map(Box::new))
-                    .transpose()?,
-            },
+            Self::Lookup(args) => args.into_semantic()?,
             Self::ColumnConditional(args) => column_conditional_into_semantic(args)?,
             Self::Add(arguments) => {
                 arguments.into_semantic(|left, right| Expression::Add { left, right })?
@@ -1511,6 +1569,20 @@ fn column_conditional_into_semantic(
     })
 }
 
+impl LookupArgumentsV3 {
+    fn into_semantic(self) -> Result<Expression, FormatError> {
+        Ok(Expression::Lookup {
+            key: Box::new(self.key.into_semantic()?),
+            key_column: ColumnRef::new(self.key_column.schema, self.key_column.field),
+            result_column: ColumnRef::new(self.result_column.schema, self.result_column.field),
+            if_missing: self
+                .if_missing
+                .map(|value| value.into_semantic().map(Box::new))
+                .transpose()?,
+        })
+    }
+}
+
 impl BinaryArgumentsV3 {
     fn into_semantic(
         self,
@@ -1524,7 +1596,10 @@ impl BinaryArgumentsV3 {
 }
 
 impl ManifestV3 {
-    fn from_semantic(document: &Document) -> Self {
+    fn from_semantic(document: &Document, order: &[SchemaId]) -> Self {
+        let custom_order = order
+            .windows(2)
+            .any(|pair| document.schemas[&pair[0]].key > document.schemas[&pair[1]].key);
         Self {
             format: "tachiko.roproj".to_owned(),
             format_version: ROPROJ_V3_FORMAT_VERSION,
@@ -1532,6 +1607,7 @@ impl ManifestV3 {
                 id: document.id.to_string(),
                 title: document.title.clone(),
             },
+            collection_order: custom_order.then(|| order.iter().map(ToString::to_string).collect()),
         }
     }
 }
@@ -1645,6 +1721,12 @@ impl ExpressionV3 {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
             Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::AnchoredReference(reference) => {
+                Self::AnchoredReference(FieldRefV3::from_semantic(reference))
+            }
+            Expression::AnchoredSameRowReference(field) => {
+                Self::AnchoredSameRowReference(field.to_string())
+            }
             Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV3 {
                 schema: column.schema.to_string(),
                 field: column.field.to_string(),
@@ -1812,7 +1894,20 @@ fn render_manifest(manifest: &ManifestV3) -> Result<String, FormatError> {
     pretty_member_string(&mut output, 2, "id", &manifest.document.id, true)?;
     pretty_member_string(&mut output, 2, "title", &manifest.document.title, false)?;
     push_indent(&mut output, 1);
-    output.push_str("}\n}\n");
+    output.push('}');
+    if let Some(order) = &manifest.collection_order {
+        output.push_str(",\n");
+        pretty_member_prefix(&mut output, 1, "collection_order")?;
+        output.push('[');
+        for (index, id) in order.iter().enumerate() {
+            if index > 0 {
+                output.push_str(", ");
+            }
+            write_json_string(&mut output, id)?;
+        }
+        output.push(']');
+    }
+    output.push_str("\n}\n");
     Ok(output)
 }
 
@@ -2193,6 +2288,18 @@ pub(crate) fn write_expression(
         }
         ExpressionV3::SameRowReference(field) => {
             compact_member_string(output, "op", "same_row_reference", true)?;
+            compact_member_string(output, "args", field, false)?;
+        }
+        ExpressionV3::AnchoredReference(reference) => {
+            compact_member_string(output, "op", "anchored_reference", true)?;
+            compact_member_prefix(output, "args")?;
+            output.push('{');
+            compact_member_string(output, "entity", &reference.entity, true)?;
+            compact_member_string(output, "field", &reference.field, false)?;
+            output.push('}');
+        }
+        ExpressionV3::AnchoredSameRowReference(field) => {
+            compact_member_string(output, "op", "anchored_same_row_reference", true)?;
             compact_member_string(output, "args", field, false)?;
         }
         ExpressionV3::ColumnTotal(column) => {
@@ -2610,7 +2717,10 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
                         if !matches!(
                             operand.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "date function requires a field reference".to_owned(),
@@ -2627,10 +2737,16 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Days { end, start } => {
                         if !matches!(
                             end.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) || !matches!(
                             start.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "date function requires a field reference".to_owned(),
@@ -2642,7 +2758,10 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::IsBlank(expression) => {
                         if !matches!(
                             expression.as_ref(),
-                            Expression::Reference(_) | Expression::SameRowReference(_)
+                            Expression::Reference(_)
+                                | Expression::SameRowReference(_)
+                                | Expression::AnchoredReference(_)
+                                | Expression::AnchoredSameRowReference(_)
                         ) {
                             return invalid_representation(
                                 "ISBLANK requires a field reference".to_owned(),
@@ -2669,6 +2788,8 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     Expression::Number(_)
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
+                    | Expression::AnchoredReference(_)
+                    | Expression::AnchoredSameRowReference(_)
                     | Expression::ColumnTotal(_)
                     | Expression::ColumnAggregate { .. } => {}
                 }

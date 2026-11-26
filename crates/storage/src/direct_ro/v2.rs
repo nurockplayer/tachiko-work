@@ -97,6 +97,8 @@ pub(crate) enum ExpressionV2 {
     Number(f64),
     Reference(FieldRefV2),
     SameRowReference(String),
+    AnchoredReference(FieldRefV2),
+    AnchoredSameRowReference(String),
     ColumnTotal(ColumnRefV2),
     ColumnAggregate(ColumnAggregateArgsV2),
     Add(BinaryArgsV2),
@@ -516,6 +518,13 @@ impl ExpressionV2 {
                 field: reference.field.to_string(),
             }),
             Expression::SameRowReference(field) => Self::SameRowReference(field.to_string()),
+            Expression::AnchoredReference(reference) => Self::AnchoredReference(FieldRefV2 {
+                entity: reference.entity.to_string(),
+                field: reference.field.to_string(),
+            }),
+            Expression::AnchoredSameRowReference(field) => {
+                Self::AnchoredSameRowReference(field.to_string())
+            }
             Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV2 {
                 schema: column.schema.to_string(),
                 field: column.field.to_string(),
@@ -622,8 +631,10 @@ impl ExpressionV2 {
             }
             match node {
                 Self::Number(number) => validate_number(*number)?,
-                Self::Reference(reference) => reference.validate(schemas, entities)?,
-                Self::SameRowReference(field) => {
+                Self::Reference(reference) | Self::AnchoredReference(reference) => {
+                    reference.validate(schemas, entities)?;
+                }
+                Self::SameRowReference(field) | Self::AnchoredSameRowReference(field) => {
                     if !schemas
                         .values()
                         .any(|schema| schema.fields.contains_key(field))
@@ -689,7 +700,10 @@ impl ExpressionV2 {
                 Self::IsBlank(expression) => {
                     if !matches!(
                         expression.as_ref(),
-                        Self::Reference(_) | Self::SameRowReference(_)
+                        Self::Reference(_)
+                            | Self::SameRowReference(_)
+                            | Self::AnchoredReference(_)
+                            | Self::AnchoredSameRowReference(_)
                     ) {
                         return invalid("ISBLANK requires a field reference".to_owned());
                     }
@@ -708,6 +722,12 @@ impl ExpressionV2 {
                 field: FieldId::from(reference.field),
             }),
             Self::SameRowReference(field) => Expression::SameRowReference(FieldId::from(field)),
+            Self::AnchoredReference(reference) => {
+                Expression::AnchoredReference(FieldRef::new(reference.entity, reference.field))
+            }
+            Self::AnchoredSameRowReference(field) => {
+                Expression::AnchoredSameRowReference(FieldId::from(field))
+            }
             Self::ColumnTotal(column) => Expression::ColumnTotal(ColumnRef::new(
                 SchemaId::from(column.schema),
                 FieldId::from(column.field),
@@ -857,7 +877,10 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::IsBlank(expression) => {
                 if !matches!(
                     expression.as_ref(),
-                    Expression::Reference(_) | Expression::SameRowReference(_)
+                    Expression::Reference(_)
+                        | Expression::SameRowReference(_)
+                        | Expression::AnchoredReference(_)
+                        | Expression::AnchoredSameRowReference(_)
                 ) {
                     return invalid("ISBLANK requires a field reference".to_owned());
                 }
@@ -875,6 +898,8 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::Number(_)
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
+            | Expression::AnchoredReference(_)
+            | Expression::AnchoredSameRowReference(_)
             | Expression::ColumnTotal(_)
             | Expression::ColumnAggregate { .. } => {}
         }
@@ -1101,6 +1126,21 @@ fn write_expression(
         }
         ExpressionV2::SameRowReference(field) => {
             member_string(output, indent + 1, "op", "same_row_reference", true)?;
+            member_string(output, indent + 1, "args", field, false)?;
+        }
+        ExpressionV2::AnchoredReference(reference) => {
+            member_string(output, indent + 1, "op", "anchored_reference", true)?;
+            member_prefix(output, indent + 1, "args")?;
+            write_field_ref(output, reference, indent + 1)?;
+        }
+        ExpressionV2::AnchoredSameRowReference(field) => {
+            member_string(
+                output,
+                indent + 1,
+                "op",
+                "anchored_same_row_reference",
+                true,
+            )?;
             member_string(output, indent + 1, "args", field, false)?;
         }
         ExpressionV2::ColumnTotal(column) => {

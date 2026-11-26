@@ -87,6 +87,7 @@ fn valid_condition() -> Expression {
 
 fn valid_store() -> PresentationStore {
     PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([
             ("s1".into(), full_style()),
             ("s2".into(), CellStyle::default()),
@@ -270,19 +271,21 @@ fn a_reference_to_a_missing_style_is_refused() {
 
 #[test]
 fn a_rule_condition_holding_a_reference_is_refused() {
-    let mut store = valid_store();
-    store.rules.get_mut(&RuleId::from("r1")).unwrap().condition = Expression::Compare {
-        operator: ComparisonOperator::Less,
-        left: Box::new(Expression::Reference(FieldRef::new(
-            EntityId::from("e1"),
-            FieldId::from("amount"),
-        ))),
-        right: Box::new(Expression::Number(number(0.0))),
-    };
-    assert_eq!(
-        validate_presentation(&store, &document()),
-        Err(PresentationError::RuleConditionReference { rule: "r1".into() })
-    );
+    for reference in [
+        Expression::Reference(FieldRef::new("e1", "amount")),
+        Expression::AnchoredReference(FieldRef::new("missing", "amount")),
+    ] {
+        let mut store = valid_store();
+        store.rules.get_mut(&RuleId::from("r1")).unwrap().condition = Expression::Compare {
+            operator: ComparisonOperator::Less,
+            left: Box::new(reference),
+            right: Box::new(Expression::Number(number(0.0))),
+        };
+        assert_eq!(
+            validate_presentation(&store, &document()),
+            Err(PresentationError::RuleConditionReference { rule: "r1".into() })
+        );
+    }
 }
 
 #[test]

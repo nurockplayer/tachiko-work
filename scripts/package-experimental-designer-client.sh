@@ -216,6 +216,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "setCellStyle",
     "setCellStyleRange",
     "moveColumn",
+    "moveCollection",
     "columnDisplayNameExplicit",
     "columnConstraintProjection",
     "editBoolean",

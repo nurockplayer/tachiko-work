@@ -108,6 +108,7 @@ fn full_style() -> CellStyle {
 
 fn store() -> PresentationStore {
     PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([
             (StyleId::from(STYLE_FULL), full_style()),
             (
@@ -200,6 +201,51 @@ fn a_store_round_trips_as_the_twentieth_member() {
     assert_eq!(decoded_store, store);
     let reencoded = encode_roproj_v3_with_presentation(&decoded_document, &decoded_store).unwrap();
     assert_eq!(files(&reencoded), files(&tree));
+}
+
+#[test]
+fn collection_order_is_canonical_only_for_a_nondefault_permutation() {
+    let mut document = document();
+    let mut products = document.schemas["orders"].clone();
+    products.id = "products".into();
+    products.key = "inventory".into();
+    document.schemas.insert(products.id.clone(), products);
+    let plain = encode_roproj_v3(&document).unwrap();
+    let mut presentation = PresentationStore {
+        collection_order: vec!["products".into(), "orders".into()],
+        ..PresentationStore::default()
+    };
+    let default = encode_roproj_v3_with_presentation(&document, &presentation).unwrap();
+    assert_eq!(files(&default), files(&plain));
+
+    presentation.collection_order.reverse();
+    let moved = encode_roproj_v3_with_presentation(&document, &presentation).unwrap();
+    let manifest = moved.file("manifest.json").unwrap();
+    assert!(
+        std::str::from_utf8(manifest)
+            .unwrap()
+            .ends_with("  },\n  \"collection_order\": [\"orders\", \"products\"]\n}\n")
+    );
+    let moved = CanonicalRoProjectV3::try_from_files(files(&moved)).unwrap();
+    assert_eq!(
+        decode_roproj_v3_with_presentation(&moved).unwrap().1,
+        presentation
+    );
+
+    for invalid in [
+        "[]",
+        "null",
+        "[\"products\", \"orders\"]",
+        "[\"orders\", \"orders\"]",
+        "[\"orders\", \"unknown\"]",
+    ] {
+        let mut noncanonical = files(&moved);
+        noncanonical[0].1 = std::str::from_utf8(manifest)
+            .unwrap()
+            .replace("[\"orders\", \"products\"]", invalid)
+            .into_bytes();
+        refused(noncanonical);
+    }
 }
 
 #[test]
