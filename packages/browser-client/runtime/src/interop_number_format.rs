@@ -259,11 +259,7 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
                 }
                 None
             }
-            '[' => {
-                let start = i + 1;
-                i = bracket_end(&chars, start)?;
-                bracket(&chars[start..i].iter().collect::<String>(), &mut conditions)?
-            }
+            '[' => scan_bracket(&chars, &mut i, &mut conditions)?,
             ';' => {
                 if sections.len() == 4 {
                     return Err("Number format exceeds four sections".into());
@@ -275,46 +271,11 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
             '@' | '.' | ',' | '/' | ':' | '%' | '+' | '-' | '(' | ')' | ' ' | '$' | '¥' | '￥'
             | '€' | '£' | '₩' | '₹' | '!' | '^' | '&' | '\'' | '~' | '{' | '}' | '=' | '<'
             | '>' => None,
-            _ if c.is_ascii_alphabetic() => {
-                let rest: String = chars[i..].iter().collect::<String>().to_ascii_lowercase();
-                if rest.starts_with("general") {
-                    i += 6;
-                    Some(Token::Number)
-                } else if rest.starts_with("am/pm") {
-                    i += 4;
-                    Some(Token::Clock)
-                } else if rest.starts_with("a/p") {
-                    i += 2;
-                    Some(Token::Clock)
-                } else if matches!(c, 'e' | 'E') {
-                    if !matches!(chars.get(i + 1), Some('+' | '-'))
-                        || !matches!(chars.get(i + 2), Some('0' | '#' | '?'))
-                        || !matches!(sections.last().and_then(|s| s.last()), Some(Token::Number))
-                    {
-                        return Err("Unsupported scientific number-format token".into());
-                    }
-                    i += 1;
-                    Some(Token::Number)
-                } else {
-                    let letter = c.to_ascii_lowercase();
-                    let start = i;
-                    while chars
-                        .get(i + 1)
-                        .is_some_and(|next| next.to_ascii_lowercase() == letter)
-                    {
-                        i += 1;
-                    }
-                    let count = i - start + 1;
-                    Some(match (letter, count) {
-                        ('y' | 'd', 1..=4) => Token::Calendar,
-                        ('m', 1..=2) => Token::ShortMonth,
-                        ('m', 3..=5) => Token::Month,
-                        ('h', 1..=2) => Token::Hour,
-                        ('s', 1..=2) => Token::Second,
-                        _ => return Err("Unknown number-format token".into()),
-                    })
-                }
-            }
+            _ if c.is_ascii_alphabetic() => Some(alphabetic_token(
+                &chars,
+                &mut i,
+                sections.last().and_then(|s| s.last()),
+            )?),
             _ => return Err("Unknown number-format token".into()),
         };
         if let Some(token) = token {
@@ -323,6 +284,67 @@ pub(crate) fn inspect(pattern: Option<&str>) -> Result<(NumberFormatKind, Vec<St
         i += 1;
     }
     uniform_kind(&sections).map(|kind| (kind, conditions))
+}
+
+fn alphabetic_token(
+    chars: &[char],
+    i: &mut usize,
+    previous: Option<&Token>,
+) -> Result<Token, String> {
+    let rest = chars[*i..].iter().collect::<String>().to_ascii_lowercase();
+    if rest.starts_with("general") {
+        *i += 6;
+        return Ok(Token::Number);
+    }
+    if rest.starts_with("am/pm") {
+        *i += 4;
+        return Ok(Token::Clock);
+    }
+    if rest.starts_with("a/p") {
+        *i += 2;
+        return Ok(Token::Clock);
+    }
+    let letter = chars[*i].to_ascii_lowercase();
+    if letter == 'e' {
+        if !matches!(chars.get(*i + 1), Some('+' | '-'))
+            || !matches!(chars.get(*i + 2), Some('0' | '#' | '?'))
+            || !matches!(previous, Some(Token::Number))
+        {
+            return Err("Unsupported scientific number-format token".into());
+        }
+        *i += 1;
+        return Ok(Token::Number);
+    }
+    calendar_or_time_token(chars, i, letter)
+}
+
+fn calendar_or_time_token(chars: &[char], i: &mut usize, letter: char) -> Result<Token, String> {
+    let start = *i;
+    while chars
+        .get(*i + 1)
+        .is_some_and(|next| next.to_ascii_lowercase() == letter)
+    {
+        *i += 1;
+    }
+    let count = *i - start + 1;
+    match (letter, count) {
+        ('y' | 'd', 1..=4) => Ok(Token::Calendar),
+        ('m', 1..=2) => Ok(Token::ShortMonth),
+        ('m', 3..=5) => Ok(Token::Month),
+        ('h', 1..=2) => Ok(Token::Hour),
+        ('s', 1..=2) => Ok(Token::Second),
+        _ => Err("Unknown number-format token".into()),
+    }
+}
+
+fn scan_bracket(
+    chars: &[char],
+    i: &mut usize,
+    conditions: &mut Vec<String>,
+) -> Result<Option<Token>, String> {
+    let start = *i + 1;
+    *i = bracket_end(chars, start)?;
+    bracket(&chars[start..*i].iter().collect::<String>(), conditions)
 }
 
 fn bracket_end(chars: &[char], mut i: usize) -> Result<usize, String> {
