@@ -183,7 +183,7 @@ impl CanonicalRoProjectV3 {
         let tree = CanonicalRoProjectV3 {
             files: canonical_files,
         };
-        let document =
+        let (document, collection_order) =
             decode_unvalidated(&tree).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         profile(&document).map_err(CanonicalRoProjectV3AdmissionError::Profile)?;
         check_v3_document(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
@@ -198,8 +198,8 @@ impl CanonicalRoProjectV3 {
                 .map_err(|error| presentation_error(&error))
                 .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         }
-        let expected =
-            encode_validated(&document).map_err(CanonicalRoProjectV3AdmissionError::Format)?;
+        let expected = encode_validated(&document, &collection_order)
+            .map_err(CanonicalRoProjectV3AdmissionError::Format)?;
         // `decode_presentation` already proved the optional member canonical, so
         // only the required nineteen files participate in this comparison.
         if expected.files.as_slice() != &tree.files[..ROPROJ_V3_PATHS.len()] {
@@ -211,6 +211,24 @@ impl CanonicalRoProjectV3 {
         }
         Ok((tree, document))
     }
+
+    /// Read the stored presentation, including worksheet order, from this canonical tree.
+    ///
+    /// # Errors
+    /// Returns a format error if the manifest or presentation records cannot be decoded.
+    pub fn presentation(&self) -> Result<PresentationStore, FormatError> {
+        let mut store = match self.file(ROPROJ_V3_PRESENTATION_PATH) {
+            Some(bytes) => decode_presentation(bytes)?,
+            None => PresentationStore::default(),
+        };
+        store.collection_order = decode_manifest(self.files[0].bytes())?
+            .collection_order
+            .unwrap_or_default()
+            .into_iter()
+            .map(SchemaId::from)
+            .collect();
+        Ok(store)
+    }
 }
 
 #[derive(Deserialize)]
@@ -219,6 +237,7 @@ struct ManifestV3 {
     format: String,
     format_version: u32,
     document: DocumentIdentityV3,
+    collection_order: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -651,6 +670,13 @@ impl DefinitionV3 {
 /// Returns [`FormatError::InvalidDocument`] when semantic validation fails or
 /// [`FormatError::Json`] when canonical JSON string encoding fails.
 pub fn encode(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
+    encode_with_collection_order(document, &[])
+}
+
+fn encode_with_collection_order(
+    document: &Document,
+    order: &[SchemaId],
+) -> Result<CanonicalRoProjectV3, FormatError> {
     check_v3_document(document)?;
     validate_semantic_expression_limits(document)?;
     validate_keyed_grouped_sum_definitions(document).map_err(|error| {
@@ -658,11 +684,15 @@ pub fn encode(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> 
             message: format!("invalid keyed grouped-sum definition: {error}"),
         }
     })?;
-    encode_validated(document)
+    validate_collection_order(document, order)?;
+    encode_validated(document, order)
 }
 
-fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV3, FormatError> {
-    let manifest = ManifestV3::from_semantic(document);
+fn encode_validated(
+    document: &Document,
+    order: &[SchemaId],
+) -> Result<CanonicalRoProjectV3, FormatError> {
+    let manifest = ManifestV3::from_semantic(document, order);
     let mut schemas = document
         .schemas
         .values()
@@ -717,7 +747,7 @@ fn encode_validated(document: &Document) -> Result<CanonicalRoProjectV3, FormatE
 /// representation error, or [`FormatError::InvalidDocument`] when semantic
 /// validation fails.
 pub fn decode(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
-    let document = decode_unvalidated(tree)?;
+    let (document, _) = decode_unvalidated(tree)?;
     check_v3_document(&document)?;
     validate_semantic_expression_limits(&document)?;
     Ok(document)
@@ -737,7 +767,7 @@ pub fn encode_with_presentation(
     store: &PresentationStore,
 ) -> Result<CanonicalRoProjectV3, FormatError> {
     validate_presentation(store, document).map_err(|error| presentation_error(&error))?;
-    let mut tree = encode(document)?;
+    let mut tree = encode_with_collection_order(document, &store.collection_order)?;
     if let Some(bytes) = encode_presentation(store)? {
         tree.files.push(CanonicalRoProjectFileV3 {
             path: ROPROJ_V3_PRESENTATION_PATH.to_owned(),
@@ -760,10 +790,7 @@ pub fn decode_with_presentation(
     tree: &CanonicalRoProjectV3,
 ) -> Result<(Document, PresentationStore), FormatError> {
     let document = decode(tree)?;
-    let store = match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
-        Some(bytes) => decode_presentation(bytes)?,
-        None => PresentationStore::default(),
-    };
+    let store = tree.presentation()?;
     validate_presentation(&store, &document).map_err(|error| presentation_error(&error))?;
     Ok((document, store))
 }
@@ -803,7 +830,9 @@ pub fn migrate_v2(
     encode(&document)
 }
 
-fn decode_unvalidated(tree: &CanonicalRoProjectV3) -> Result<Document, FormatError> {
+fn decode_unvalidated(
+    tree: &CanonicalRoProjectV3,
+) -> Result<(Document, Vec<SchemaId>), FormatError> {
     let manifest = decode_manifest(tree.file(ROPROJ_V3_PATHS[0]).ok_or_else(|| {
         FormatError::InvalidRoProjectRepresentation {
             message: "canonical tree is missing manifest.json".to_owned(),
@@ -831,7 +860,30 @@ fn decode_unvalidated(tree: &CanonicalRoProjectV3) -> Result<Document, FormatErr
         entities,
         keyed_grouped_sum_definitions: definitions,
     };
-    Ok(document)
+    let order = manifest
+        .collection_order
+        .unwrap_or_default()
+        .into_iter()
+        .map(SchemaId::from)
+        .collect::<Vec<_>>();
+    validate_collection_order(&document, &order)?;
+    Ok((document, order))
+}
+
+fn validate_collection_order(document: &Document, order: &[SchemaId]) -> Result<(), FormatError> {
+    if !order.is_empty()
+        && (order.len() != document.schemas.len()
+            || order
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .ne(document.schemas.keys()))
+    {
+        return invalid_representation(
+            "collection_order must list every schema exactly once".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn check_v3_document(document: &Document) -> Result<(), FormatError> {
@@ -1544,7 +1596,10 @@ impl BinaryArgumentsV3 {
 }
 
 impl ManifestV3 {
-    fn from_semantic(document: &Document) -> Self {
+    fn from_semantic(document: &Document, order: &[SchemaId]) -> Self {
+        let custom_order = order
+            .windows(2)
+            .any(|pair| document.schemas[&pair[0]].key > document.schemas[&pair[1]].key);
         Self {
             format: "tachiko.roproj".to_owned(),
             format_version: ROPROJ_V3_FORMAT_VERSION,
@@ -1552,6 +1607,7 @@ impl ManifestV3 {
                 id: document.id.to_string(),
                 title: document.title.clone(),
             },
+            collection_order: custom_order.then(|| order.iter().map(ToString::to_string).collect()),
         }
     }
 }
@@ -1838,7 +1894,20 @@ fn render_manifest(manifest: &ManifestV3) -> Result<String, FormatError> {
     pretty_member_string(&mut output, 2, "id", &manifest.document.id, true)?;
     pretty_member_string(&mut output, 2, "title", &manifest.document.title, false)?;
     push_indent(&mut output, 1);
-    output.push_str("}\n}\n");
+    output.push('}');
+    if let Some(order) = &manifest.collection_order {
+        output.push_str(",\n");
+        pretty_member_prefix(&mut output, 1, "collection_order")?;
+        output.push('[');
+        for (index, id) in order.iter().enumerate() {
+            if index > 0 {
+                output.push_str(", ");
+            }
+            write_json_string(&mut output, id)?;
+        }
+        output.push(']');
+    }
+    output.push_str("\n}\n");
     Ok(output)
 }
 

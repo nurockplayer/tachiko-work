@@ -35,7 +35,7 @@ version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
 that exception to a closed list of constructs until #579 freezes v3. None of them
 is part of this contract until its own Accepted ADR amends this text.
 
-V3's only DTO changes are: manifest version `3`; FieldDefinition's five
+V3's DTO changes include manifest version `3` and optional `collection_order`; FieldDefinition's five
 required members plus optional `display_name` and `number_format`; optional Schema `display_name`;
 the added `date` FieldType; the added `date` Value; and the constraint union
 below. All other v2 members, tags, requiredness, ordering,
@@ -60,7 +60,8 @@ a previously saved CORE package preserves its exact canonical/package bytes.
 
 ## Manifest and tree envelope
 
-`manifest.json` has fixed member order `format`, `format_version`, `document`:
+`manifest.json` has fixed member order `format`, `format_version`, `document`,
+then `collection_order` when present:
 
 ```json
 {
@@ -77,6 +78,16 @@ a previously saved CORE package preserves its exact canonical/package bytes.
 integer `3`; `document` has fixed member order `id`, `title`. Version dispatch
 happens before any other file or record is decoded. A missing, malformed,
 unsupported, or non-lexical version fails closed.
+
+`collection_order` is a Work-owned worksheet presentation order. When present,
+it is a JSON array of stable Schema IDs and lists every schema exactly once.
+The writer emits this member only for a permutation that differs from ascending
+collection-key order. Absence gives that native default and preserves existing
+canonical bytes. Imported sessions continue to use their source order from the
+import companion until a worksheet move. A companion supplied with an explicit
+saved order must list worksheets in that order. Pre-amendment strict v3 readers
+refuse manifests containing this member. This compatibility break is accepted
+for files that carry a custom order.
 
 ## Schema and field definition
 

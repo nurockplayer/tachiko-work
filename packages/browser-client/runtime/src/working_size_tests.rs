@@ -3668,6 +3668,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     };
     let style_id = style_id(&style).unwrap();
     let presentation = PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([(style_id.clone(), style)]),
         tables: BTreeMap::from([(
             SchemaId::from("entries"),

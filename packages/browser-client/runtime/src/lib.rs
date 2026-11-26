@@ -31,6 +31,7 @@ mod blank_workbook_tests;
 mod calculation_projection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod capacity_tests;
+mod collection_order;
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -70,8 +71,8 @@ use serde::{Deserialize, Serialize};
 use tachiko_storage::{
     CanonicalRoProjectAdmissionError, CanonicalRoProjectV1, CanonicalRoProjectV2,
     CanonicalRoProjectV3, FormatError, ROPROJ_V1_PATHS, ROPROJ_V2_PATHS, ROPROJ_V3_PATHS,
-    ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1, decode_presentation, decode_roproj_v2,
-    decode_roproj_v3, encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
+    ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1, decode_roproj_v2, decode_roproj_v3,
+    encode_portable_package_v1, encode_roproj_v1, encode_roproj_v2,
     encode_roproj_v3_with_presentation, from_bytes, to_canonical_string,
 };
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -394,6 +395,11 @@ pub enum DesignerRequest {
         expected_revision: String,
         collection: String,
         field: String,
+        to_index: u32,
+    },
+    MoveCollection {
+        expected_revision: String,
+        collection: String,
         to_index: u32,
     },
     SetColumnConstraint {
@@ -2633,6 +2639,7 @@ enum HistoryAction {
         store: PresentationStore,
         bytes: usize,
     },
+    CollectionOrder(Vec<SchemaId>),
     ColumnPresentation {
         schema: SchemaId,
         field: FieldId,
@@ -2674,6 +2681,7 @@ impl HistoryAction {
                     + default_collection.len()
             }
             Self::CellPresentation { bytes, .. } => *bytes,
+            Self::CollectionOrder(order) => order.iter().map(|id| id.as_str().len()).sum(),
             Self::ColumnPresentation { schema, field, .. } => {
                 schema.as_str().len() + field.as_str().len() + 128
             }
@@ -3629,6 +3637,7 @@ impl DesignerRuntime {
             SessionProfile::Ordinary | SessionProfile::TextCapacity => 0,
         };
         self.presentation = presentation;
+        self.order_collections();
         Ok(())
     }
 
@@ -4225,6 +4234,13 @@ impl DesignerRuntime {
                 &field,
                 to_index,
             )?)),
+            DesignerRequest::MoveCollection {
+                expected_revision,
+                collection,
+                to_index,
+            } => self
+                .move_collection(&expected_revision, &collection, to_index)
+                .map(DesignerResponse::Published),
             DesignerRequest::SetColumnConstraint {
                 expected_revision,
                 collection,
@@ -4802,7 +4818,7 @@ impl DesignerRuntime {
                         .to_owned(),
             });
         }
-        if !self.presentation.is_empty() {
+        if !self.presentation.is_empty() || self.has_custom_collection_order() {
             return Err(DesignerError::LegacyExportUnsupported {
                 message:
                     "presentation requires exportProjectV3, exportCanonicalTree or exportPortableRo"
@@ -4892,6 +4908,7 @@ impl DesignerRuntime {
         let snapshot = self.exact_snapshot(expected_revision)?;
         let bytes = if self.opened_from_v3
             || !self.presentation.is_empty()
+            || self.has_custom_collection_order()
             || document_requires_v2_evidence(snapshot.document())
         {
             ensure_export_document_profile(snapshot.document(), self.profile)?;
@@ -4960,7 +4977,14 @@ impl DesignerRuntime {
         &self,
         document: &Document,
     ) -> Result<CanonicalRoProjectV3, DesignerError> {
-        let presentation = prune_presentation(&self.presentation, document);
+        let mut presentation = prune_presentation(&self.presentation, document);
+        if self.imported.is_some() && !presentation.collection_order.is_empty() {
+            presentation.collection_order = self
+                .collections
+                .iter()
+                .map(|collection| SchemaId::from(collection.id.clone()))
+                .collect();
+        }
         Ok(encode_roproj_v3_with_presentation(document, &presentation)?)
     }
 
@@ -8348,7 +8372,7 @@ impl DesignerRuntime {
                         .values()
                         .map(|spec| spec.summary.clone())
                         .collect();
-                    self.order_imported_collections();
+                    self.order_collections();
                 }
                 None => self.refresh_structure(),
             }
@@ -8424,7 +8448,7 @@ impl DesignerRuntime {
             .values()
             .map(|spec| spec.summary.clone())
             .collect();
-        self.order_imported_collections();
+        self.order_collections();
     }
 
     fn max_table_rows(&self) -> usize {
@@ -8964,6 +8988,9 @@ impl DesignerRuntime {
             }
             HistoryAction::CellPresentation { store, .. } => {
                 self.apply_cell_presentation(expected, store.clone())
+            }
+            HistoryAction::CollectionOrder(order) => {
+                self.apply_collection_order(expected, order.clone(), imported.cloned())
             }
             HistoryAction::ColumnPresentation {
                 schema,
@@ -10197,6 +10224,7 @@ fn admit_portable_ro(
     let (mut candidate, mut opened) = admit_v3_document(document, occurrence_id)?;
     candidate.opened_from_v3 = true;
     candidate.set_presentation(presentation_from_tree(tree)?)?;
+    opened.bootstrap = candidate.bootstrap_projection();
     opened.table = candidate.query_table(&candidate.default_collection)?;
     ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
@@ -10293,6 +10321,7 @@ fn admit_project(
     };
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    opened.bootstrap = candidate.bootstrap_projection();
     opened.table = candidate.query_table(&candidate.default_collection)?;
     ensure_opened_projection_size(&opened, candidate.profile)?;
     Ok((candidate, opened))
@@ -10300,10 +10329,7 @@ fn admit_project(
 
 /// Read the optional presentation member from an already admitted v3 tree.
 fn presentation_from_tree(tree: &CanonicalRoProjectV3) -> Result<PresentationStore, DesignerError> {
-    match tree.file(ROPROJ_V3_PRESENTATION_PATH) {
-        Some(bytes) => Ok(decode_presentation(bytes)?),
-        None => Ok(PresentationStore::default()),
-    }
+    Ok(tree.presentation()?)
 }
 
 /// Admit a canonical project as a working-size occurrence.
@@ -10388,6 +10414,7 @@ pub(crate) fn admit_imported_project(
         let mut candidate = candidate;
         candidate.opened_from_v3 = true;
         candidate.set_presentation(presentation)?;
+        candidate.validate_saved_collection_order(metadata)?;
         interop_document::validate_saved_open_closure(&candidate, metadata)?;
         candidate.attach_imported_metadata(metadata);
         opened.bootstrap = candidate.bootstrap_projection();
@@ -10466,6 +10493,7 @@ pub(crate) fn admit_imported_project_working_size(
     let mut candidate = DesignerRuntime::from_document_working_size(document, occurrence_id)?;
     candidate.opened_from_v3 = opened_from_v3;
     candidate.set_presentation(presentation)?;
+    candidate.validate_saved_collection_order(metadata)?;
     interop_document::validate_saved_open_closure(&candidate, metadata)?;
     candidate.attach_imported_metadata(metadata);
     let opened = candidate.opened_window()?;

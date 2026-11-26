@@ -87,6 +87,7 @@ fn valid_condition() -> Expression {
 
 fn valid_store() -> PresentationStore {
     PresentationStore {
+        collection_order: Vec::new(),
         styles: BTreeMap::from([
             ("s1".into(), full_style()),
             ("s2".into(), CellStyle::default()),

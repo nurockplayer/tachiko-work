@@ -162,6 +162,14 @@ Rename a table with `renameTable(revision, collection, name)`, or send
 as table creation. Rename is one undoable revision and keeps the table ID and
 formula references stable.
 
+Move a worksheet with `moveCollection(revision, collection, toIndex)`, using
+its collection key and a zero-based destination index after removal. Destinations
+past the end move it to the last position. The call makes one undoable revision.
+Read the resulting tab order from `bootstrap().collections`. V3 project and
+portable `.ro` saves retain the order, as does XLSX export and reimport. For an
+imported workbook, keep the `publication.import_metadata` returned by the move,
+Undo, or Redo for subsequent save and export.
+
 Columns can be reordered with `moveColumn`. `toIndex` is a zero-based position
 after the column is removed from its current place, clamped to the last column.
 The order is durable document state: it is saved, undone, diffed and exported,

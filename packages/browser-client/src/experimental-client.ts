@@ -67,6 +67,8 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection>;
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;
+  /** Move a worksheet to a zero-based index in the workbook. */
+  moveCollection(expectedRevision: string, collection: string, toIndex: number): Promise<PublicationProjection>;
   exportNativeTablesSpreadsheet(expectedRevision: string, collection: string, format: SpreadsheetFormat): Promise<SpreadsheetExport>;
   exportProjectV3(expectedRevision: string, metadata?: InteropMetadata): Promise<ProjectExport>;
   /** Create a table whose session profile is the working-size one. */
