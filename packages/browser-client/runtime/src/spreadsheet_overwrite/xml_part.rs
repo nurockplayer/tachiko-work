@@ -25,7 +25,9 @@ pub(super) fn equivalent(path: &str, original: &[u8], regenerated: &[u8]) -> boo
     if original == regenerated {
         return true;
     }
-    if !path.ends_with(".xml") && !path.ends_with(".rels") {
+    if !path.rsplit_once('.').is_some_and(|(_, suffix)| {
+        suffix.eq_ignore_ascii_case("xml") || suffix.eq_ignore_ascii_case("rels")
+    }) {
         return false;
     }
     let mut original = XmlPart::new(original);
@@ -121,7 +123,7 @@ impl<'a> XmlPart<'a> {
 
     fn start(&mut self, element: &BytesStart<'_>) -> Option<Token> {
         let (namespace, local) = self.reader.resolve_element(element.name());
-        let name = expanded_name(namespace, local)?;
+        let name = expanded_name(&namespace, local)?;
         let mut attributes = BTreeMap::new();
         let mut preserve_space = self
             .elements
@@ -133,7 +135,7 @@ impl<'a> XmlPart<'a> {
                 continue;
             }
             let (namespace, local) = self.reader.resolve_attribute(attribute.key);
-            let key = expanded_name(namespace, local)?;
+            let key = expanded_name(&namespace, local)?;
             let value = attribute_value(&attribute.value)?;
             if key.0 == XML_NAMESPACE && key.1 == "space" {
                 preserve_space = value != "default";
@@ -153,7 +155,7 @@ impl<'a> XmlPart<'a> {
     }
 }
 
-fn expanded_name(namespace: ResolveResult<'_>, local: LocalName<'_>) -> Option<ExpandedName> {
+fn expanded_name(namespace: &ResolveResult<'_>, local: LocalName<'_>) -> Option<ExpandedName> {
     let uri = match namespace {
         ResolveResult::Unbound => String::new(),
         ResolveResult::Bound(namespace) => attribute_value(namespace.into_inner())?,
