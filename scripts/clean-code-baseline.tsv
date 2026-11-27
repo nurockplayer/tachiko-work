@@ -556,7 +556,6 @@ branches	packages/browser-client/runtime/src/lib.rs	native_table_row	21
 branches	packages/browser-client/runtime/src/lib.rs	plan_filter	15
 branches	packages/browser-client/runtime/src/lib.rs	process_wire_request	37
 branches	packages/browser-client/runtime/src/lib.rs	view_value	13
-branches	packages/browser-client/runtime/src/move_cells.rs	plan	16
 branches	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	29
 branches	packages/browser-client/runtime/src/native_tables_export.rs	mapped_name	16
 branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	44
