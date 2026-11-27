@@ -618,13 +618,79 @@ fn formula_to_text_refuses_without_using_calculated_number() {
 }
 
 #[test]
-fn required_source_cannot_be_blanked() {
+fn move_cells_refuses_vacating_required_number() {
     let mut runtime = fixture(document(5));
     refused(
         &mut runtime,
         move_request("resident/0", &[("r0.req", "r1.n")]),
         "invalid_table_operation",
     );
+}
+
+#[test]
+fn move_cells_vacates_required_text_and_undo_restores_both_ends() {
+    let mut doc = document(5);
+    doc.schemas
+        .get_mut(&SchemaId::from("rows"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("text"))
+        .unwrap()
+        .required = true;
+    set(
+        &mut doc,
+        "r4.dep",
+        Some(Value::Formula(Expression::Lookup {
+            key: Box::new(Expression::Reference(FieldRef::new("r0", "text"))),
+            key_column: ColumnRef::new("rows", "text"),
+            result_column: ColumnRef::new("rows", "n"),
+            if_missing: None,
+        })),
+    );
+    let mut runtime = fixture(doc);
+    publish(
+        &mut runtime,
+        DesignerRequest::SetCellStyle {
+            expected_revision: "resident/0".into(),
+            collection: "rows".into(),
+            entities: vec!["r0".into(), "r1".into()],
+            fields: vec!["text".into()],
+            changes: vec![CellStyleChange::Bold { value: true }],
+        },
+    );
+    let before = table(&mut runtime, "rows");
+    let bytes = saved(&runtime, "resident/1");
+    let move_cells = move_request(
+        "resident/1",
+        &[("r0.text", "r2.text"), ("r1.text", "r3.text")],
+    );
+    assert_eq!(
+        publish(&mut runtime, move_cells).resulting_revision,
+        "resident/2"
+    );
+
+    for (target, value) in [("r0", ""), ("r1", ""), ("r2", "text 0"), ("r3", "text 1")] {
+        assert_eq!(
+            field(&mut runtime, 2, &format!("{target}.text")).stored,
+            Some(StoredValueProjection::Text {
+                value: value.into()
+            })
+        );
+    }
+    let after = table(&mut runtime, "rows");
+    for (source, destination) in [(0, 2), (1, 3)] {
+        assert!(after.rows[source].styles.is_empty());
+        assert_eq!(after.rows[destination].styles, before.rows[source].styles);
+    }
+    assert_formula(
+        &mut runtime,
+        2,
+        "r4.dep",
+        3.0,
+        "LOOKUP([r2.text], [rows.text:column], [rows.n:column])",
+    );
+    history(&mut runtime, 2, false);
+    assert_eq!(saved(&runtime, "resident/3"), bytes);
 }
 
 #[test]
