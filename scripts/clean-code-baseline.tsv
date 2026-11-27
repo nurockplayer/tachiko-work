@@ -689,7 +689,6 @@ inline-test	crates/workspace-engine/src/resident_session.rs	local_validation_cou
 inline-test	crates/workspace-engine/src/resident_session.rs	tests[cfg(test)]	326
 inline-test	packages/browser-client/runtime/src/capacity.rs	iferror_tests[cfg(test)]	23
 inline-test	packages/browser-client/runtime/src/display_text.rs	tests[cfg(test)]	166
-inline-test	packages/browser-client/runtime/src/host_bridge.rs	source_reuse_tests[cfg(test)]	56
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	capacity_proof_tests[cfg(test)]	309
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	column_number_format_inference_tests[cfg(test)]	47
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	date_guard_inventory_tests[cfg(test)]	23
