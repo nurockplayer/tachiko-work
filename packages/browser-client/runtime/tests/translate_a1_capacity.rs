@@ -55,11 +55,15 @@ fn grid(row_count: usize, column_count: usize) -> Document {
 }
 
 fn geometry(document: &Document) -> Json {
-    let rows: Vec<_> = document.entities.keys().map(|id| id.as_str()).collect();
+    let rows: Vec<_> = document
+        .entities
+        .keys()
+        .map(tachiko_workspace_engine::EntityId::as_str)
+        .collect();
     let columns: Vec<_> = document.schemas["grid"]
         .fields
         .keys()
-        .map(|id| id.as_str())
+        .map(tachiko_workspace_engine::FieldId::as_str)
         .collect();
     json!({"header_row": 1, "rows": rows, "columns": columns})
 }
