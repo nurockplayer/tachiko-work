@@ -11,6 +11,7 @@ const present: FieldProjection = {
 };
 const blank: FieldProjection = {...present, blank: true, stored: null};
 const table: TableProjection = {
+  cell_styling: {status: "supported"},
   revision: "resident/0", collection: {id: "items", key: "items", display_name: "items", headerless: false, data_start_row: 2, entity_count: 1},
   columns: [{id: "note", key: "note", display_name: "note", field_type: "text", required: false}],
   rows: [{id: "row", key: "row", fields: [], blank_fields: ["note"]}],
