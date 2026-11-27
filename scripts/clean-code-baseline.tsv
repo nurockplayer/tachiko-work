@@ -676,7 +676,7 @@ file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1202
 file	crates/storage/src/roproj/host.rs		806
 file	crates/storage/src/roproj/v1.rs		1484
-file	crates/storage/src/roproj/v2.rs		1722
+file	crates/storage/src/roproj/v2.rs		1721
 file	crates/storage/src/roproj/v3.rs		2914
 file	crates/workspace-engine/src/analysis_operations.rs		1436
 file	crates/workspace-engine/src/formula_operations.rs		1225
@@ -702,7 +702,6 @@ inline-test	crates/storage/src/migration.rs	tests[cfg(test)]	28
 inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
 inline-test	crates/storage/src/roproj/host.rs	tests[cfg(test)]	56
 inline-test	crates/storage/src/roproj/v1.rs	tests[cfg(test)]	10
-inline-test	crates/storage/src/roproj/v2.rs	tests[cfg(test)]	73
 inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
 inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
