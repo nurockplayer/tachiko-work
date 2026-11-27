@@ -34,7 +34,10 @@ mod calculation_projection_tests;
 mod capacity_tests;
 mod collection_order;
 mod column_presentation;
+mod table_visibility;
 use column_presentation::ColumnPresentation;
+use table_visibility::column_projections;
+pub use table_visibility::{ColumnProjection, RowProjection};
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -125,6 +128,10 @@ mod sized_reply;
 pub(crate) use sized_reply::encode_sized_reply;
 mod source_reuse;
 pub use cell_style::{CellBorderTarget, CellStyleChange};
+mod table_projection;
+pub use table_projection::{
+    CellStylingCapability, CellStylingUnsupportedReason, TableProjection, TableWindowProjection,
+};
 #[cfg(test)]
 mod cell_border_tests;
 #[cfg(test)]
@@ -395,6 +402,13 @@ pub enum DesignerRequest {
         collection: String,
         field: String,
         width: Option<u32>,
+    },
+    SetTableVisibility {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+        fields: Vec<String>,
+        hidden: bool,
     },
     MoveColumn {
         expected_revision: String,
@@ -720,59 +734,6 @@ pub struct CollectionSummary {
     pub key: String,
     pub display_name: String,
     pub entity_count: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TableProjection {
-    pub revision: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracker_profile: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_table_profile: Option<bool>,
-    pub collection: CollectionSummary,
-    pub columns: Vec<ColumnProjection>,
-    pub rows: Vec<RowProjection>,
-    /// One total per Number column, keyed by column id and observed at the same
-    /// revision as `rows`. A null total means a contributing value is
-    /// unavailable or not a number; blank cells are skipped, as in a formula
-    /// column total.
-    #[serde(default, deserialize_with = "deserialize_column_totals")]
-    pub column_totals: BTreeMap<String, Option<f64>>,
-}
-
-/// One bounded window of a collection table at one revision.
-///
-/// `rows` is exactly the `RowProjection` shape of the complete table query and
-/// `columns` the same column projection. `total_rows` counts the rows the view
-/// admits (including kept entities); `unfiltered_rows` counts every row in the
-/// collection. `start` is clamped to `total_rows`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TableWindowProjection {
-    pub revision: String,
-    /// The same profile flags `queryTable` carries, so a client reading only
-    /// windows knows whether native row and column commands apply.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracker_profile: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_table_profile: Option<bool>,
-    pub collection: CollectionSummary,
-    pub columns: Vec<ColumnProjection>,
-    /// Deterministic digest of the column definitions. It changes only when a
-    /// column definition changes, never for an ordinary row edit.
-    pub columns_revision: String,
-    pub total_rows: usize,
-    pub unfiltered_rows: usize,
-    pub start: usize,
-    pub rows: Vec<RowProjection>,
-    /// Set when the reply's bytes ended this window before its count. Continue
-    /// at `start + rows.len()`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub byte_limited: bool,
-    /// Whole-collection totals, one per Number column, identical to
-    /// `TableProjection::column_totals` at the same revision. View filters do
-    /// not apply, and blank cells are skipped.
-    #[serde(default, deserialize_with = "deserialize_column_totals")]
-    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// Result of locating an entity inside one stateless view order.
@@ -1399,52 +1360,6 @@ pub struct ColumnStyleProjection {
     pub alignment: Option<ColumnAlignment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap: Option<bool>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ColumnProjection {
-    #[serde(default = "default_required")]
-    pub required: bool,
-    pub id: String,
-    pub key: String,
-    pub display_name: String,
-    /// Stored display name is present, even when equal to the generated key.
-    /// Omission means the projected name is only the key fallback.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name_explicit: Option<bool>,
-    pub field_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dropdown_options: Option<Vec<String>>,
-    /// The declared durable constraint, if any. Absence means unconstrained.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub constraint: Option<FieldConstraintProjection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub date_format: Option<tachiko_workspace_engine::DateFormat>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<ColumnStyleProjection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub width: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RowProjection {
-    pub id: String,
-    pub key: String,
-    /// One-based stored position in the collection. A window sets it so a host
-    /// keeps the row number a filter or view sort would otherwise change;
-    /// every other reply omits the key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<usize>,
-    /// Declared fields without a value, in column presentation order.
-    /// `fields` retains its sparse present-value payload; absence is never a placeholder.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub blank_fields: Vec<String>,
-    pub fields: Vec<FieldProjection>,
-    /// Resolved stored styles in column order, shared with imported rows.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub styles: Vec<interop_adapter::CellStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -4230,17 +4145,10 @@ impl DesignerRuntime {
                     &changes,
                 )
                 .map(DesignerResponse::Published),
-            DesignerRequest::SetColumnWidth {
-                expected_revision,
-                collection,
-                field,
-                width,
-            } => Ok(DesignerResponse::Published(self.set_column_width(
-                &expected_revision,
-                &collection,
-                &field,
-                width,
-            )?)),
+            request @ (DesignerRequest::SetColumnWidth { .. }
+            | DesignerRequest::SetTableVisibility { .. }) => {
+                self.dispatch_table_presentation(request)
+            }
             DesignerRequest::MoveColumn {
                 expected_revision,
                 collection,
@@ -5119,6 +5027,7 @@ impl DesignerRuntime {
                     .iter()
                     .map(|entity| RowProjection {
                         id: entity.id.to_string(),
+                        hidden: self.row_hidden(spec, &entity.id),
                         key: entity.key.to_string(),
                         position: None,
                         styles: self.row_styles(spec, &entity.id),
@@ -5142,17 +5051,16 @@ impl DesignerRuntime {
             let index = spec.stored_indices[row.id.as_str()];
             stored_rows[index] = Some(row);
         }
-        let rows = stored_rows.into_iter().flatten().collect();
-        let projection = TableProjection {
+        Ok(TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
+            cell_styling: self.cell_styling_capability(spec),
             revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: column_projections(spec, &self.presentation),
-            rows,
+            rows: stored_rows.into_iter().flatten().collect(),
             column_totals,
-        };
-        Ok(projection)
+        })
     }
 
     fn build_capacity_table_rows(
@@ -5202,6 +5110,7 @@ impl DesignerRuntime {
             .collect();
         Ok(RowProjection {
             id: entity.id.to_string(),
+            hidden: self.row_hidden(spec, &entity.id),
             key: entity.key.to_string(),
             position: None,
             blank_fields: blank_field_ids(entity, spec),
@@ -5260,6 +5169,7 @@ impl DesignerRuntime {
             self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?;
         Ok(TableWindowProjection {
             revision,
+            cell_styling: self.cell_styling_capability(spec),
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
             collection: spec.summary.clone(),
@@ -6485,11 +6395,7 @@ impl DesignerRuntime {
         } else {
             table.column_widths.remove(field);
         }
-        if table.title.is_none()
-            && table.footer.is_empty()
-            && table.column_styles.is_empty()
-            && table.column_widths.is_empty()
-        {
+        if *table == tachiko_workspace_engine::TablePresentation::default() {
             candidate.tables.remove(schema);
         }
         if let Some(id) = old_style {
@@ -9275,54 +9181,6 @@ impl DesignerRuntime {
     pub fn occurrence_scope(&self) -> &str {
         self.document_scope.as_str()
     }
-}
-
-/// The single column projection shared by the complete table query and the
-/// bounded window query.
-fn column_projections(
-    spec: &CollectionSpec,
-    presentation: &PresentationStore,
-) -> Vec<ColumnProjection> {
-    let table = presentation
-        .tables
-        .get(&SchemaId::from(spec.summary.id.clone()));
-    spec.columns
-        .iter()
-        .map(|column| ColumnProjection {
-            required: column.required,
-            id: column.id.to_string(),
-            key: column.key.clone(),
-            display_name: column.display_name.clone(),
-            display_name_explicit: column.display_name_explicit.then_some(true),
-            field_type: field_type_name(&column.field_type).to_owned(),
-            dropdown_options: match &column.constraint {
-                tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
-                    Some(values.clone())
-                }
-                _ if column.field_type == FieldType::Boolean => {
-                    Some(vec!["true".to_owned(), "false".to_owned()])
-                }
-                _ => None,
-            },
-            constraint: constraint_projection(&column.constraint),
-            number_format: column.number_format.clone(),
-            date_format: column.date_format,
-            style: table
-                .and_then(|table| table.column_styles.get(&column.id))
-                .and_then(|id| presentation.styles.get(id))
-                .and_then(|style| {
-                    (style.alignment.is_some() || style.wrap.is_some()).then_some(
-                        ColumnStyleProjection {
-                            alignment: style.alignment.map(Into::into),
-                            wrap: style.wrap,
-                        },
-                    )
-                }),
-            width: table
-                .and_then(|table| table.column_widths.get(&column.id))
-                .copied(),
-        })
-        .collect()
 }
 
 /// Deterministic digest of the column definitions. It depends only on the
@@ -16406,13 +16264,13 @@ mod tests {
             stored_indices: BTreeMap::new(),
         }
     }
-
     fn total_row(
         id: &str,
         stored: Option<super::StoredValueProjection>,
         calculated: Option<super::CalculationProjection>,
     ) -> super::RowProjection {
         super::RowProjection {
+            hidden: false,
             id: id.to_owned(),
             key: id.to_owned(),
             position: None,
@@ -16434,11 +16292,11 @@ mod tests {
             }],
         }
     }
-
     #[test]
     fn column_totals_skip_blank_cells_and_refuse_a_partial_sum() {
         let spec = total_spec();
         let blank = super::RowProjection {
+            hidden: false,
             id: "blank".to_owned(),
             key: "blank".to_owned(),
             position: None,

@@ -135,6 +135,7 @@ export type ConstraintFailureProjection = {
 export type CellAlignment = "left" | "center" | "right";
 
 export type ColumnProjection = {
+  hidden?: true;
   id: string;
   key: string;
   display_name: string;
@@ -153,6 +154,7 @@ export type ColumnProjection = {
 };
 
 export type TableRowProjection = {
+  hidden?: true;
   id: string;
   key: string;
   /**
@@ -167,9 +169,14 @@ export type TableRowProjection = {
   styles?: SourceStyle[];
 };
 
+export type CellStylingCapability =
+  | { status: "supported" }
+  | { status: "unsupported"; reason: "read_only_table" };
+
 export type TableProjection = {
   tracker_profile?: boolean;
   native_table_profile?: boolean;
+  cell_styling: CellStylingCapability;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];
@@ -236,6 +243,7 @@ export type TableWindowProjection = {
   /** Same profile flags as `TableProjection`; present only when true. */
   tracker_profile?: boolean;
   native_table_profile?: boolean;
+  cell_styling: CellStylingCapability;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];
@@ -633,6 +641,7 @@ export type TrackerCommand =
   | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
   | { type: "set_cell_style"; expected_revision: string; collection: string; entities: string[]; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_cell_style_range"; expected_revision: string; collection: string; row: number; row_count: number; fields: string[]; changes: CellStyleChange[] }
+  | { type: "set_table_visibility"; expected_revision: string; collection: string; entities: string[]; fields: string[]; hidden: boolean }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "move_collection"; expected_revision: string; collection: string; to_index: number }

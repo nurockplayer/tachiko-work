@@ -1,5 +1,6 @@
 use tachiko_workspace_engine::{
-    CellAlignment, DateFormat, EntityId, FieldDefinition, FieldId, PresentationStore, SchemaId,
+    CellAlignment, CellStyle as StoredCellStyle, DateFormat, EntityId, FieldDefinition, FieldId,
+    PresentationStore, SchemaId,
 };
 
 use crate::interop_adapter::{CellStyle, SourceValue};
@@ -69,37 +70,7 @@ pub(crate) fn cell_style(
         result.number_format = Some(crate::interop_number_format::to_excel(format));
     }
     for style in [column, cell].into_iter().flatten() {
-        if let Some(bold) = style.bold {
-            result.bold = bold;
-        }
-        if let Some(italic) = style.italic {
-            result.italic = italic;
-        }
-        if let Some(fill) = &style.fill {
-            result.fill = Some(fill[1..].to_owned());
-        }
-        if let Some(borders) = &style.borders {
-            result.border = !borders.is_empty();
-            result.border_sides.clone_from(borders);
-        }
-        if let (Some(format), SourceValue::Number { .. } | SourceValue::Empty) =
-            (&style.number_format, value)
-        {
-            result.number_format = Some(crate::interop_number_format::to_excel(format));
-        }
-        if let Some(alignment) = style.alignment {
-            result.alignment = Some(
-                match alignment {
-                    CellAlignment::Left => "left",
-                    CellAlignment::Center => "center",
-                    CellAlignment::Right => "right",
-                }
-                .into(),
-            );
-        }
-        if let Some(wrap) = style.wrap {
-            result.wrap = wrap;
-        }
+        apply_stored_style(style, value, &mut result);
     }
     let date_format = cell
         .and_then(|style| style.date_format)
@@ -116,6 +87,40 @@ pub(crate) fn cell_style(
         }
     }
     result
+}
+
+fn apply_stored_style(style: &StoredCellStyle, value: &SourceValue, result: &mut CellStyle) {
+    if let Some(bold) = style.bold {
+        result.bold = bold;
+    }
+    if let Some(italic) = style.italic {
+        result.italic = italic;
+    }
+    if let Some(fill) = &style.fill {
+        result.fill = Some(fill[1..].to_owned());
+    }
+    if let Some(borders) = &style.borders {
+        result.border = !borders.is_empty();
+        result.border_sides.clone_from(borders);
+    }
+    if let (Some(format), SourceValue::Number { .. } | SourceValue::Empty) =
+        (&style.number_format, value)
+    {
+        result.number_format = Some(crate::interop_number_format::to_excel(format));
+    }
+    if let Some(alignment) = style.alignment {
+        result.alignment = Some(
+            match alignment {
+                CellAlignment::Left => "left",
+                CellAlignment::Center => "center",
+                CellAlignment::Right => "right",
+            }
+            .into(),
+        );
+    }
+    if let Some(wrap) = style.wrap {
+        result.wrap = wrap;
+    }
 }
 
 pub(crate) fn column_width(

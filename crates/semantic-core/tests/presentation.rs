@@ -99,6 +99,7 @@ fn valid_store() -> PresentationStore {
                 footer: BTreeMap::from([("amount".into(), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([("due".into(), StyleId::from("s1"))]),
                 column_widths: BTreeMap::new(),
+                ..TablePresentation::default()
             },
         )]),
         rules: BTreeMap::from([("r1".into(), rule(valid_condition()))]),
@@ -166,6 +167,7 @@ fn a_record_naming_a_missing_schema_is_refused() {
             footer: BTreeMap::new(),
             column_styles: BTreeMap::new(),
             column_widths: BTreeMap::new(),
+            ..TablePresentation::default()
         },
     );
     assert_eq!(
@@ -702,6 +704,7 @@ fn a_table_left_with_no_content_is_dropped() {
             footer: BTreeMap::from([("amount".into(), FooterAggregate::Sum)]),
             column_styles: BTreeMap::from([("amount".into(), StyleId::from("s3"))]),
             column_widths: BTreeMap::new(),
+            ..TablePresentation::default()
         },
     );
     let mut document = document();
@@ -871,4 +874,28 @@ fn column_widths_validate_and_prune_with_fields() {
             .insert("amount".into(), width);
         assert!(validate_presentation(&store, &document()).is_err());
     }
+}
+
+#[test]
+fn table_visibility_validates_and_prunes_deleted_targets() {
+    let mut store = PresentationStore::default();
+    store.tables.insert(
+        "orders".into(),
+        TablePresentation {
+            hidden_rows: ["e1".into()].into(),
+            hidden_fields: ["amount".into()].into(),
+            ..TablePresentation::default()
+        },
+    );
+    let mut document = document();
+    assert_eq!(validate_presentation(&store, &document), Ok(()));
+    document.entities.remove("e1");
+    document
+        .schemas
+        .get_mut("orders")
+        .unwrap()
+        .fields
+        .remove("amount");
+    assert!(validate_presentation(&store, &document).is_err());
+    assert!(prune_presentation(&store, &document).is_empty());
 }
