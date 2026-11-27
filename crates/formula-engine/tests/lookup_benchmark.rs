@@ -119,7 +119,7 @@ fn run_case(rows: usize) -> Duration {
     let expected_sum: f64 = (0..rows)
         .map(|index| price(product_index(index, rows)).get())
         .sum();
-    assert_eq!(actual_sum, expected_sum);
+    assert_eq!(actual_sum.to_bits(), expected_sum.to_bits());
     elapsed
 }
 
