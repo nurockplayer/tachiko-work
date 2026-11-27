@@ -682,7 +682,7 @@ file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13490
+file	packages/browser-client/runtime/src/lib.rs		13352
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1289
