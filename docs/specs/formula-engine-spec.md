@@ -74,10 +74,14 @@ max(0, [attacker.power] - [target.armor])
 `LOOKUP(key, [table.key:column], [table.result:column][, if_missing])`
 returns the first matching row's effective Number result. Both columns must
 belong to one schema. The result column must be Number, including Number
-formulas; the key column may be Text, Number, Date or Boolean. The key is a
+formulas. A lookup stored in an Auto cell may also read an Auto result column.
+A matched blank reads as zero and a matched non-Number results in a value
+failure. The key column may be Text, Number, Date or Boolean. The key is a
 Number expression or a bare scalar field reference of exactly the key column's
-type. The optional fallback must be Number. Text literals are not expression
-nodes; use a Text field reference for a Text key.
+type. A lookup stored in an Auto cell may use an Auto key column, matching by
+the keys' actual scalar types without coercion. The optional fallback must be
+Number. Text literals are not expression nodes; use a Text field reference for
+a Text key.
 
 Rows are visited in the same entity order as column totals. Text equality uses
 SUMIF's Unicode lowercase fold, with literal `*`, `?` and operator characters.
@@ -88,6 +92,7 @@ Number result reads as zero; formula results use their calculated Number.
 
 No match yields `CalculationFailure::LookupMissingKey`, projected as
 `lookup_missing_key` (`formula.lookup_missing_key` in document diagnostics).
+In an Auto cell this publishes as `#N/A` with the formula intact.
 If `if_missing` is present, it is evaluated only on no match. A failed or
 unavailable selected result fails like reading that cell directly. As with
 SUMIF, any upstream failed cell in either whole column fails the formula,
