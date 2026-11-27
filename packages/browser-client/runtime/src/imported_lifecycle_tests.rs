@@ -759,7 +759,7 @@ fn add_formula(runtime: &mut DesignerRuntime, collection: &str) -> FieldTarget {
         .clone();
     runtime
         .insert_row(
-            None,
+            (None, 1),
             &revision,
             collection,
             &[crate::RowInitializer {

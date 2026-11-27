@@ -610,6 +610,7 @@ fn native_capacity_insert_keeps_full_history_and_saved_reopen() {
     assert!(matches!(
         runtime
             .handle(DesignerRequest::InsertRow {
+                count: None,
                 position: None,
                 expected_revision: runtime.observe_occurrence().revision,
                 collection: "s".into(),
