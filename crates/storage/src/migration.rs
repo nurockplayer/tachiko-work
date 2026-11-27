@@ -10,7 +10,9 @@ use crate::{
         BinaryArgsV2, DocumentV2, EntityV2, ExpressionV2, FieldDefinitionV2, FieldRefV2,
         FieldTypeV2, SchemaV2, ValueV2,
     },
-    legacy_direct_ro::v1::{BinaryArgsV1, DocumentV1, ExpressionV1, FieldTypeV1, ValueV1},
+    legacy_direct_ro::v1::{
+        BinaryArgsV1, DocumentV1, ExpressionV1, FieldTypeV1, SchemaIdV1, SchemaV1, ValueV1,
+    },
 };
 
 /// Fixed RFC 9562 `UUIDv5` namespace for `legacy-direct-ro/v1` identity migration.
@@ -132,48 +134,7 @@ fn rewrite_document(
     document: DocumentV1,
     maps: &IdentityMaps,
 ) -> Result<DocumentV2, MigrationError> {
-    let schemas = document
-        .schemas
-        .into_iter()
-        .map(|(legacy_schema, schema)| {
-            let stable_schema_id = schema_id(maps, &legacy_schema.0)?.to_owned();
-            let fields = schema
-                .fields
-                .into_iter()
-                .map(|(legacy_field, definition)| {
-                    let field_id = field_id(maps, &legacy_schema.0, &legacy_field.0)?.to_owned();
-                    let field_type = match definition.field_type {
-                        FieldTypeV1::Number => FieldTypeV2::Number,
-                        FieldTypeV1::Text => FieldTypeV2::Text,
-                        FieldTypeV1::Boolean => FieldTypeV2::Boolean,
-                        FieldTypeV1::Reference { schema } => FieldTypeV2::Reference {
-                            schema: schema_id(maps, &schema.0)?.to_owned(),
-                        },
-                    };
-                    Ok((
-                        field_id.clone(),
-                        FieldDefinitionV2 {
-                            number_format: None,
-                            id: field_id,
-                            key: legacy_field.0,
-                            field_type,
-                            required: definition.required,
-                        },
-                    ))
-                })
-                .collect::<Result<_, MigrationError>>()?;
-
-            Ok((
-                stable_schema_id.clone(),
-                SchemaV2 {
-                    field_order: None,
-                    id: stable_schema_id,
-                    key: legacy_schema.0,
-                    fields,
-                },
-            ))
-        })
-        .collect::<Result<_, MigrationError>>()?;
+    let schemas = rewrite_schemas(document.schemas, maps)?;
 
     let entities = document
         .entities
@@ -213,6 +174,53 @@ fn rewrite_document(
         .validate()
         .map_err(|error| MigrationError(format!("migrated v2 graph is invalid: {error:?}")))?;
     Ok(migrated)
+}
+
+fn rewrite_schemas(
+    schemas: BTreeMap<SchemaIdV1, SchemaV1>,
+    maps: &IdentityMaps,
+) -> Result<BTreeMap<String, SchemaV2>, MigrationError> {
+    schemas
+        .into_iter()
+        .map(|(legacy_schema, schema)| {
+            let stable_schema_id = schema_id(maps, &legacy_schema.0)?.to_owned();
+            let fields = schema
+                .fields
+                .into_iter()
+                .map(|(legacy_field, definition)| {
+                    let field_id = field_id(maps, &legacy_schema.0, &legacy_field.0)?.to_owned();
+                    let field_type = match definition.field_type {
+                        FieldTypeV1::Number => FieldTypeV2::Number,
+                        FieldTypeV1::Text => FieldTypeV2::Text,
+                        FieldTypeV1::Boolean => FieldTypeV2::Boolean,
+                        FieldTypeV1::Reference { schema } => FieldTypeV2::Reference {
+                            schema: schema_id(maps, &schema.0)?.to_owned(),
+                        },
+                    };
+                    Ok((
+                        field_id.clone(),
+                        FieldDefinitionV2 {
+                            number_format: None,
+                            id: field_id,
+                            key: legacy_field.0,
+                            field_type,
+                            required: definition.required,
+                        },
+                    ))
+                })
+                .collect::<Result<_, MigrationError>>()?;
+
+            Ok((
+                stable_schema_id.clone(),
+                SchemaV2 {
+                    field_order: None,
+                    id: stable_schema_id,
+                    key: legacy_schema.0,
+                    fields,
+                },
+            ))
+        })
+        .collect()
 }
 
 fn rewrite_value(value: ValueV1, maps: &IdentityMaps) -> Result<ValueV2, MigrationError> {
