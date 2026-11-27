@@ -306,7 +306,10 @@ fn same_row_date_edits_recalculate_through_retained_state() {
     let CalculationOutcome::Complete(calculation) = full else {
         panic!("date update failed");
     };
-    assert_eq!(calculation.value(&owner), Some(Number::new(2027.0).unwrap()));
+    assert_eq!(
+        calculation.value(&owner),
+        Some(Number::new(2027.0).unwrap())
+    );
     assert!(calculation.dependencies()[&owner].contains(&FieldRef::new("r", "d")));
 }
 
