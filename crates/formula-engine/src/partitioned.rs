@@ -103,17 +103,14 @@ impl<K: Ord, V> PartitionedMap<K, V> {
         self.len == 0
     }
 
-    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)> {
         self.into_iter()
     }
 
-    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = &K> {
         self.iter().map(|(key, _)| key)
     }
 
-    #[must_use = "iterators are lazy and do nothing unless consumed"]
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &V> {
         self.iter().map(|(_, value)| value)
     }
