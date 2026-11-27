@@ -122,7 +122,7 @@ fn number_at(outcome: &CalculationOutcome, target: &str) -> f64 {
 #[test]
 fn absolute_and_directed_rounding_calculate_on_displayed_decimals() {
     for (source, expected) in [
-        ("ABS(-0)", 0.0),
+        ("ABS(-0)", 0.0_f64),
         ("ABS(-2.5)", 2.5),
         ("abs(-2.5)", 2.5),
         ("roundup(-1.21, 1)", -1.3),
@@ -139,8 +139,8 @@ fn absolute_and_directed_rounding_calculate_on_displayed_decimals() {
         let mut document = document();
         set_formula(&mut document, "output", source);
         assert_eq!(
-            number_at(&calculate_complete(&document), "output"),
-            expected,
+            number_at(&calculate_complete(&document), "output").to_bits(),
+            expected.to_bits(),
             "{source}"
         );
     }
