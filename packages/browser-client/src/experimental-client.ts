@@ -67,6 +67,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   setColumnWrap(expectedRevision: string, collection: string, field: string, wrap: boolean | null): Promise<PublicationProjection>;
   setCellStyle(expectedRevision: string, collection: string, entities: string[], fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection>;
   setCellStyleRange(expectedRevision: string, collection: string, row: number, rowCount: number, fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection>;
+  setTableVisibility(expectedRevision: string, collection: string, entities: string[], fields: string[], hidden: boolean): Promise<PublicationProjection>;
   setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection>;
   /** Move one column to a zero-based index; the order is durable document state. */
   moveColumn(expected: string, collection: string, field: string, toIndex: number): Promise<PublicationProjection>;

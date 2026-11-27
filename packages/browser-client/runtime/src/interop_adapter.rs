@@ -1,4 +1,11 @@
 //! Private bounded file adapter. This module never evaluates formulas or executes source content.
+mod grid_visibility;
+pub use grid_visibility::SourceLayout;
+use grid_visibility::{
+    column_grid, data_row_visibility, hidden_attribute, inventory_grid_attributes,
+    inventory_hidden, visibility_finding, write_grid_columns,
+};
+
 use crate::interop_document::quoted_sheet_name;
 use quick_xml::{
     Reader,
@@ -1298,23 +1305,11 @@ impl CapacityXmlSink for CapacityXmlCount {
 // The writer and admission counter share every worksheet token. Other permitted
 // XML members, including escaped headers/name, fit the existing 16 KiB reserve.
 fn capacity_worksheet(sheet: &SourceSheet, output: &mut impl CapacityXmlSink) {
-    write!(
-        output,
-        "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\">"
-    )
-    .expect("capacity XML sinks are infallible");
-    for (column, _) in sheet.columns.iter().enumerate() {
-        write!(
-            output,
-            "<c r=\"{}1\" s=\"0\" t=\"s\"><v>{column}</v></c>",
-            column_name(column)
-        )
-        .expect("capacity XML sinks are infallible");
-    }
-    write!(output, "</row>").expect("capacity XML sinks are infallible");
+    grid_visibility::write_capacity_header(sheet, output);
     for (index, row) in sheet.rows.iter().enumerate() {
         let number = index + 2;
-        write!(output, "<row r=\"{number}\">").expect("capacity XML sinks are infallible");
+        let hidden = grid_visibility::hidden_xml(sheet.layout.hidden_rows.contains(&index));
+        write!(output, "<row r=\"{number}\"{hidden}>").expect("capacity XML sinks are infallible");
         for (index, cell) in row.iter().enumerate() {
             let column = column_name(index);
             match &cell.value {
@@ -1449,26 +1444,6 @@ pub struct SourceSheet {
     pub rows: Vec<Vec<SourceCell>>,
     #[serde(default, skip_serializing_if = "SourceLayout::is_default")]
     pub layout: SourceLayout,
-}
-/// Where the imported grid sat in the source worksheet.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceLayout {
-    /// Source rows above the header that were not imported (title or blank rows).
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub rows_above_header: u32,
-    /// A trailing summary row recognised and left out of the data rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary_row: Option<SummaryRow>,
-}
-impl SourceLayout {
-    #[must_use]
-    pub fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-}
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
-fn is_zero(value: &u32) -> bool {
-    *value == 0
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryRow {
@@ -1769,6 +1744,7 @@ pub(crate) fn validate_import_geometry_profile(
     )?;
     let capacity = !working && output_profile(workbook) == OutputProfile::TextCapacity;
     for sheet in &workbook.sheets {
+        grid_visibility::validate_grid_visibility(sheet)?;
         check_import_limit(
             crate::CapacityLimit::TableFields,
             if working {
@@ -2914,9 +2890,9 @@ fn capacity_plain_node(node: &Xml) -> bool {
         "workbookPr" => (MAIN, &["date1904"], &[]),
         "sheets" => (MAIN, &[], &["sheet"]),
         "sheet" => (MAIN, &["name", "sheetId", "rel:id"], &[]),
-        "worksheet" => (MAIN, &[], &["sheetData"]),
-        "sheetData" => (MAIN, &[], &["row"]),
-        "row" => (MAIN, &["r"], &["c"]),
+        "worksheet" | "sheetData" | "row" | "cols" | "col" => {
+            grid_visibility::capacity_grid_tag(node.name.as_str())
+        }
         "c" => (MAIN, &["r", "s", "t"], &["v", "is"]),
         "sst" => (MAIN, &["count", "uniqueCount"], &["si"]),
         "si" | "is" => (MAIN, &[], &["t"]),
@@ -2960,7 +2936,7 @@ fn capacity_plain_values(node: &Xml) -> bool {
     const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     match node.name.as_str() {
         "workbook" => node.kids("sheets").count() == 1 && node.kids("workbookPr").count() <= 1,
-        "sheets" | "worksheet" | "si" | "is" => node.children.len() == 1,
+        "sheets" | "worksheet" | "si" | "is" => grid_visibility::capacity_grid_children(node),
         "workbookPr" => node.attr("date1904") == Some("0"),
         "sheet" => {
             node.attr("name").is_some()
@@ -3563,69 +3539,6 @@ fn inventory_workbook_children(xml: &Xml, ledger: &mut Vec<FidelityFinding>) -> 
     Ok(())
 }
 
-fn inventory_grid_attributes(node: &Xml, sheet: &str, ledger: &mut Vec<FidelityFinding>) {
-    let (mapped, layout): (&[&str], &[&str]) = if node.name.as_str() == "row" {
-        (
-            &["r", "hidden", "s", "customFormat"],
-            &[
-                "spans",
-                "ht",
-                "customHeight",
-                "outlineLevel",
-                "collapsed",
-                "thickTop",
-                "thickBot",
-                "ph",
-            ],
-        )
-    } else {
-        (
-            &["min", "max", "width", "customWidth", "hidden", "style"],
-            &["bestFit", "outlineLevel", "collapsed", "phonetic"],
-        )
-    };
-    for key in node
-        .attrs
-        .iter()
-        .map(|(key, _)| key)
-        .filter(|key| !mapped.contains(&key.as_ref()))
-    {
-        ledger.push(finding(
-            FidelityCategory::UnsupportedSafeDisabled,
-            "unmapped_grid_attribute",
-            &format!("{sheet}:{}@{key}", node.name),
-            "Source row/column attribute is not represented or emitted; original source retains it",
-            !layout.contains(&key.as_ref()),
-        ));
-    }
-}
-
-fn visibility_finding(code: &str, location: &str) -> FidelityFinding {
-    finding(
-        FidelityCategory::UnsupportedSafeDisabled,
-        code,
-        location,
-        "Hidden source content cannot be admitted or exported because this profile does not preserve visibility; original source bytes remain unchanged",
-        true,
-    )
-}
-
-fn inventory_hidden(
-    value: Option<&str>,
-    code: &str,
-    location: &str,
-    ledger: &mut Vec<FidelityFinding>,
-) -> Result<()> {
-    match value {
-        None | Some("0" | "false") => Ok(()),
-        Some("1" | "true") => {
-            ledger.push(visibility_finding(code, location));
-            Ok(())
-        }
-        Some(_) => fail("Invalid hidden visibility boolean"),
-    }
-}
-
 /// Inspect all bounded worksheets and produce the sole fidelity admission ledger.
 /// # Errors
 /// Rejects malformed archives/XML, unresolved relationships and resource limits.
@@ -3789,18 +3702,11 @@ pub(crate) fn import_xlsx_profile(
         {
             return fail("Unknown sheetData construct");
         }
+        let mut hidden_rows = BTreeSet::new();
         for row in data.kids("row") {
             inventory_grid_attributes(row, &name, &mut ledger);
             if row.attr("s").is_some_and(|style| style != "0") {
                 ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "inherited_row_style", &name, "Inherited row style is not applied by this profile; explicit cell styles are required", true));
-            }
-            if let Some(hidden) = row.attr("hidden") {
-                inventory_hidden(
-                    Some(hidden),
-                    "hidden_row",
-                    &format!("{name}:row {}", row.attr("r").unwrap_or("?")),
-                    &mut ledger,
-                )?;
             }
             if row
                 .children
@@ -3816,6 +3722,9 @@ pub(crate) fn import_xlsx_profile(
                 .map_err(|_| InteropError::Invalid("Invalid row index".into()))?;
             if row_index == 0 || row_index > 1_048_576 {
                 return fail("Invalid row index");
+            }
+            if hidden_attribute(row.attr("hidden"))? {
+                hidden_rows.insert(row_index);
             }
             if row_index <= skipped {
                 continue;
@@ -4003,7 +3912,7 @@ pub(crate) fn import_xlsx_profile(
         let mut layout = SourceLayout {
             rows_above_header: u32::try_from(above)
                 .map_err(|_| InteropError::Invalid("Header offset exceeds the row bound".into()))?,
-            summary_row: None,
+            ..SourceLayout::default()
         };
         if !options.keep_summary_rows {
             if let Some((kept, cells)) = summary_row(&rows, above + 1) {
@@ -4101,71 +4010,12 @@ pub(crate) fn import_xlsx_profile(
                 ));
             }
         }
-        for cols in xml.kids("cols") {
-            if cols
-                .children
-                .iter()
-                .any(|node| node.name.as_str() != "col" || node.ns.as_str() != MAIN)
-            {
-                return fail("Unknown worksheet column construct");
-            }
-            for c in cols.kids("col") {
-                inventory_grid_attributes(c, &name, &mut ledger);
-                if c.attr("style").is_some_and(|style| style != "0") {
-                    ledger.push(finding(FidelityCategory::UnsupportedSafeDisabled, "inherited_column_style", &name, "Inherited column style is not applied by this profile; explicit cell styles are required", true));
-                }
-                inventory_hidden(
-                    c.attr("hidden"),
-                    "hidden_column",
-                    &format!(
-                        "{name}:columns {}..{}",
-                        c.attr("min").unwrap_or("1"),
-                        c.attr("max").unwrap_or("1")
-                    ),
-                    &mut ledger,
-                )?;
-                let min = c
-                    .attr("min")
-                    .unwrap_or("1")
-                    .parse::<usize>()
-                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
-                let max = c
-                    .attr("max")
-                    .unwrap_or("1")
-                    .parse::<usize>()
-                    .map_err(|_| InteropError::Invalid("Invalid column width range".into()))?;
-                let w = c
-                    .attr("width")
-                    .map(str::parse::<f64>)
-                    .transpose()
-                    .map_err(|_| InteropError::Invalid("Invalid column width".into()))?;
-                capacity_plain &= w.is_none();
-                if min == 0
-                    || max < min
-                    || max > 16_384
-                    || w.is_some_and(|w| !w.is_finite() || w <= 0.0 || w > 255.0)
-                {
-                    return fail("Invalid column width");
-                }
-                check_import_limit(
-                    crate::CapacityLimit::TableFields,
-                    if working {
-                        crate::capacity::WORKING_LIMITS.table_fields
-                    } else {
-                        MAX_COLUMNS
-                    },
-                    max,
-                    Some(&name),
-                    true,
-                )?;
-                if max > columns.len() && w.is_some() {
-                    ledger.push(finding(FidelityCategory::LossyOnExport, "column_width_outside_grid", &format!("{name}:columns {min}..{max}"), "Column width outside the represented cell grid remains source-only and is omitted on export", false));
-                }
-                for c in columns.iter_mut().take(max).skip(min - 1) {
-                    c.width = w;
-                }
-            }
-        }
+        layout.hidden_rows =
+            data_row_visibility(hidden_rows, above + 1, rows.len(), &name, &mut ledger);
+        let (hidden_columns, has_widths) =
+            column_grid(&xml, &name, &mut columns, working, &mut ledger)?;
+        layout.hidden_columns = hidden_columns;
+        capacity_plain &= !has_widths;
         if !working && rows.len() > MAX_DATA_ROWS && !capacity_plain {
             check_import_limit(
                 crate::CapacityLimit::TableRows,
@@ -6479,25 +6329,7 @@ pub(crate) fn export_xlsx_for_profile(
             continue;
         }
         let mut xml = format!("<worksheet xmlns=\"{MAIN}\">");
-        // CT_Cols contains one or more CT_Col entries. An empty <cols>
-        // container is rejected by Excel's package reader, even though the
-        // surrounding ZIP and XML remain structurally readable.
-        if s.columns.iter().any(|column| column.width.is_some()) {
-            xml.push_str("<cols>");
-            for (col, c) in s.columns.iter().enumerate() {
-                if let Some(width) = c.width {
-                    if !width.is_finite() || width <= 0.0 || width > 255.0 {
-                        return fail("Invalid export column width");
-                    }
-                    xml.push_str(&format!(
-                        "<col min=\"{}\" max=\"{}\" width=\"{width}\" customWidth=\"1\"/>",
-                        col + 1,
-                        col + 1
-                    ));
-                }
-            }
-            xml.push_str("</cols>");
-        }
+        write_grid_columns(s, &mut xml)?;
         xml.push_str("<sheetData>");
         let header = s
             .columns
@@ -6517,7 +6349,14 @@ pub(crate) fn export_xlsx_for_profile(
             s.rows.iter().collect::<Vec<_>>()
         };
         for (r, row) in rows.iter().enumerate() {
-            xml.push_str(&format!("<row r=\"{}\">", r + 1));
+            let hidden = r
+                .checked_sub(usize::from(s.has_header))
+                .is_some_and(|row| s.layout.hidden_rows.contains(&row));
+            xml.push_str(&format!(
+                "<row r=\"{}\"{}>",
+                r + 1,
+                grid_visibility::hidden_xml(hidden)
+            ));
             for (col, c) in row.iter().enumerate() {
                 let address = format!("{}{}", column_name(col), r + 1);
                 let sid = if profile == OutputProfile::TextCapacity {

@@ -2,7 +2,7 @@
 
 mod decode;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -239,6 +239,8 @@ struct TableRecordV3 {
     column_styles: Option<BTreeMap<String, String>>,
     #[serde(default)]
     column_widths: Option<BTreeMap<String, u32>>,
+    hidden_rows: Option<Vec<String>>,
+    hidden_fields: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -343,13 +345,6 @@ fn table_column_styles(
 }
 
 fn table_into_semantic(record: TableRecordV3) -> Result<(String, TablePresentation), FormatError> {
-    if record.title.is_none()
-        && record.footer.is_none()
-        && record.column_styles.is_none()
-        && record.column_widths.is_none()
-    {
-        return invalid_representation(format!("table '{}' has no content", record.schema));
-    }
     let footer: BTreeMap<FieldId, FooterAggregate> = record
         .footer
         .map(table_footer)
@@ -361,13 +356,6 @@ fn table_into_semantic(record: TableRecordV3) -> Result<(String, TablePresentati
         .transpose()?
         .unwrap_or_default();
     let column_widths = record.column_widths.unwrap_or_default();
-    if column_widths.is_empty()
-        && record.title.is_none()
-        && footer.is_empty()
-        && column_styles.is_empty()
-    {
-        return invalid_representation(format!("table '{}' has no content", record.schema));
-    }
     if column_widths
         .values()
         .any(|width| !(1..=65280).contains(width))
@@ -378,15 +366,37 @@ fn table_into_semantic(record: TableRecordV3) -> Result<(String, TablePresentati
         .into_iter()
         .map(|(field, width)| (FieldId::from(field), width))
         .collect();
-    Ok((
-        record.schema,
-        TablePresentation {
-            title: record.title,
-            footer,
-            column_styles,
-            column_widths,
-        },
-    ))
+    let table = TablePresentation {
+        title: record.title,
+        footer,
+        column_styles,
+        column_widths,
+        hidden_rows: hidden_ids(record.hidden_rows, "hidden row")?,
+        hidden_fields: hidden_ids(record.hidden_fields, "hidden field")?,
+    };
+    if table == TablePresentation::default() {
+        return invalid_representation(format!("table '{}' has no content", record.schema));
+    }
+    Ok((record.schema, table))
+}
+
+fn hidden_ids<T: From<String> + Ord>(
+    ids: Option<Vec<String>>,
+    label: &str,
+) -> Result<BTreeSet<T>, FormatError> {
+    let Some(ids) = ids else {
+        return Ok(BTreeSet::new());
+    };
+    if ids.is_empty() {
+        return invalid_representation(format!("table {label} IDs must be nonempty when present"));
+    }
+    let mut previous = None;
+    for id in &ids {
+        require_id(label, id)?;
+        ensure_increasing(label, previous, id)?;
+        previous = Some(id.as_str());
+    }
+    Ok(ids.into_iter().map(T::from).collect())
 }
 
 fn rule_fields(fields: &[String]) -> Result<Vec<FieldId>, FormatError> {
@@ -601,11 +611,7 @@ fn write_table_record(
     schema: &SchemaId,
     table: &TablePresentation,
 ) -> Result<(), FormatError> {
-    if table.title.is_none()
-        && table.footer.is_empty()
-        && table.column_styles.is_empty()
-        && table.column_widths.is_empty()
-    {
+    if *table == TablePresentation::default() {
         return invalid_representation(format!("table '{}' has no content", schema.as_str()));
     }
     output.push('{');
@@ -644,10 +650,32 @@ fn write_table_record(
         }
         output.push('}');
     }
-    if !table.column_widths.is_empty() {
-        member_head(output, &mut first, "column_widths")?;
+    write_column_widths(output, &mut first, &table.column_widths)?;
+    write_hidden_ids(
+        output,
+        &mut first,
+        "hidden_rows",
+        table.hidden_rows.iter().map(EntityId::as_str),
+    )?;
+    write_hidden_ids(
+        output,
+        &mut first,
+        "hidden_fields",
+        table.hidden_fields.iter().map(FieldId::as_str),
+    )?;
+    output.push('}');
+    Ok(())
+}
+
+fn write_column_widths(
+    output: &mut String,
+    first: &mut bool,
+    widths: &BTreeMap<FieldId, u32>,
+) -> Result<(), FormatError> {
+    if !widths.is_empty() {
+        member_head(output, first, "column_widths")?;
         output.push('{');
-        for (index, (field, width)) in table.column_widths.iter().enumerate() {
+        for (index, (field, width)) in widths.iter().enumerate() {
             if index > 0 {
                 output.push(',');
             }
@@ -657,7 +685,27 @@ fn write_table_record(
         }
         output.push('}');
     }
-    output.push('}');
+    Ok(())
+}
+
+fn write_hidden_ids<'a>(
+    output: &mut String,
+    first: &mut bool,
+    member: &str,
+    ids: impl ExactSizeIterator<Item = &'a str>,
+) -> Result<(), FormatError> {
+    if ids.len() == 0 {
+        return Ok(());
+    }
+    member_head(output, first, member)?;
+    output.push('[');
+    for (index, id) in ids.enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write_json_string(output, id)?;
+    }
+    output.push(']');
     Ok(())
 }
 

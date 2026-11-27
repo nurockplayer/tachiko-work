@@ -146,8 +146,7 @@ body	crates/merge-engine/src/lib.rs	merge_supported	90
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
-body	crates/semantic-core/src/presentation.rs	prune_presentation	84
-body	crates/semantic-core/src/presentation.rs	validate_presentation	183
+body	crates/semantic-core/src/presentation.rs	validate_presentation	130
 body	crates/semantic-core/src/presentation.rs	validate_rule_condition	67
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	99
@@ -225,14 +224,13 @@ body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_sp
 body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	83
 body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	99
 body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	68
-body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_worksheet	63
 body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	88
 body	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	67
 body	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	94
-body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	307
+body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	299
 body	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	82
 body	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	176
-body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	548
+body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	485
 body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_admission	91
 body	packages/browser-client/runtime/src/interop_adapter.rs	lookup_call	67
 body	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility	336
@@ -245,7 +243,6 @@ body	packages/browser-client/runtime/src/interop_adapter.rs	validate_output_for_
 body	packages/browser-client/runtime/src/interop_adapter.rs	validate_text_capacity	81
 body	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_compatibility	71
 body	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argument	69
-body	packages/browser-client/runtime/src/interop_date_format.rs	cell_style	64
 body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::export_imported_workbook_with_maps	69
 body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::prepare_cleanup	76
 body	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	121
@@ -276,7 +273,7 @@ body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	75
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	127
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::delete_table	86
-body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	536
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	529
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::duplicate_collection	92
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::edit_cells	93
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::export_project_with_metadata	64
@@ -367,7 +364,7 @@ branches	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_au
 branches	crates/semantic-core/src/model.rs	<Expression>::reference_uses	20
 branches	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	22
 branches	crates/semantic-core/src/presentation.rs	rule_survives_prune	29
-branches	crates/semantic-core/src/presentation.rs	validate_presentation	66
+branches	crates/semantic-core/src/presentation.rs	validate_presentation	41
 branches	crates/semantic-core/src/presentation.rs	validate_rule_condition	23
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	23
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	15
@@ -387,7 +384,7 @@ branches	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	13
 branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	33
 branches	crates/storage/src/presentation.rs	parse_presentation	16
 branches	crates/storage/src/presentation.rs	write_style_object	22
-branches	crates/storage/src/presentation.rs	write_table_record	23
+branches	crates/storage/src/presentation.rs	write_table_record	14
 branches	crates/storage/src/roproj/host.rs	collect_entity_records	13
 branches	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	28
 branches	crates/storage/src/roproj/host.rs	resolve_component_path	16
@@ -445,7 +442,7 @@ branches	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>
 branches	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::write_cell_at	16
 branches	packages/browser-client/runtime/src/capacity.rs	formula_usage	20
 branches	packages/browser-client/runtime/src/capacity.rs	value_edit_usage	14
-branches	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style	16
+branches	packages/browser-client/runtime/src/cell_style.rs	<DesignerRuntime>::set_cell_style	15
 branches	packages/browser-client/runtime/src/display_text.rs	format_formatted	16
 branches	packages/browser-client/runtime/src/display_text.rs	js_number_to_string	19
 branches	packages/browser-client/runtime/src/display_text.rs	natural_folded_cmp	13
@@ -459,7 +456,7 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	c_unknown	25
 branches	packages/browser-client/runtime/src/interop_adapter.rs	call_argument	18
 branches	packages/browser-client/runtime/src/interop_adapter.rs	cap_ledger	15
 branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_bindings	14
-branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_node	31
+branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_node	29
 branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_parts	18
 branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	41
 branches	packages/browser-client/runtime/src/interop_adapter.rs	cell_value	22
@@ -471,11 +468,11 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	criterion_form	1
 branches	packages/browser-client/runtime/src/interop_adapter.rs	date_admission	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	decode_xstring	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	22
-branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	87
+branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	71
 branches	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	107
 branches	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	39
 branches	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	63
-branches	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	223
+branches	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	188
 branches	packages/browser-client/runtime/src/interop_adapter.rs	infer_column_number_format	30
 branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_workbook_children	22
 branches	packages/browser-client/runtime/src/interop_adapter.rs	inventory_worksheet_children	17
@@ -499,7 +496,6 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_xlsx_co
 branches	packages/browser-client/runtime/src/interop_adapter.rs	validate_zip_directory	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	whole_column_argument	33
 branches	packages/browser-client/runtime/src/interop_adapter.rs	xlsx_attempted_data_rows	19
-branches	packages/browser-client/runtime/src/interop_date_format.rs	cell_style	30
 branches	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::export_imported_workbook_with_maps	16
 branches	packages/browser-client/runtime/src/interop_document.rs	<DesignerRuntime>::rebuild_workbook_from_metadata	42
 branches	packages/browser-client/runtime/src/interop_document.rs	bind_import_formula	22
@@ -667,7 +663,6 @@ file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		982
 file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
-file	crates/semantic-core/src/presentation.rs		889
 file	crates/semantic-core/src/validation.rs		1925
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1202
@@ -680,9 +675,9 @@ file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6778
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
-file	packages/browser-client/runtime/src/interop_adapter.rs		6680
-file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13352
+file	packages/browser-client/runtime/src/interop_adapter.rs		6519
+file	packages/browser-client/runtime/src/interop_document.rs		5655
+file	packages/browser-client/runtime/src/lib.rs		13258
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1289
@@ -740,9 +735,9 @@ pub	crates/workspace-engine/src/formula_operations.rs		69
 pub	crates/workspace-engine/src/lib.rs		177
 pub	crates/workspace-engine/src/patch_lifecycle.rs		186
 pub	crates/workspace-engine/src/resident_session.rs		79
-pub	packages/browser-client/runtime/src/interop_adapter.rs		84
+pub	packages/browser-client/runtime/src/interop_adapter.rs		81
 pub	packages/browser-client/runtime/src/interop_document.rs		74
-pub	packages/browser-client/runtime/src/lib.rs		315
+pub	packages/browser-client/runtime/src/lib.rs		296
 reason	crates/cli/src/main.rs	execute allow(clippy::too_many_lines)	1
 reason	crates/diff-engine/src/canonical_delta.rs	compare_schema allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression allow(clippy::too_many_lines)	1
@@ -840,7 +835,6 @@ reason	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_pr
 reason	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile allow(clippy::too_many_lines)	1
-reason	packages/browser-client/runtime/src/interop_adapter.rs	is_zero allow(clippy::trivially_copy_pass_by_ref)	1
 reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_compatibility allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]::native_tables_compatibility_cell_inventory_boundaries allow(clippy::too_many_lines)	1
 reason	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]::native_tables_compatibility_name_inventory_boundaries allow(clippy::too_many_lines)	1

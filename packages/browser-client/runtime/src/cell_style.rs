@@ -149,6 +149,14 @@ impl DesignerRuntime {
             }
         }
         compact_palette(&mut candidate);
+        self.record_presentation_change(expected, candidate)
+    }
+
+    pub(super) fn record_presentation_change(
+        &mut self,
+        expected: &str,
+        candidate: PresentationStore,
+    ) -> Result<PublicationProjection, DesignerError> {
         if candidate == self.presentation {
             return Err(PatchLifecycleError::NoChange.into());
         }

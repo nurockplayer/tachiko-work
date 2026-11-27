@@ -331,6 +331,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return this.trackerCommand({type: "set_cell_style_range", expected_revision: expectedRevision, collection, row, row_count: rowCount, fields, changes});
   }
 
+  async setTableVisibility(expectedRevision: string, collection: string, entities: string[], fields: string[], hidden: boolean): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_table_visibility", expected_revision: expectedRevision, collection, entities, fields, hidden});
+  }
+
   async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_column_width", expected_revision: expectedRevision, collection, field, width});
   }
