@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use super::{
     CalculatedValue, CalculationFailure, ColumnRef, CriterionCell, CriterionKey, EntityId,
-    Evaluation, Expression, FieldRef, FieldType, Number, ValueStore, exact_key,
+    Evaluation, Expression, FieldRef, FieldType, Number, Value, ValueStore,
+    calculated_criterion_cell, exact_key,
 };
 
 impl<V: ValueStore> Evaluation<'_, V> {
@@ -35,7 +36,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
         };
         self.columns
             .lookup_index(self.document, self.values, column);
-        Ok(self.columns.lookup_indexes[column].get(&key).cloned())
+        match &self.columns.lookup_indexes[column] {
+            Ok(index) => Ok(index.get(&key).cloned()),
+            Err(reference) => Err(failed_key_dependency(reference)),
+        }
     }
 
     fn lookup_reference_key(
@@ -43,12 +47,23 @@ impl<V: ValueStore> Evaluation<'_, V> {
         reference: &FieldRef,
     ) -> Result<CriterionKey, CalculationFailure> {
         if let Some(entity) = self.document.entities.get(&reference.entity) {
+            if crate::field_type(self.document, reference) == Some(&FieldType::Auto)
+                && matches!(entity.fields.get(&reference.field), Some(Value::Formula(_)))
+            {
+                return self
+                    .calculated_reference(reference)
+                    .map(|value| exact_key(calculated_criterion_cell(&value)));
+            }
             if let Some(cell) = self.criterion_cell(entity, &reference.field)? {
                 return Ok(exact_key(cell));
             }
         }
-        Err(CalculationFailure::FailedDependencies {
-            dependencies: BTreeSet::from([reference.clone()]),
-        })
+        Err(failed_key_dependency(reference))
+    }
+}
+
+fn failed_key_dependency(reference: &FieldRef) -> CalculationFailure {
+    CalculationFailure::FailedDependencies {
+        dependencies: BTreeSet::from([reference.clone()]),
     }
 }

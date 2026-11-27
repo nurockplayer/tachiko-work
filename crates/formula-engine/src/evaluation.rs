@@ -82,7 +82,7 @@ pub(crate) struct ColumnCache {
     entries: BTreeMap<ColumnRef, ColumnValues>,
     indexes: BTreeMap<ColumnRef, CriterionIndex>,
     conditionals: BTreeMap<ConditionalKey, Result<Number, CalculationFailure>>,
-    lookup_indexes: BTreeMap<ColumnRef, BTreeMap<CriterionKey, EntityId>>,
+    lookup_indexes: BTreeMap<ColumnRef, Result<BTreeMap<CriterionKey, EntityId>, FieldRef>>,
 }
 
 impl ColumnCache {
@@ -153,15 +153,11 @@ impl ColumnCache {
                 Some(Value::Formula(_)) if auto => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
                     let Some(value) = values.calculated_value(&reference) else {
-                        continue;
+                        self.lookup_indexes.insert(column.clone(), Err(reference));
+                        return;
                     };
                     calculated = value;
-                    match &calculated {
-                        CalculatedValue::Number(number) => CriterionCell::Number(number.get()),
-                        CalculatedValue::Text(text) => CriterionCell::Text(text),
-                        CalculatedValue::Boolean(value) => CriterionCell::Boolean(*value),
-                        CalculatedValue::Date(value) => CriterionCell::Date(*value),
-                    }
+                    calculated_criterion_cell(&calculated)
                 }
                 Some(Value::Number(_) | Value::Formula(_)) => {
                     let reference = FieldRef::new(entity_id.clone(), column.field.clone());
@@ -179,7 +175,7 @@ impl ColumnCache {
                 .entry(exact_key(cell))
                 .or_insert_with(|| entity_id.clone());
         }
-        self.lookup_indexes.insert(column.clone(), index);
+        self.lookup_indexes.insert(column.clone(), Ok(index));
         #[cfg(test)]
         LOOKUP_INDEX_BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
@@ -1405,6 +1401,15 @@ fn exact_key(cell: CriterionCell<'_>) -> CriterionKey {
         .into_iter()
         .next()
         .expect("a scalar cell has its own typed key")
+}
+
+fn calculated_criterion_cell(value: &CalculatedValue) -> CriterionCell<'_> {
+    match value {
+        CalculatedValue::Number(number) => CriterionCell::Number(number.get()),
+        CalculatedValue::Text(text) => CriterionCell::Text(text),
+        CalculatedValue::Boolean(value) => CriterionCell::Boolean(*value),
+        CalculatedValue::Date(value) => CriterionCell::Date(*value),
+    }
 }
 
 fn number_result(value: f64) -> Result<Number, CalculationFailure> {

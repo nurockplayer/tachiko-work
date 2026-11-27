@@ -2,7 +2,8 @@ use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{DesignerRuntime, process_wire_request};
 use tachiko_workspace_engine::{
-    Date, Document, Entity, FieldConstraint, FieldDefinition, FieldType, Number, Schema, Value,
+    Date, Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
+    Number, Schema, Value,
 };
 
 fn fixture_document() -> Document {
@@ -1180,6 +1181,75 @@ fn lookup_results(runtime: &mut Option<DesignerRuntime>, revision: &str) -> Json
     );
     assert_eq!(result["status"], "ok", "{result}");
     result["response"]["payload"]["fields"].clone()
+}
+
+#[test]
+fn auto_lookup_propagates_failed_key_column_cell() {
+    let mut document = auto_lookup_key_fixture();
+    document.entities.get_mut("r1").unwrap().fields.insert(
+        "qty".into(),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::default())),
+        }),
+    );
+
+    let calculated = commit_auto_lookup(document, "VLOOKUP(2,B2:C4,2,FALSE)");
+    assert_eq!(
+        calculated,
+        json!({"status": "failure", "code": "division_by_zero", "message": "#DIV/0!"})
+    );
+}
+
+#[test]
+fn auto_lookup_matches_calculated_text_key() {
+    let mut document = auto_lookup_key_fixture();
+    let matching_row = document.entities.get_mut("r1").unwrap();
+    matching_row
+        .fields
+        .insert("qty".into(), Value::Text("needle".into()));
+    matching_row
+        .fields
+        .insert("price".into(), Value::Number(Number::new(47.0).unwrap()));
+    document.entities.get_mut("r2").unwrap().fields.insert(
+        "name".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("r1", "qty"))),
+    );
+
+    let calculated = commit_auto_lookup(document, "VLOOKUP(A3,B2:C4,2,FALSE)");
+    assert_eq!(calculated["value"].as_f64(), Some(47.0), "{calculated}");
+}
+
+fn auto_lookup_key_fixture() -> Document {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    for id in ["name", "qty", "total"] {
+        let field = schema.fields.get_mut(id).unwrap();
+        field.field_type = FieldType::Auto;
+        field.required = false;
+    }
+    document
+}
+
+fn commit_auto_lookup(document: Document, formula: &str) -> Json {
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let translated = call(&mut runtime, &request(formula));
+    assert_eq!(translated["status"], "ok", "{translated}");
+    let updated = call(
+        &mut runtime,
+        &json!({
+            "type": "formula_update", "expected_revision": "resident/0",
+            "target": {"entity": "r2", "field": "total"},
+            "source": translated["response"]["payload"]["source"],
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    let revision = updated["response"]["payload"]["resulting_revision"]
+        .as_str()
+        .unwrap();
+    lookup_results(&mut runtime, revision)[0]["calculated"].clone()
 }
 
 #[test]
