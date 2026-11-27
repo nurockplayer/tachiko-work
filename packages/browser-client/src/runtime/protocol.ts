@@ -621,7 +621,7 @@ export type TrackerCommand =
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }
-  | { type: "insert_row"; expected_revision: string; collection: string; position?: {before: string; after?: never} | {after: string; before?: never}; initializers: Array<{field: string; input: ScalarEditInput}> }
+  | { type: "insert_row"; expected_revision: string; collection: string; count?: number; position?: {before: string; after?: never} | {after: string; before?: never}; initializers: Array<{field: string; input: ScalarEditInput}> }
   | { type: "remove_table_rows"; expected_revision: string; collection: string; entities: string[] }
   | { type: "add_column"; expected_revision: string; collection: string; name: string; field_type: string; required?: boolean; initializers?: Array<{entity: string; input: ScalarEditInput}> }
   | { type: "change_column_type"; expected_revision: string; collection: string; field: string; field_type: string }

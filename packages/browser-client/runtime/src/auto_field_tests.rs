@@ -85,7 +85,7 @@ fn auto_insert_row_initializers_keep_paste_presentation_through_save_and_history
         let (mut runtime, collection, field) = auto_table();
         runtime
             .insert_row(
-                None,
+                (None, 1),
                 "resident/0",
                 &collection,
                 &[RowInitializer {
@@ -118,7 +118,7 @@ fn auto_add_column_initializers_keep_typed_presentation_through_save_and_history
     for input in formatted_inputs() {
         let (mut runtime, collection, _) = auto_table();
         runtime
-            .insert_row(None, "resident/0", &collection, &[])
+            .insert_row((None, 1), "resident/0", &collection, &[])
             .unwrap();
         let entity = runtime.query_table(&collection).unwrap().rows[0].id.clone();
         let revision = runtime.current_revision().to_owned();
@@ -139,7 +139,7 @@ fn auto_add_column_initializers_keep_typed_presentation_through_save_and_history
         let field = table.columns[1].id.clone();
         let (mut typed, typed_collection, typed_field) = auto_table();
         typed
-            .insert_row(None, "resident/0", &typed_collection, &[])
+            .insert_row((None, 1), "resident/0", &typed_collection, &[])
             .unwrap();
         let target = FieldTarget {
             entity: typed.query_table(&typed_collection).unwrap().rows[0]
@@ -368,7 +368,7 @@ fn expected_tags() -> Vec<Option<StoredValueProjection>> {
 fn auto_scalar_edits_publish_each_classifier_tag_in_windows() {
     let (mut runtime, collection, field) = auto_table();
     runtime
-        .insert_row(None, "resident/0", &collection, &[])
+        .insert_row((None, 1), "resident/0", &collection, &[])
         .unwrap();
     let target = FieldTarget {
         entity: runtime.query_table(&collection).unwrap().rows[0].id.clone(),
@@ -436,7 +436,7 @@ fn auto_paste_undo_redo_restores_values_tags_and_implied_displays() {
 fn auto_empty_text_clear_and_undo_remain_distinct() {
     let (mut runtime, collection, field) = auto_table();
     runtime
-        .insert_row(None, "resident/0", &collection, &[])
+        .insert_row((None, 1), "resident/0", &collection, &[])
         .unwrap();
     let target = FieldTarget {
         entity: runtime.query_table(&collection).unwrap().rows[0].id.clone(),
@@ -667,7 +667,7 @@ fn auto_presentation_only_edit_and_history_publish_changed_cell() {
         .id
         .clone();
     runtime
-        .insert_row(None, "resident/0", &collection, &[])
+        .insert_row((None, 1), "resident/0", &collection, &[])
         .unwrap();
     let target = FieldTarget {
         entity: runtime.query_table(&collection).unwrap().rows[0].id.clone(),

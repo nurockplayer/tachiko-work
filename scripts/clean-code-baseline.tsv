@@ -279,13 +279,12 @@ body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	75
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	127
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::delete_table	86
-body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	565
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	564
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::duplicate_collection	92
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::edit_cells	93
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::export_project_with_metadata	64
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::from_document_profile_baseline	76
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::history_edit	95
-body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::insert_row	88
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs	161
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported	324
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_formula_update_unmapped	82
@@ -689,7 +688,7 @@ file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1085
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13620
+file	packages/browser-client/runtime/src/lib.rs		13526
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1228
@@ -732,7 +731,7 @@ inline-test	packages/browser-client/runtime/src/interop_document.rs	import_depen
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
 inline-test	packages/browser-client/runtime/src/interop_number_format.rs	tests[cfg(test)]	278
 inline-test	packages/browser-client/runtime/src/lib.rs	admission_counters[cfg(test)]	25
-inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2870
+inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2869
 inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
