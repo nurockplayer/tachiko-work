@@ -658,7 +658,7 @@ file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1331
 file	crates/formula-engine/src/lib.rs		3298
 file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		982
+file	crates/merge-engine/src/conflict_v2.rs		968
 file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1925
