@@ -679,7 +679,7 @@ fn move_cells_vacates_required_text_and_undo_restores_both_ends() {
     }
     let after = table(&mut runtime, "rows");
     for (source, destination) in [(0, 2), (1, 3)] {
-        assert!(after.rows[source].styles.is_empty());
+        assert_eq!(after.rows[source].styles.len(), 0);
         assert_eq!(after.rows[destination].styles, before.rows[source].styles);
     }
     assert_formula(
