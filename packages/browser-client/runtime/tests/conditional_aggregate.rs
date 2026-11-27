@@ -407,6 +407,7 @@ fn inserting_a_row_counts_it_in_the_projection() {
     let inserted = published(
         &mut runtime,
         DesignerRequest::InsertRow {
+            count: None,
             position: None,
             expected_revision: "resident/0".to_owned(),
             collection: "plan".to_owned(),

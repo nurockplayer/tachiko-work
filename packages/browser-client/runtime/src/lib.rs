@@ -3,6 +3,7 @@
 //! This crate is app-local composition code. Its DTOs and WASM ABI are
 //! provisional delivery mechanics, not a public Semantic API or SDK contract.
 
+mod insert_rows;
 mod move_cells;
 #[cfg(test)]
 mod positional_insert_tests;
@@ -487,6 +488,8 @@ pub enum DesignerRequest {
         entities: Vec<String>,
     },
     InsertRow {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         position: Option<RowPosition>,
         expected_revision: String,
@@ -4331,12 +4334,13 @@ impl DesignerRuntime {
                 self.remove_rows(&expected_revision, &entities)?,
             )),
             DesignerRequest::InsertRow {
+                count,
                 position,
                 expected_revision,
                 collection,
                 initializers,
             } => Ok(DesignerResponse::Published(self.insert_row(
-                position.as_ref(),
+                (position.as_ref(), count.unwrap_or(1)),
                 &expected_revision,
                 &collection,
                 &initializers,
@@ -4345,11 +4349,9 @@ impl DesignerRuntime {
                 expected_revision,
                 collection,
                 entities,
-            } => Ok(DesignerResponse::Published(self.remove_table_rows(
-                &expected_revision,
-                &collection,
-                &entities,
-            )?)),
+            } => self
+                .remove_table_rows(&expected_revision, &collection, &entities)
+                .map(DesignerResponse::Published),
             DesignerRequest::Undo { expected_revision } => Ok(DesignerResponse::Published(
                 self.history_edit(&expected_revision, false)?,
             )),
@@ -8953,102 +8955,6 @@ impl DesignerRuntime {
             });
         }
         self.record_edit(expected, forward, inverse)
-    }
-
-    fn insert_row(
-        &mut self,
-        position: Option<&RowPosition>,
-        expected: &str,
-        collection: &str,
-        initializers: &[RowInitializer],
-    ) -> Result<PublicationProjection, DesignerError> {
-        self.check_revision(expected)?;
-        let spec = self.collection_spec(collection)?.clone();
-        if !is_native_table_spec(&spec) {
-            return Err(table_error(
-                "row insertion is available for native scalar tables",
-            ));
-        }
-        capacity::check_limit(
-            CapacityLimit::TableRows,
-            self.max_table_rows(),
-            spec.entities.len().saturating_add(1),
-            Some(collection),
-        )?;
-        if self.row_serial > usize::MAX - self.row_identity_reserve() {
-            return Err(tracker_error("row identity allocation is exhausted"));
-        }
-        let snapshot = self.session.export_snapshot();
-        let schema = snapshot
-            .document()
-            .schemas
-            .get(&SchemaId::from(spec.summary.id.clone()))
-            .ok_or_else(|| table_error("native table schema is unavailable"))?;
-        if !has_scalar_row_authoring_shape(snapshot.document(), schema, &spec.entities) {
-            return Err(table_error(
-                "native table schema is not a scalar row profile",
-            ));
-        }
-        let index = match position {
-            None => spec.entities.len(),
-            Some(RowPosition::Before(anchor) | RowPosition::After(anchor)) => {
-                let index = spec
-                    .entities
-                    .iter()
-                    .position(|id| id == anchor)
-                    .ok_or_else(|| {
-                        table_error("insertion anchor is unavailable in this collection")
-                    })?;
-                index + usize::from(matches!(position, Some(RowPosition::After(_))))
-            }
-        };
-        let fills = column_fill_formulas(snapshot.document(), &spec);
-        let values = row_initializer_values(&spec, initializers, &fills)?;
-        let mut allocated = BTreeSet::new();
-        let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
-        let mut entity =
-            native_table_row(snapshot.document(), &spec, &mut row_ids, &mut allocated)?;
-        // An Auto initializer implies the same display as typing it.
-        let mut displays = Vec::new();
-        for initializer in initializers {
-            let field = FieldRef::new(entity.id.clone(), FieldId::from(initializer.field.clone()));
-            let column = spec
-                .columns
-                .iter()
-                .find(|column| column.id == field.field)
-                .expect("row initializer field was validated");
-            auto_input::collect_display(
-                &column.field_type,
-                &field,
-                &initializer.input,
-                &mut displays,
-            );
-        }
-        let typed = values.keys().cloned().collect();
-        for (field, value) in values {
-            entity.fields.insert(field, value);
-        }
-        fill_new_rows(
-            snapshot.document(),
-            &[],
-            &fills,
-            std::slice::from_mut(&mut entity),
-            &[typed],
-        );
-        let (mut forward, mut inverse) = tachiko_workspace_engine::row_order::plan_insertion(
-            snapshot.document(),
-            &schema.id,
-            std::slice::from_mut(&mut entity),
-            index,
-            position.is_some(),
-        );
-        inverse.push(SemanticCommand::RemoveEntity {
-            entity: entity.id.clone(),
-        });
-        forward.push(SemanticCommand::AppendEntity { entity });
-        let publication = self.record_input_edit(expected, forward, inverse, displays)?;
-        self.row_serial = row_ids.serial();
-        Ok(publication)
     }
 
     fn remove_table_rows(
@@ -14509,17 +14415,16 @@ mod tests {
         assert_ne!(before_row, original);
 
         let initializers = row_initializers(&runtime);
-        assert!(matches!(
-            runtime
-                .handle(DesignerRequest::InsertRow {
-                    position: None,
-                    expected_revision: runtime.current_revision().to_owned(),
-                    collection: "orders".to_owned(),
-                    initializers,
-                })
-                .unwrap(),
-            super::DesignerResponse::Published(_)
-        ));
+        let response = runtime
+            .handle(DesignerRequest::InsertRow {
+                count: None,
+                position: None,
+                expected_revision: runtime.current_revision().to_owned(),
+                collection: "orders".to_owned(),
+                initializers,
+            })
+            .unwrap();
+        assert!(matches!(response, super::DesignerResponse::Published(_)));
         let (after_row, after_row_carriers) = native_saved_state(&runtime);
         assert_eq!(after_row.entities.len(), 128);
         assert_native_saved_state(&runtime, &after_row, &after_row_carriers);
@@ -15808,7 +15713,7 @@ mod tests {
         let before = runtime.export_test_project("resident/0").unwrap().bytes;
         let initializers = row_initializers(&runtime);
         let error = runtime
-            .insert_row(None, "resident/0", "orders", &initializers)
+            .insert_row((None, 1), "resident/0", "orders", &initializers)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -15830,7 +15735,7 @@ mod tests {
         let expected = runtime.current_revision().to_owned();
         let initializers = row_initializers(&runtime);
         runtime
-            .insert_row(None, &expected, "orders", &initializers)
+            .insert_row((None, 1), &expected, "orders", &initializers)
             .unwrap();
         let revision = runtime.current_revision().to_owned();
         let before = runtime.export_test_project(&revision).unwrap().bytes;
@@ -15923,7 +15828,7 @@ mod tests {
             .unwrap();
         let initializers = row_initializers(&insert_runtime);
         let error = insert_runtime
-            .insert_row(None, "resident/1", "orders", &initializers)
+            .insert_row((None, 1), "resident/1", "orders", &initializers)
             .unwrap_err();
         assert!(matches!(
             error,

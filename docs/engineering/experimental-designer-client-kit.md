@@ -376,15 +376,17 @@ blank. Required initializers remain mandatory; neither path invents defaults.
 `position: {after: entityId}` through `trackerCommand`. The anchor must belong
 to the named collection. Both keys, an unknown anchor, or a foreign anchor
 refuse without publication or history changes. Omission appends as before.
+The optional positive integer `count` defaults to one. A count greater than one
+inserts a batch of blank rows and requires a `before` anchor and empty `initializers`.
 Revision, capacity, required-field and formula-fill admission are unchanged.
-Ranks and the new row publish together, with one Undo restoring exact prior
+Ranks and the new rows publish in one revision, with one Undo restoring exact prior
 ranks (including absence) and one Redo replaying the forward facts. Window,
 locate, Find, save/reopen and XLSX/CSV export follow that stored order.
 Tracker `append_row` keeps its existing profile and refusal contract.
 
 ```ts
 await client.trackerCommand({type: "insert_row", expected_revision: revision,
-  collection: collectionKey, position: {before: rowId}, initializers: []});
+  collection: collectionKey, position: {before: rowId}, initializers: [], count: 3});
 ```
 
 Use stable IDs and the current revision from projections:

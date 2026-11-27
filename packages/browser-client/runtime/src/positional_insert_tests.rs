@@ -109,6 +109,7 @@ fn insert(runtime: &mut DesignerRuntime, position: Option<RowPosition>, label: &
     let expected_revision = runtime.current_revision().to_owned();
     runtime
         .handle(DesignerRequest::InsertRow {
+            count: None,
             expected_revision,
             collection: "rows".into(),
             position,
@@ -120,6 +121,74 @@ fn insert(runtime: &mut DesignerRuntime, position: Option<RowPosition>, label: &
 fn history(runtime: &mut DesignerRuntime, redo: bool) {
     let revision = runtime.current_revision().to_owned();
     runtime.history_edit(&revision, redo).unwrap();
+}
+
+fn blank_insert_fixture() -> Document {
+    let mut document = fixture(3);
+    document
+        .schemas
+        .get_mut(&SchemaId::from("rows"))
+        .unwrap()
+        .fields
+        .get_mut(&FieldId::from("label"))
+        .unwrap()
+        .required = false;
+    document
+        .entities
+        .get_mut(&EntityId::from("e0001"))
+        .unwrap()
+        .fields
+        .insert(
+            FieldId::from("calc"),
+            Value::Formula(Expression::Reference(FieldRef::new("e0000", "amount"))),
+        );
+    document
+}
+
+fn blank_insert_request(count: usize) -> DesignerRequest {
+    serde_json::from_value(json!({
+        "type": "insert_row", "expected_revision": "resident/0", "collection": "rows",
+        "position": {"before": "e0001"}, "initializers": [], "count": count,
+    }))
+    .unwrap()
+}
+
+#[test]
+fn insert_count_keeps_ids_and_bindings_in_one_revision_and_undo() {
+    let before = blank_insert_fixture();
+    let mut runtime = open(before.clone());
+    runtime.handle(blank_insert_request(3)).unwrap();
+    assert_eq!(runtime.current_revision(), "resident/1");
+    let ids = &runtime.collection_specs["rows"].entities;
+    assert_eq!(ids.len(), 6);
+    assert_eq!(
+        [ids[0].as_str(), ids[4].as_str(), ids[5].as_str()],
+        ["e0000", "e0001", "e0002"]
+    );
+    let inserted = runtime.session.document().clone();
+    for id in &ids[1..4] {
+        assert!(inserted.entities[id].fields.is_empty());
+    }
+    for (id, row) in &before.entities {
+        assert_eq!(inserted.entities[id].fields, row.fields);
+    }
+    assert_eq!(runtime.undo.len(), 1);
+    history(&mut runtime, false);
+    assert_eq!(runtime.session.document(), &before);
+    history(&mut runtime, true);
+    assert_eq!(runtime.session.document(), &inserted);
+}
+
+#[test]
+fn insert_count_checks_batch_capacity_before_allocating_rows() {
+    let mut runtime = open(blank_insert_fixture());
+    let error = assert_refused(
+        &mut runtime,
+        blank_insert_request(super::MAX_TABLE_ROWS - 2),
+    );
+    assert!(matches!(error, DesignerError::CapacityExceeded(error)
+        if error.limit == super::CapacityLimit::TableRows
+            && error.attempted == super::MAX_TABLE_ROWS + 1));
 }
 
 #[test]
@@ -218,6 +287,7 @@ fn insert_rejects_unknown_or_foreign_anchor_atomically() {
             assert_refused(
                 &mut runtime,
                 DesignerRequest::InsertRow {
+                    count: None,
                     position: Some(position),
                     expected_revision: "resident/0".into(),
                     collection: "rows".into(),
@@ -321,6 +391,7 @@ fn insert_preserves_capacity_and_required_field_refusals() {
         let error = assert_refused(
             &mut runtime,
             DesignerRequest::InsertRow {
+                count: None,
                 expected_revision: "resident/0".into(),
                 collection: "rows".into(),
                 position: Some(RowPosition::Before(EntityId::from("e0000"))),
@@ -414,6 +485,54 @@ fn positional_insert_save_reopen_and_xlsx_csv_round_trips() {
             expected
         );
     }
+}
+
+#[test]
+fn insert_count_preserves_order_after_reopen_and_xlsx_round_trip() {
+    use super::interop_adapter::{
+        OutputProfile, SourceValue, export_xlsx_for_profile, import_xlsx,
+    };
+
+    let mut runtime = open(blank_insert_fixture());
+    runtime.handle(blank_insert_request(3)).unwrap();
+    let saved = runtime.export_project_v3("resident/1").unwrap();
+    let mut reopened = None;
+    open_project(&mut reopened, &saved.bytes, OCCURRENCE).unwrap();
+    let reopened = reopened.unwrap();
+    assert_eq!(
+        reopened.collection_specs["rows"].entities,
+        runtime.collection_specs["rows"].entities
+    );
+    assert_eq!(reopened.session.document(), runtime.session.document());
+
+    let workbook = reopened
+        .export_native_tables_workbook("resident/0", "rows")
+        .unwrap();
+    let xlsx = export_xlsx_for_profile(&workbook, OutputProfile::Shared).unwrap();
+    let decoded = import_xlsx(&xlsx).unwrap();
+    let labels = decoded.sheets[0]
+        .rows
+        .iter()
+        .map(|row| {
+            row.get(2)
+                .map(|cell| cell.value.clone())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let text = |value: &str| SourceValue::Text {
+        value: value.into(),
+    };
+    assert_eq!(
+        labels,
+        [
+            text("e0000"),
+            SourceValue::Empty,
+            SourceValue::Empty,
+            SourceValue::Empty,
+            text("e0001"),
+            text("e0002"),
+        ]
+    );
 }
 
 #[test]

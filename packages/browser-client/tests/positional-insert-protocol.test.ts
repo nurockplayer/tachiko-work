@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { DesignerRequest, TrackerCommand } from "../src/runtime/protocol.ts";
 import { WorkerDesignerClient } from "../src/runtime/worker-client.ts";
 
-it("passes before, after and omitted insert positions unchanged through the worker", async () => {
+it("passes insert positions and count unchanged through the worker", async () => {
   let receive: ((event: MessageEvent) => void) | undefined;
   const sent: DesignerRequest[] = [];
   const worker = {
@@ -22,6 +22,7 @@ it("passes before, after and omitted insert positions unchanged through the work
     {...base, initializers: [], position: {before: "anchor"}},
     {...base, initializers: [], position: {after: "anchor"}},
     {...base, initializers: []},
+    {...base, initializers: [], position: {before: "anchor"}, count: 3},
   ];
   for (const request of requests) await client.trackerCommand(request);
   expect(sent).toEqual(requests);
