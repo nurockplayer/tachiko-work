@@ -170,7 +170,6 @@ body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
 body	crates/storage/src/roproj/v2.rs	<ExpressionV2>::from_semantic	61
 body	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	62
-body	crates/storage/src/roproj/v2.rs	write_definition	65
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	144
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	99
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	115
@@ -666,7 +665,7 @@ file	crates/semantic-core/src/validation.rs		1925
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1202
 file	crates/storage/src/roproj/v1.rs		1484
-file	crates/storage/src/roproj/v2.rs		1721
+file	crates/storage/src/roproj/v2.rs		1692
 file	crates/storage/src/roproj/v3.rs		2914
 file	crates/workspace-engine/src/analysis_operations.rs		1436
 file	crates/workspace-engine/src/formula_operations.rs		1225
