@@ -107,12 +107,11 @@ fn set_formula(document: &mut Document, target: &str, source: &str) -> Expressio
     bound
 }
 
-fn number_at(outcome: &CalculationOutcome, target: &str) -> f64 {
+fn number_at(outcome: &CalculationOutcome, target: &str) -> Number {
     match outcome {
         CalculationOutcome::Complete(calculation) => calculation
             .value(&owner(target))
-            .expect("target has a calculated Number")
-            .get(),
+            .expect("target has a calculated Number"),
         CalculationOutcome::Failed(failures) => {
             panic!("calculation failed: {:?}", failures.failures())
         }
@@ -140,7 +139,7 @@ fn absolute_and_directed_rounding_calculate_on_displayed_decimals() {
         set_formula(&mut document, "output", source);
         assert_eq!(
             number_at(&calculate_complete(&document), "output"),
-            expected,
+            Number::new(expected).unwrap(),
             "{source}"
         );
     }
