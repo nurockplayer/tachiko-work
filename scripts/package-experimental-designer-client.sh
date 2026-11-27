@@ -241,6 +241,7 @@ fs.writeFileSync(path.join(kitDir, "artifact-manifest.json"), `${JSON.stringify(
     "inspectImportedProjectWorkingSize",
     "openImportedProjectWorkingSize",
     "exportSpreadsheet",
+    "exportSpreadsheetOverwrite",
     "exportNativeTrackerSpreadsheet",
     "exportNativeBudgetSpreadsheet",
     "exportNativeTablesSpreadsheet",
