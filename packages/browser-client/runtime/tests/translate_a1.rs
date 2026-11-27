@@ -1152,14 +1152,13 @@ fn auto_lookup_miss_publishes_and_propagates_after_reopen() {
         .export_project_v3(revision)
         .unwrap();
     let mut reopened = None;
-    tachiko_designer_runtime::open_project(
+    let opened = tachiko_designer_runtime::open_project(
         &mut reopened,
         &saved.bytes,
         "00000000-0000-4000-8000-000000000980",
     )
     .unwrap();
-    let reopened_revision = reopened.as_ref().unwrap().current_revision().to_owned();
-    assert_eq!(lookup_results(&mut reopened, &reopened_revision), actual);
+    assert_eq!(lookup_results(&mut reopened, &opened.bootstrap.revision), actual);
 
     let undone = call(
         &mut runtime,
