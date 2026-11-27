@@ -17,8 +17,8 @@ use std::{
 };
 
 use crate::{
-    Document, EntityId, Expression, FieldId, FormulaExpressionType, MAX_EXPRESSION_DEPTH,
-    MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
+    ConditionalAggregate, Document, EntityId, Expression, FieldId, FormulaExpressionType,
+    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
 };
 
 /// Maximum number of styles a document may hold.
