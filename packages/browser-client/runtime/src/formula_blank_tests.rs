@@ -29,7 +29,7 @@ fn fixture() -> (DesignerRuntime, String, String, String, Vec<String>) {
         let revision = runtime.current_revision().to_owned();
         runtime
             .insert_row(
-                None,
+                (None, 1),
                 &revision,
                 &collection,
                 &[RowInitializer {
