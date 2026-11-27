@@ -13,6 +13,7 @@
 use serde::Deserialize;
 
 use crate::source_reuse::{InspectedSource, SourceIdentity};
+use crate::spreadsheet_request::{SpreadsheetFormat, SpreadsheetImport, SpreadsheetOperation};
 
 use crate::capacity::SessionProfile;
 use crate::interop_adapter::{
@@ -31,8 +32,8 @@ use crate::{
     verify_portable_ro,
 };
 use crate::{
-    ImportSelection, InteropMetadata, NativeBudgetExportPresentation,
-    NativeTrackerExportPresentation, SpreadsheetExportProjection, import_workbook,
+    InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation,
+    SpreadsheetExportProjection, import_workbook,
 };
 
 /// The browser request arena's spreadsheet metadata limit. The crate constant
@@ -492,65 +493,6 @@ impl DesignerHost {
     }
 }
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SpreadsheetFormat {
-    Csv,
-    Xlsx,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum SpreadsheetOperation {
-    Inspect {
-        format: SpreadsheetFormat,
-        csv_options: ImportOptions,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<DesignerProfile>,
-    },
-    Import {
-        format: SpreadsheetFormat,
-        csv_options: ImportOptions,
-        selection: ImportSelection,
-        occurrence_id: String,
-        install: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<DesignerProfile>,
-    },
-    InspectProject {
-        metadata: InteropMetadata,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<DesignerProfile>,
-    },
-    OpenProject {
-        occurrence_id: String,
-        metadata: InteropMetadata,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<DesignerProfile>,
-    },
-    Export {
-        expected_revision: String,
-        metadata: InteropMetadata,
-        format: SpreadsheetFormat,
-        collection: String,
-    },
-    ExportNativeTables {
-        expected_revision: String,
-        collection: String,
-        format: SpreadsheetFormat,
-    },
-    ExportNativeTracker {
-        expected_revision: String,
-        presentation: NativeTrackerExportPresentation,
-        format: SpreadsheetFormat,
-    },
-    ExportNativeBudget {
-        expected_revision: String,
-        presentation: NativeBudgetExportPresentation,
-        format: SpreadsheetFormat,
-    },
-}
-
 #[derive(Deserialize)]
 struct MetadataControl {
     #[serde(rename = "type")]
@@ -576,6 +518,17 @@ struct SpreadsheetResult {
 }
 
 impl SpreadsheetResult {
+    fn exported(
+        profile: SessionProfile,
+        receipt: SpreadsheetExportProjection,
+        bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            profile,
+            export: Some(bytes),
+            ..Self::read_only(DesignerResponse::SpreadsheetExported(receipt))
+        }
+    }
     fn read_only(response: DesignerResponse) -> Self {
         Self {
             inspected_source: None,
@@ -662,28 +615,7 @@ fn spreadsheet_operation(
             }
             Ok(result)
         }
-        SpreadsheetOperation::Import {
-            format,
-            csv_options,
-            selection,
-            occurrence_id,
-            install,
-            profile,
-        } => {
-            let workbook = retained.take().and_then(|source| {
-                source.consume(
-                    project,
-                    &csv_options,
-                    profile.is_some(),
-                    matches!(format, SpreadsheetFormat::Xlsx),
-                )
-            });
-            let workbook = match workbook {
-                Some(workbook) => *workbook,
-                None => import_source(project, format, &csv_options, profile.is_some())?,
-            };
-            import_spreadsheet(workbook, &selection, &occurrence_id, install, profile)
-        }
+        SpreadsheetOperation::Import(request) => import_spreadsheet(&request, project, retained),
         SpreadsheetOperation::InspectProject { metadata, profile } => {
             inspect_imported_project_spreadsheet(project, &metadata, profile)
         }
@@ -698,10 +630,13 @@ fn spreadsheet_operation(
             format,
             collection,
         } => {
-            let runtime = runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
-                message: "No Designer project is open for spreadsheet export.".to_owned(),
-            })?;
+            let runtime = require_imported_export_runtime(runtime)?;
             export_spreadsheet(runtime, &expected_revision, &metadata, format, &collection)
+        }
+        SpreadsheetOperation::ExportXlsxOverwrite { expected } => {
+            let runtime = require_imported_export_runtime(runtime)?;
+            let (receipt, bytes) = crate::spreadsheet_overwrite::export(runtime, &expected)?;
+            Ok(SpreadsheetResult::exported(runtime.profile, receipt, bytes))
         }
         SpreadsheetOperation::ExportNativeTables {
             expected_revision,
@@ -738,35 +673,46 @@ fn spreadsheet_operation(
 }
 
 fn import_spreadsheet(
-    workbook: SourceWorkbook,
-    selection: &ImportSelection,
-    occurrence_id: &str,
-    install: bool,
-    profile: Option<DesignerProfile>,
+    request: &SpreadsheetImport,
+    project: &[u8],
+    retained: &mut Option<InspectedSource>,
 ) -> Result<SpreadsheetResult, DesignerError> {
-    match profile {
+    let workbook = request.source(project, retained, |format, options, working| {
+        import_source(project, format, options, working)
+    })?;
+    let mut result = match request.profile {
         None => {
-            let (candidate, imported) = import_workbook(&workbook, selection, occurrence_id)?;
-            Ok(SpreadsheetResult {
+            let (candidate, imported) =
+                import_workbook(&workbook, &request.selection, &request.occurrence_id)?;
+            SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::Imported(Box::new(imported)),
-                candidate: install.then_some(candidate),
+                candidate: request.install.then_some(candidate),
                 export: None,
-            })
+            }
         }
         Some(DesignerProfile::WorkingSize) => {
-            let (candidate, imported) =
-                import_admitted_workbook_working_size(workbook, selection, occurrence_id)?;
-            Ok(SpreadsheetResult {
+            let (candidate, imported) = import_admitted_workbook_working_size(
+                workbook,
+                &request.selection,
+                &request.occurrence_id,
+            )?;
+            SpreadsheetResult {
                 inspected_source: None,
                 profile: candidate.profile,
                 response: DesignerResponse::ImportedWindow(Box::new(imported)),
-                candidate: install.then_some(candidate),
+                candidate: request.install.then_some(candidate),
                 export: None,
-            })
+            }
         }
-    }
+    };
+    crate::spreadsheet_overwrite::remember(
+        result.candidate.as_mut(),
+        request.original(project),
+        &result.response,
+    );
+    Ok(result)
 }
 
 fn inspect_imported_project_spreadsheet(
@@ -909,17 +855,12 @@ fn export_native_tracker_spreadsheet(
         .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
-    Ok(SpreadsheetResult {
-        inspected_source: None,
-        profile: runtime.profile,
-        response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
-            revision: revision.to_owned(),
-            byte_length: bytes.len(),
-            ledger: workbook.ledger,
-        }),
-        candidate: None,
-        export: Some(bytes),
-    })
+    let receipt = SpreadsheetExportProjection {
+        revision: revision.to_owned(),
+        byte_length: bytes.len(),
+        ledger: workbook.ledger,
+    };
+    Ok(SpreadsheetResult::exported(runtime.profile, receipt, bytes))
 }
 
 fn export_native_budget_spreadsheet(
@@ -988,16 +929,19 @@ fn export_native_budget_spreadsheet(
         .map_err(|error| output_error(error, runtime.profile == SessionProfile::WorkingSize))?,
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
-    Ok(SpreadsheetResult {
-        inspected_source: None,
-        profile: runtime.profile,
-        response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
-            revision: revision.to_owned(),
-            byte_length: bytes.len(),
-            ledger: workbook.ledger,
-        }),
-        candidate: None,
-        export: Some(bytes),
+    let receipt = SpreadsheetExportProjection {
+        revision: revision.to_owned(),
+        byte_length: bytes.len(),
+        ledger: workbook.ledger,
+    };
+    Ok(SpreadsheetResult::exported(runtime.profile, receipt, bytes))
+}
+
+fn require_imported_export_runtime(
+    runtime: Option<&DesignerRuntime>,
+) -> Result<&DesignerRuntime, DesignerError> {
+    runtime.ok_or_else(|| DesignerError::InvalidProjectTransfer {
+        message: "No Designer project is open for spreadsheet export.".to_owned(),
     })
 }
 
@@ -1081,17 +1025,12 @@ fn export_spreadsheet(
         }
     };
     crate::enforce_project_transfer_limit(bytes.len())?;
-    Ok(SpreadsheetResult {
-        inspected_source: None,
-        profile: runtime.profile,
-        response: DesignerResponse::SpreadsheetExported(SpreadsheetExportProjection {
-            revision: revision.to_owned(),
-            byte_length: bytes.len(),
-            ledger: workbook.ledger,
-        }),
-        candidate: None,
-        export: Some(bytes),
-    })
+    let receipt = SpreadsheetExportProjection {
+        revision: revision.to_owned(),
+        byte_length: bytes.len(),
+        ledger: workbook.ledger,
+    };
+    Ok(SpreadsheetResult::exported(runtime.profile, receipt, bytes))
 }
 
 fn too_large_project(runtime: Option<&DesignerRuntime>) -> DesignerWireReply {

@@ -2420,7 +2420,7 @@ fn parse_xml_profile(bytes: &[u8], working: bool) -> Result<Xml<'_>> {
     root.plain_lexical_values &= plain_document;
     Ok(root)
 }
-fn archive(bytes: &[u8], working: bool) -> Result<BTreeMap<String, Vec<u8>>> {
+pub(crate) fn archive(bytes: &[u8], working: bool) -> Result<BTreeMap<String, Vec<u8>>> {
     source_bound_profile(bytes, working)?;
     validate_zip_directory(bytes)?;
     let mut zip =
