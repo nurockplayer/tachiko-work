@@ -688,7 +688,6 @@ inline-test	crates/semantic-core/src/criterion.rs	tests[cfg(test)]	250
 inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
 inline-test	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::tests[cfg(test)]	204
 inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
-inline-test	crates/storage/src/roproj/host.rs	tests[cfg(test)]	56
 inline-test	crates/storage/src/roproj/v1.rs	tests[cfg(test)]	10
 inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
