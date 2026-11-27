@@ -279,13 +279,12 @@ body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	75
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	127
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::delete_table	86
-body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	565
+body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::dispatch	564
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::duplicate_collection	92
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::edit_cells	93
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::export_project_with_metadata	64
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::from_document_profile_baseline	76
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::history_edit	95
-body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::insert_row	88
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::paste_cell_inputs	161
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_commands_with_imported	324
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::publish_formula_update_unmapped	82
@@ -439,7 +438,7 @@ branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::propos
 branches	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::restore_after_publication_failure	13
 branches	crates/workspace-engine/src/patch_lifecycle.rs	admit_command_names	16
 branches	crates/workspace-engine/src/patch_lifecycle.rs	command_payload_approx_bytes	21
-branches	crates/workspace-engine/src/patch_lifecycle.rs	duplicate_constraint_write	26
+branches	crates/workspace-engine/src/patch_lifecycle.rs	duplicate_constraint_write	22
 branches	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_column_totals	16
 branches	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_selection_statistics	14
 branches	crates/workspace-engine/src/resident_session.rs	collect_entity_projection_changes	33
@@ -614,7 +613,6 @@ depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>:
 depth	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	4
 depth	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::insert_keyed_grouped_sum_formula_roots	4
 depth	crates/workspace-engine/src/patch_lifecycle.rs	<PatchLifecycle>::plan_candidate	4
-depth	crates/workspace-engine/src/patch_lifecycle.rs	duplicate_constraint_write	4
 depth	crates/workspace-engine/src/resident_session.rs	<ResidentWorkspaceSession>::query_column_totals	4
 depth	crates/workspace-engine/src/resident_session.rs	collect_entity_projection_changes	4
 depth	crates/workspace-engine/src/resident_session.rs	collect_schema_projection_changes	5
@@ -685,12 +683,12 @@ file	crates/storage/src/roproj/v3.rs		2914
 file	crates/workspace-engine/src/analysis_operations.rs		1436
 file	crates/workspace-engine/src/formula_operations.rs		1225
 file	crates/workspace-engine/src/lib.rs		4007
-file	crates/workspace-engine/src/patch_lifecycle.rs		6780
+file	crates/workspace-engine/src/patch_lifecycle.rs		6778
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13584
+file	packages/browser-client/runtime/src/lib.rs		13490
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1289
@@ -733,7 +731,7 @@ inline-test	packages/browser-client/runtime/src/interop_document.rs	import_depen
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
 inline-test	packages/browser-client/runtime/src/interop_number_format.rs	tests[cfg(test)]	278
 inline-test	packages/browser-client/runtime/src/lib.rs	admission_counters[cfg(test)]	25
-inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2870
+inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2869
 inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60

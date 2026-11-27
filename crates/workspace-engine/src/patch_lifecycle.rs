@@ -40,6 +40,8 @@ use super::{
     unset_field_candidate_in_place,
 };
 
+mod append_collection_collision;
+
 /// What a run of `AppendEntity` commands has already proved about the candidate:
 /// its entity keys, once its whole structure has been checked.
 #[derive(Default)]
@@ -6448,16 +6450,12 @@ fn duplicate_constraint_write(body: &SemanticPatchBody) -> Option<(SchemaId, Fie
                 field_lifecycle_targets.insert(target);
             }
             SemanticCommand::AppendCollection { schema, .. } => {
-                for field in schema
-                    .fields
-                    .values()
-                    .map(|definition| definition.id.clone())
-                {
-                    let target = (schema.id.clone(), field);
-                    if constraint_targets.contains(&target) {
-                        return Some(target);
-                    }
-                    collection_lifecycle_targets.insert((target.0.clone(), Some(target.1.clone())));
+                if let Some(target) = append_collection_collision::record_targets(
+                    schema,
+                    &constraint_targets,
+                    &mut collection_lifecycle_targets,
+                ) {
+                    return Some(target);
                 }
             }
             SemanticCommand::RemoveCollection { schema, .. } => {
@@ -7071,7 +7069,7 @@ mod tests {
         }
     }
 
-    fn collection_command(schema_id: &str, append: bool) -> SemanticCommand {
+    pub(super) fn collection_command(schema_id: &str, append: bool) -> SemanticCommand {
         if append {
             SemanticCommand::AppendCollection {
                 schema: Schema {
