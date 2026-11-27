@@ -114,6 +114,7 @@ use tachiko_workspace_engine::{
 use thiserror::Error;
 
 mod cell_style;
+mod collection_copy_formula;
 mod imported_lifecycle;
 #[cfg(test)]
 mod imported_lifecycle_tests;
@@ -124,6 +125,9 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+mod range_to_table;
+#[cfg(test)]
+mod range_to_table_tests;
 mod sized_reply;
 pub(crate) use sized_reply::encode_sized_reply;
 mod source_reuse;
@@ -451,6 +455,12 @@ pub enum DesignerRequest {
         expected_revision: String,
         name: String,
         columns: Vec<NewTableColumnInput>,
+    },
+    RangeToTable {
+        expected_revision: String,
+        range: SelectionStatisticsRange,
+        name: String,
+        has_header: bool,
     },
     DuplicateCollection {
         expected_revision: String,
@@ -4213,40 +4223,12 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Published(
                 self.delete_table(&expected_revision, &collection)?,
             )),
-            DesignerRequest::AddTable {
-                expected_revision,
-                name,
-                columns,
-            } => Ok(DesignerResponse::Duplicated(self.add_table(
-                &expected_revision,
-                &name,
-                &columns,
-            )?)),
-            DesignerRequest::DuplicateCollection {
-                expected_revision,
-                collection,
-                name,
-                column_names,
-            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
-                &expected_revision,
-                &collection,
-                &name,
-                &column_names,
-                None,
-            )?)),
-            DesignerRequest::DuplicateCollectionAt {
-                expected_revision,
-                collection,
-                name,
-                column_names,
-                to_index,
-            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
-                &expected_revision,
-                &collection,
-                &name,
-                &column_names,
-                Some(to_index),
-            )?)),
+            DesignerRequest::AddTable { .. }
+            | DesignerRequest::RangeToTable { .. }
+            | DesignerRequest::DuplicateCollection { .. }
+            | DesignerRequest::DuplicateCollectionAt { .. } => {
+                self.dispatch_table_creation(request)
+            }
             DesignerRequest::EditCells {
                 expected_revision,
                 edits,
@@ -11353,6 +11335,7 @@ fn copy_collection_entities(
         .zip(ordered_ids)
         .collect();
     let mut entities = Vec::with_capacity(source_spec.entities.len());
+    let remap = collection_copy_formula::CopyReferences::whole(&entity_map, field_map, &schema_map);
     for source_id in &source_spec.entities {
         let source =
             document
@@ -11380,7 +11363,7 @@ fn copy_collection_entities(
             let target_field = field_map
                 .get(source_field)
                 .ok_or_else(|| table_error("field mapping is incomplete"))?;
-            let value = remap_duplicate_value(value, &entity_map, field_map, &schema_map)?;
+            let value = remap.value(value)?;
             copied.fields.insert(target_field.clone(), value);
         }
         entities.push(copied);
@@ -11436,125 +11419,6 @@ fn copied_column_names(
     }
     name_admission::refuse(failures)?;
     Ok(named)
-}
-
-fn remap_duplicate_value(
-    value: &Value,
-    entities: &BTreeMap<EntityId, EntityId>,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<Value, DesignerError> {
-    match value {
-        Value::Reference(entity) => Ok(Value::Reference(
-            entities
-                .get(entity)
-                .cloned()
-                .unwrap_or_else(|| entity.clone()),
-        )),
-        Value::Formula(expression) => {
-            let mut expression = expression.clone();
-            map_duplicate_expression(&mut expression, entities, fields, schemas)?;
-            Ok(Value::Formula(expression))
-        }
-        Value::Number(number) => Ok(Value::Number(*number)),
-        Value::Text(text) => Ok(Value::Text(text.clone())),
-        Value::Boolean(value) => Ok(Value::Boolean(*value)),
-        Value::Date(value) => Ok(Value::Date(*value)),
-    }
-}
-
-fn map_duplicate_expression(
-    expression: &mut Expression,
-    entities: &BTreeMap<EntityId, EntityId>,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<(), DesignerError> {
-    match expression {
-        Expression::Number(_) => Ok(()),
-        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-            if let Some(entity) = entities.get(&reference.entity) {
-                reference.entity = entity.clone();
-                reference.field = fields.get(&reference.field).cloned().ok_or_else(|| {
-                    table_error(&format!(
-                        "internal formula reference '{}' has no copied field",
-                        reference.field
-                    ))
-                })?;
-            }
-            Ok(())
-        }
-        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-            // The copy has its own field IDs; the reference follows its row.
-            *field = fields.get(field).cloned().ok_or_else(|| {
-                table_error(&format!(
-                    "internal same-row formula field '{field}' has no copied field"
-                ))
-            })?;
-            Ok(())
-        }
-        Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-            map_duplicate_column(column, fields, schemas)
-        }
-        // Every column of the node follows the copy, and a criterion
-        // expression is remapped like any other formula subtree.
-        Expression::ColumnConditional {
-            aggregate,
-            criteria,
-        } => {
-            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                aggregate.as_mut()
-            {
-                map_duplicate_column(column, fields, schemas)?;
-            }
-            for criterion in criteria {
-                map_duplicate_column(&mut criterion.column, fields, schemas)?;
-                if let Some(expression) = &mut criterion.value {
-                    map_duplicate_expression(expression, entities, fields, schemas)?;
-                }
-            }
-            Ok(())
-        }
-        Expression::Lookup {
-            key,
-            key_column,
-            result_column,
-            if_missing,
-        } => {
-            map_duplicate_column(key_column, fields, schemas)?;
-            map_duplicate_column(result_column, fields, schemas)?;
-            map_duplicate_expression(key, entities, fields, schemas)?;
-            if let Some(fallback) = if_missing {
-                map_duplicate_expression(fallback, entities, fields, schemas)?;
-            }
-            Ok(())
-        }
-        _ => {
-            for child in expression.children_mut() {
-                map_duplicate_expression(child, entities, fields, schemas)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-/// A column of the copied table's own schema follows the copy; any other
-/// table's column keeps pointing at that table.
-fn map_duplicate_column(
-    column: &mut ColumnRef,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<(), DesignerError> {
-    if let Some(schema) = schemas.get(&column.schema) {
-        let field = fields.get(&column.field).cloned().ok_or_else(|| {
-            table_error(&format!(
-                "internal column-total field '{}' has no copied field",
-                column.field
-            ))
-        })?;
-        column.schema = schema.clone();
-        column.field = field;
-    }
-    Ok(())
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -16359,62 +16223,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicated_expressions_remap_column_aggregates() {
-        let mut expression = Expression::ColumnAggregate {
-            function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
-            column: ColumnRef::new("plan", "reserve"),
-        };
-        super::map_duplicate_expression(
-            &mut expression,
-            &BTreeMap::new(),
-            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
-            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
-        )
-        .unwrap();
-        assert_eq!(
-            expression,
-            Expression::ColumnAggregate {
-                function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
-                column: ColumnRef::new("plan_copy_schema", "reserve_copy"),
-            }
-        );
-    }
-
-    #[test]
-    fn duplicated_lookups_move_own_columns_and_keep_foreign_ones() {
-        let lookup = |schema: &str, key: &str, result: &str| Expression::Lookup {
-            key: Box::new(Expression::SameRowReference(FieldId::from("name"))),
-            key_column: ColumnRef::new(schema, key),
-            result_column: ColumnRef::new(schema, result),
-            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
-                "reserve",
-            )))),
-        };
-        let mut own = lookup("plan", "name", "reserve");
-        let mut foreign = lookup("settings", "label", "rate");
-        let fields = BTreeMap::from([
-            (FieldId::from("name"), FieldId::from("name_copy")),
-            (FieldId::from("reserve"), FieldId::from("reserve_copy")),
-        ]);
-        let schemas =
-            BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]);
-        for expression in [&mut own, &mut foreign] {
-            super::map_duplicate_expression(expression, &BTreeMap::new(), &fields, &schemas)
-                .expect("the duplicated lookup maps");
-        }
-        let copied = |schema: &str, key: &str, result: &str| Expression::Lookup {
-            key: Box::new(Expression::SameRowReference(FieldId::from("name_copy"))),
-            key_column: ColumnRef::new(schema, key),
-            result_column: ColumnRef::new(schema, result),
-            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
-                "reserve_copy",
-            )))),
-        };
-        assert_eq!(own, copied("plan_copy_schema", "name_copy", "reserve_copy"));
-        assert_eq!(foreign, copied("settings", "label", "rate"));
-    }
-
-    #[test]
     fn copied_lookups_visit_a_bare_key_as_non_numeric() {
         let mut expression = Expression::Lookup {
             key: Box::new(Expression::Reference(tachiko_semantic_core::FieldRef::new(
@@ -16439,31 +16247,6 @@ mod tests {
         assert_eq!(
             visited,
             [("name".to_owned(), false), ("reserve".to_owned(), true)]
-        );
-    }
-
-    #[test]
-    fn duplicated_expressions_move_own_column_totals_and_keep_foreign_ones() {
-        let mut expression = Expression::Add {
-            left: Box::new(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
-            right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
-        };
-        super::map_duplicate_expression(
-            &mut expression,
-            &BTreeMap::new(),
-            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
-            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
-        )
-        .expect("the duplicated expression maps");
-        assert_eq!(
-            expression,
-            Expression::Add {
-                left: Box::new(Expression::ColumnTotal(ColumnRef::new(
-                    "plan_copy_schema",
-                    "reserve_copy"
-                ))),
-                right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
-            }
         );
     }
 }

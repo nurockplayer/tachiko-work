@@ -307,7 +307,7 @@ describe("duplicate collection column names", () => {
       addEventListener: (type: string, callback: (event: MessageEvent) => void) => { if (type === "message") receive = callback; },
       postMessage: (request: { id: number; request: Record<string, unknown> }) => {
         requests.push(request.request);
-        const response = request.request.type === "add_table" ? { type: "duplicated", payload: duplicated } : { type: "published", payload: publication };
+        const response = ["add_table", "range_to_table"].includes(String(request.request.type)) ? { type: "duplicated", payload: duplicated } : { type: "published", payload: publication };
         receive?.({ data: { id: request.id, status: "ok", response } } as MessageEvent);
       },
     } as unknown as Worker;
@@ -316,10 +316,13 @@ describe("duplicate collection column names", () => {
     await expect(client.addTable("resident/0", "New", columns)).resolves.toEqual(duplicated);
     await expect(client.deleteTable("resident/1", "new")).resolves.toEqual(publication);
     await expect(client.moveCollection("resident/2", "items", 0)).resolves.toEqual(publication);
+    const range = {collection: "items", first: "row-1", last: "row-3", fields: ["amount", "total"]};
+    await expect(client.rangeToTable("resident/3", range, "From range", true)).resolves.toEqual(duplicated);
     expect(requests).toEqual([
       {type: "add_table", expected_revision: "resident/0", name: "New", columns},
       {type: "delete_table", expected_revision: "resident/1", collection: "new"},
       {type: "move_collection", expected_revision: "resident/2", collection: "items", to_index: 0},
+      {type: "range_to_table", expected_revision: "resident/3", range, name: "From range", has_header: true},
     ]);
   });
 
