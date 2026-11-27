@@ -684,7 +684,7 @@ file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1085
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13526
+file	packages/browser-client/runtime/src/lib.rs		13478
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1228
@@ -729,7 +729,6 @@ inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2869
 inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
-inline-test	packages/browser-client/runtime/src/source_reuse.rs	tests[cfg(test)]	64
 inline-test	packages/browser-client/runtime/src/wasm.rs	native_tables_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	85
 inline-test	packages/browser-client/runtime/src/wasm.rs	ranked_import_ingress_tests[cfg(all(test,not(target_arch="wasm32")))]	46
 inline-test	packages/browser-client/runtime/src/wasm.rs	row_rank_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	251
@@ -745,7 +744,7 @@ pub	crates/workspace-engine/src/patch_lifecycle.rs		186
 pub	crates/workspace-engine/src/resident_session.rs		79
 pub	packages/browser-client/runtime/src/interop_adapter.rs		84
 pub	packages/browser-client/runtime/src/interop_document.rs		74
-pub	packages/browser-client/runtime/src/lib.rs		335
+pub	packages/browser-client/runtime/src/lib.rs		315
 reason	crates/cli/src/main.rs	execute allow(clippy::too_many_lines)	1
 reason	crates/diff-engine/src/canonical_delta.rs	compare_schema allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression allow(clippy::too_many_lines)	1
