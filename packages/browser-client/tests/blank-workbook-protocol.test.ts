@@ -9,7 +9,7 @@ it("opens a headerless workbook and forwards adjacent positional Auto writes thr
   const opened: OpenedWindowProjection = {
     profile: "working_size",
     bootstrap: {title: "Untitled workbook", revision: "resident/0", default_collection: "sheet", collections: [collection], keyed_grouped_sum_definition_ids: []},
-    window: {revision: "resident/0", collection, columns: [], columns_revision: "columns/0", total_rows: 0, unfiltered_rows: 0, start: 0, rows: [], column_totals: {}},
+    window: {revision: "resident/0", collection, cell_styling: {status: "supported"}, columns: [], columns_revision: "columns/0", total_rows: 0, unfiltered_rows: 0, start: 0, rows: [], column_totals: {}},
   };
   const worker = {
     addEventListener(type: string, callback: (event: MessageEvent) => void) {

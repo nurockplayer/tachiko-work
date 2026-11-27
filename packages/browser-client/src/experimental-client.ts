@@ -188,6 +188,7 @@ export type {
   CollectionSummary,
   ColumnProjection,
   CellAlignment,
+  CellStylingCapability,
   ConstraintFailureProjection,
   ConstraintFailureReason,
   DiagnosticProjection,

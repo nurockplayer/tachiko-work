@@ -5,9 +5,9 @@ use tachiko_workspace_engine::{
 };
 
 use crate::{
-    CollectionSpec, DesignerError, DesignerRuntime, HistoryAction, HistoryEntry,
-    PatchLifecycleError, PublicationProjection, capacity, interop_adapter, prune_presentation,
-    table_error, validate_presentation,
+    CellStylingCapability, CellStylingUnsupportedReason, CollectionSpec, DesignerError,
+    DesignerRuntime, HistoryAction, HistoryEntry, PatchLifecycleError, PublicationProjection,
+    capacity, interop_adapter, prune_presentation, table_error, validate_presentation,
 };
 
 /// Changes are applied in order to the Cartesian product of record and field IDs.
@@ -54,6 +54,23 @@ fn deserialize_fill_color<'de, D: serde::Deserializer<'de>>(
 }
 
 impl DesignerRuntime {
+    pub(super) fn cell_styling_capability(&self, spec: &CollectionSpec) -> CellStylingCapability {
+        if spec.native_table_rows
+            || spec.direct_tracker_rows
+            || self.imported.as_ref().is_some_and(|state| {
+                state
+                    .metadata
+                    .sheets
+                    .iter()
+                    .any(|sheet| sheet.schema_id == spec.summary.id)
+            })
+        {
+            CellStylingCapability::Supported
+        } else {
+            CellStylingCapability::Unsupported(CellStylingUnsupportedReason::ReadOnlyTable)
+        }
+    }
+
     pub(super) fn set_cell_style_range(
         &mut self,
         expected: &str,
@@ -158,19 +175,12 @@ impl DesignerRuntime {
         fields: &[String],
     ) -> Result<SchemaId, DesignerError> {
         let spec = self.collection_spec(collection)?;
-        let schema = SchemaId::from(spec.summary.id.clone());
-        let imported = self.imported.as_ref().is_some_and(|state| {
-            state
-                .metadata
-                .sheets
-                .iter()
-                .any(|sheet| sheet.schema_id == schema.as_str())
-        });
-        if !spec.native_table_rows && !spec.direct_tracker_rows && !imported {
+        if self.cell_styling_capability(spec) != CellStylingCapability::Supported {
             return Err(DesignerError::ReadOnlyStyleTable {
                 collection: collection.to_owned(),
             });
         }
+        let schema = SchemaId::from(spec.summary.id.clone());
         if entities.is_empty() || fields.is_empty() {
             return Err(table_error(
                 "cell style selection must have records and fields",

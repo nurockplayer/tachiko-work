@@ -4,6 +4,10 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Expose per-collection cell-styling eligibility in full and windowed browser
+  client table projections so Sheet can enable formatting from the same rule
+  the styling commands use (#965, Sheet #586).
+
 - Insert multiple blank rows before a stable row ID with the optional
   `insert_row` count. The batch uses one revision and one Undo step (#975).
 

@@ -850,7 +850,14 @@ switches. Missing or invalid paths refuse before package execution. Unset or
 `0` keeps CA overrides excluded; any other opt-in value refuses. Only use this
 option for a CA file whose existing trust and provenance have been verified.
 
-## Cell styles (#815, #889)
+## Cell styles (#815, #889, #965)
+
+Use `cell_styling.status` from the current table or table-window projection
+to enable formatting for that collection. Both style commands use the same
+eligibility rule. The projection returns `{status: "supported"}` for eligible
+native tables, direct Tracker rows and imported sheets, or
+`{status: "unsupported", reason: "read_only_table"}` otherwise. Selection,
+revision and capacity checks still apply when a command is submitted.
 
 `setCellStyle(expectedRevision, collection, entities, fields, changes)` applies
 `entities × fields` atomically, including blank cells. Use stable record and

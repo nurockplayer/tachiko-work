@@ -11,11 +11,11 @@ use std::{
 use serde_json::json;
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
-    BootstrapProjection, CollectionSummary, ColumnProjection, DesignerRequest, DesignerResponse,
-    DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType, ImportSelection,
-    KeyedGroupedSumDefinitionInput, OpenedProjection, RowProjection, ScalarEditInput, ScalarKind,
-    StoredValueProjection, TableProjection, close_project, import_workbook, inspect_project,
-    open_project,
+    BootstrapProjection, CellStylingCapability, CollectionSummary, ColumnProjection,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget,
+    ImportFieldType, ImportSelection, KeyedGroupedSumDefinitionInput, OpenedProjection,
+    RowProjection, ScalarEditInput, ScalarKind, StoredValueProjection, TableProjection,
+    close_project, import_workbook, inspect_project, open_project,
 };
 use tachiko_storage::{
     CanonicalRoProjectV1, CanonicalRoProjectV2, CanonicalRoProjectV3, decode_roproj_v1,
@@ -1289,6 +1289,7 @@ fn independent_opened_projection(
         },
         table: TableProjection {
             revision: revision.to_owned(),
+            cell_styling: CellStylingCapability::Supported,
             tracker_profile: None,
             // All-optional scalar imports (Date included) are native since #598.
             native_table_profile: Some(true),
@@ -2274,6 +2275,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
         new_opened.table,
         TableProjection {
             revision: "resident/0".into(),
+            cell_styling: CellStylingCapability::Supported,
             tracker_profile: None,
             native_table_profile: Some(true),
             collection: CollectionSummary {

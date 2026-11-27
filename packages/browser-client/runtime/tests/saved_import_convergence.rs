@@ -7,11 +7,11 @@ use std::{
 };
 use tachiko_designer_runtime::interop_adapter::{ImportOptions, SourceWorkbook, import_csv};
 use tachiko_designer_runtime::{
-    CapacityLimit, CleanupOperation, CollectionSummary, ColumnProjection, DesignerRequest,
-    DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget, ImportFieldType,
-    ImportSelection, InteropMetadata, RowInitializer, RowProjection, ScalarEditInput, ScalarKind,
-    StoredValueProjection, TableProjection, import_workbook, inspect_imported_project,
-    open_imported_project, open_project,
+    CapacityLimit, CellStylingCapability, CleanupOperation, CollectionSummary, ColumnProjection,
+    DesignerRequest, DesignerResponse, DesignerRuntime, FieldProjection, FieldTarget,
+    ImportFieldType, ImportSelection, InteropMetadata, RowInitializer, RowProjection,
+    ScalarEditInput, ScalarKind, StoredValueProjection, TableProjection, import_workbook,
+    inspect_imported_project, open_imported_project, open_project,
 };
 use tachiko_storage::{CanonicalRoProjectV1, decode_roproj_v1, from_bytes};
 use tachiko_workspace_engine::{
@@ -425,9 +425,10 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // The column-total footer adds `,"column_totals":{}` (19 bytes): this
         // fixture declares only Text columns, so it has no Number total.
         // The collection summaries add `,"headerless":false` (2 x 19 bytes).
+        // The table adds `,"cell_styling":{"status":"supported"}` (38 bytes).
         assert_eq!(
             expected_bytes.len(),
-            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19
+            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19 + 38
         );
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
@@ -465,6 +466,7 @@ fn expected_native_table(document: &Document, revision: &str) -> TableProjection
         .collect::<Vec<_>>();
     TableProjection {
         revision: revision.to_owned(),
+        cell_styling: CellStylingCapability::Supported,
         tracker_profile: None,
         native_table_profile: Some(true),
         collection: CollectionSummary {
