@@ -41,6 +41,7 @@ function transport() {
 
 function table(collection: string): TableProjection {
   return {
+    cell_styling: {status: "supported"},
     revision: "resident/0",
     collection: { id: collection, key: collection, display_name: collection, headerless: false, data_start_row: 2, entity_count: 0 },
     columns: [],

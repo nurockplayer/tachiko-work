@@ -167,9 +167,14 @@ export type TableRowProjection = {
   styles?: SourceStyle[];
 };
 
+export type CellStylingCapability =
+  | { status: "supported" }
+  | { status: "unsupported"; reason: "read_only_table" };
+
 export type TableProjection = {
   tracker_profile?: boolean;
   native_table_profile?: boolean;
+  cell_styling: CellStylingCapability;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];
@@ -236,6 +241,7 @@ export type TableWindowProjection = {
   /** Same profile flags as `TableProjection`; present only when true. */
   tracker_profile?: boolean;
   native_table_profile?: boolean;
+  cell_styling: CellStylingCapability;
   revision: string;
   collection: CollectionSummary;
   columns: ColumnProjection[];

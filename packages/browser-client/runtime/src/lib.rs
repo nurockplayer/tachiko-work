@@ -125,6 +125,10 @@ mod sized_reply;
 pub(crate) use sized_reply::encode_sized_reply;
 mod source_reuse;
 pub use cell_style::{CellBorderTarget, CellStyleChange};
+mod table_projection;
+pub use table_projection::{
+    CellStylingCapability, CellStylingUnsupportedReason, TableProjection, TableWindowProjection,
+};
 #[cfg(test)]
 mod cell_border_tests;
 #[cfg(test)]
@@ -720,59 +724,6 @@ pub struct CollectionSummary {
     pub key: String,
     pub display_name: String,
     pub entity_count: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TableProjection {
-    pub revision: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracker_profile: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_table_profile: Option<bool>,
-    pub collection: CollectionSummary,
-    pub columns: Vec<ColumnProjection>,
-    pub rows: Vec<RowProjection>,
-    /// One total per Number column, keyed by column id and observed at the same
-    /// revision as `rows`. A null total means a contributing value is
-    /// unavailable or not a number; blank cells are skipped, as in a formula
-    /// column total.
-    #[serde(default, deserialize_with = "deserialize_column_totals")]
-    pub column_totals: BTreeMap<String, Option<f64>>,
-}
-
-/// One bounded window of a collection table at one revision.
-///
-/// `rows` is exactly the `RowProjection` shape of the complete table query and
-/// `columns` the same column projection. `total_rows` counts the rows the view
-/// admits (including kept entities); `unfiltered_rows` counts every row in the
-/// collection. `start` is clamped to `total_rows`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TableWindowProjection {
-    pub revision: String,
-    /// The same profile flags `queryTable` carries, so a client reading only
-    /// windows knows whether native row and column commands apply.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracker_profile: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_table_profile: Option<bool>,
-    pub collection: CollectionSummary,
-    pub columns: Vec<ColumnProjection>,
-    /// Deterministic digest of the column definitions. It changes only when a
-    /// column definition changes, never for an ordinary row edit.
-    pub columns_revision: String,
-    pub total_rows: usize,
-    pub unfiltered_rows: usize,
-    pub start: usize,
-    pub rows: Vec<RowProjection>,
-    /// Set when the reply's bytes ended this window before its count. Continue
-    /// at `start + rows.len()`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub byte_limited: bool,
-    /// Whole-collection totals, one per Number column, identical to
-    /// `TableProjection::column_totals` at the same revision. View filters do
-    /// not apply, and blank cells are skipped.
-    #[serde(default, deserialize_with = "deserialize_column_totals")]
-    pub column_totals: BTreeMap<String, Option<f64>>,
 }
 
 /// Result of locating an entity inside one stateless view order.
@@ -5143,16 +5094,16 @@ impl DesignerRuntime {
             stored_rows[index] = Some(row);
         }
         let rows = stored_rows.into_iter().flatten().collect();
-        let projection = TableProjection {
+        Ok(TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
+            cell_styling: self.cell_styling_capability(spec),
             revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: column_projections(spec, &self.presentation),
             rows,
             column_totals,
-        };
-        Ok(projection)
+        })
     }
 
     fn build_capacity_table_rows(
@@ -5260,6 +5211,7 @@ impl DesignerRuntime {
             self.build_window_rows(spec, &order[start..end], &entities, &mut used, display)?;
         Ok(TableWindowProjection {
             revision,
+            cell_styling: self.cell_styling_capability(spec),
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
             collection: spec.summary.clone(),
