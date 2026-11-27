@@ -1989,6 +1989,45 @@ fn native_tables_formula_cells_export_formulas_to_xlsx_and_computed_values_to_cs
     );
 }
 
+#[test]
+fn native_xlsx_writes_auto_formulas_with_typed_cached_errors() {
+    let mut document = Document::empty("formula-errors", "Formula errors");
+    let number = |value| Expression::Number(Number::new(value).unwrap());
+    add_table(
+        &mut document,
+        "errors",
+        "errors",
+        "Errors",
+        ["a-key", "b-result", "c-division", "d-lookup"]
+            .map(|id| field(id, FieldType::Auto, false))
+            .to_vec(),
+        vec![vec![
+            Some(Value::Number(Number::new(2.0).unwrap())),
+            Some(Value::Number(Number::new(9.0).unwrap())),
+            Some(Value::Formula(Expression::Divide {
+                left: Box::new(number(1.0)),
+                right: Box::new(number(0.0)),
+            })),
+            Some(Value::Formula(Expression::Lookup {
+                key: Box::new(number(999.0)),
+                key_column: ColumnRef::new("errors", "a-key"),
+                result_column: ColumnRef::new("errors", "b-result"),
+                if_missing: None,
+            })),
+        ]],
+    );
+    document.schemas.get_mut("errors").unwrap().headerless = true;
+    let mut host = host_for(document);
+    let (reply, bytes) = export(&mut host, "resident/0", "errors", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains(r#"<c r="C1" s="0" t="e"><f>(1/0)</f><v>#DIV/0!</v></c>"#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"<c r="D1" s="0" t="e"><f>INDEX(&apos;Errors&apos;!$B$1:$B$1,MATCH(999,&apos;Errors&apos;!$A$1:$A$1,0))</f><v>#N/A</v></c>"#), "{sheet}");
+}
+
 /// A same-row reference exports as relative A1 and a fixed reference keeps its
 /// absolute worksheet address.
 #[test]

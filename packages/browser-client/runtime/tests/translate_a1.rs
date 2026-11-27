@@ -2,7 +2,8 @@ use serde_json::{Value as Json, json};
 use std::collections::BTreeMap;
 use tachiko_designer_runtime::{DesignerRuntime, process_wire_request};
 use tachiko_workspace_engine::{
-    Date, Document, Entity, FieldConstraint, FieldDefinition, FieldType, Number, Schema, Value,
+    Date, Document, Entity, Expression, FieldConstraint, FieldDefinition, FieldRef, FieldType,
+    Number, Schema, Value,
 };
 
 fn fixture_document() -> Document {
@@ -1100,6 +1101,158 @@ fn translate_a1_lookup_spellings_share_one_node() {
         "LOOKUP(2,[items.qty:column],[items.qty:column])",
         &["range_tracks_collection"],
     );
+}
+
+#[test]
+fn auto_lookup_miss_publishes_and_propagates_after_reopen() {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    for id in ["qty", "price", "total"] {
+        let field = schema.fields.get_mut(id).unwrap();
+        field.field_type = FieldType::Auto;
+        field.required = false;
+    }
+    document.entities.get_mut("r3").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(tachiko_workspace_engine::Expression::Reference(
+            tachiko_workspace_engine::FieldRef::new("r2", "total"),
+        )),
+    );
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let translated = call(&mut runtime, &request("VLOOKUP(999,B2:C4,2,FALSE)"));
+    assert_eq!(translated["status"], "ok", "{translated}");
+    let source = &translated["response"]["payload"]["source"];
+    let updated = call(
+        &mut runtime,
+        &json!({
+            "type": "formula_update", "expected_revision": "resident/0",
+            "target": {"entity": "r2", "field": "total"}, "source": source,
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    let revision = "resident/1";
+    assert_eq!(
+        updated["response"]["payload"]["resulting_revision"],
+        revision
+    );
+    let actual = lookup_results(&mut runtime, revision);
+    for field in actual.as_array().unwrap() {
+        assert!(field["formula"].is_object(), "{field}");
+        assert_eq!(
+            field["calculated"],
+            json!({
+                "status": "failure", "code": "lookup_missing_key", "message": "#N/A"
+            })
+        );
+    }
+    let saved = runtime
+        .as_ref()
+        .unwrap()
+        .export_project_v3(revision)
+        .unwrap();
+    let mut reopened = None;
+    let opened = tachiko_designer_runtime::open_project(
+        &mut reopened,
+        &saved.bytes,
+        "00000000-0000-4000-8000-000000000980",
+    )
+    .unwrap();
+    assert_eq!(
+        lookup_results(&mut reopened, &opened.bootstrap.revision),
+        actual
+    );
+
+    let undone = call(
+        &mut runtime,
+        &json!({"type": "undo", "expected_revision": revision}),
+    );
+    assert_eq!(undone["status"], "ok", "{undone}");
+    let after_undo = lookup_results(&mut runtime, "resident/2");
+    assert_eq!(after_undo[0]["stored"]["value"].as_f64(), Some(2.0));
+    assert_eq!(after_undo[1]["calculated"]["value"].as_f64(), Some(2.0));
+}
+
+fn lookup_results(runtime: &mut Option<DesignerRuntime>, revision: &str) -> Json {
+    let result = call(
+        runtime,
+        &json!({
+            "type": "query_fields", "expected_revision": revision,
+            "fields": [{"entity": "r2", "field": "total"}, {"entity": "r3", "field": "total"}],
+        }),
+    );
+    assert_eq!(result["status"], "ok", "{result}");
+    result["response"]["payload"]["fields"].clone()
+}
+
+#[test]
+fn auto_lookup_propagates_failed_key_column_cell() {
+    let mut document = auto_lookup_key_fixture();
+    document.entities.get_mut("r1").unwrap().fields.insert(
+        "qty".into(),
+        Value::Formula(Expression::Divide {
+            left: Box::new(Expression::Number(Number::new(1.0).unwrap())),
+            right: Box::new(Expression::Number(Number::default())),
+        }),
+    );
+
+    let calculated = commit_auto_lookup(document, "VLOOKUP(2,B2:C4,2,FALSE)");
+    assert_eq!(
+        calculated,
+        json!({"status": "failure", "code": "division_by_zero", "message": "#DIV/0!"})
+    );
+}
+
+#[test]
+fn auto_lookup_matches_calculated_text_key() {
+    let mut document = auto_lookup_key_fixture();
+    let matching_row = document.entities.get_mut("r1").unwrap();
+    matching_row
+        .fields
+        .insert("qty".into(), Value::Text("needle".into()));
+    matching_row
+        .fields
+        .insert("price".into(), Value::Number(Number::new(47.0).unwrap()));
+    document.entities.get_mut("r2").unwrap().fields.insert(
+        "name".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("r1", "qty"))),
+    );
+
+    let calculated = commit_auto_lookup(document, "VLOOKUP(A3,B2:C4,2,FALSE)");
+    assert_eq!(calculated["value"].as_f64(), Some(47.0), "{calculated}");
+}
+
+fn auto_lookup_key_fixture() -> Document {
+    let mut document = fixture_document();
+    let schema = document.schemas.get_mut("Items").unwrap();
+    for id in ["name", "qty", "total"] {
+        let field = schema.fields.get_mut(id).unwrap();
+        field.field_type = FieldType::Auto;
+        field.required = false;
+    }
+    document
+}
+
+fn commit_auto_lookup(document: Document, formula: &str) -> Json {
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let translated = call(&mut runtime, &request(formula));
+    assert_eq!(translated["status"], "ok", "{translated}");
+    let updated = call(
+        &mut runtime,
+        &json!({
+            "type": "formula_update", "expected_revision": "resident/0",
+            "target": {"entity": "r2", "field": "total"},
+            "source": translated["response"]["payload"]["source"],
+        }),
+    );
+    assert_eq!(updated["status"], "ok", "{updated}");
+    let revision = updated["response"]["payload"]["resulting_revision"]
+        .as_str()
+        .unwrap();
+    lookup_results(&mut runtime, revision)[0]["calculated"].clone()
 }
 
 #[test]

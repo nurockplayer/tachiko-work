@@ -21,7 +21,6 @@ args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issu
 args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	9
 args	crates/semantic-core/src/validation.rs	validate_column_conditional	6
 args	crates/semantic-core/src/validation.rs	validate_formula_reference	6
-args	crates/semantic-core/src/validation.rs	validate_lookup	7
 args	crates/semantic-core/src/validation.rs	validate_present_entity_field	7
 args	crates/semantic-core/src/validation.rs	validate_value	8
 args	crates/storage/src/portable_package/v1.rs	parse_local_record	6
@@ -95,7 +94,6 @@ args	packages/browser-client/runtime/src/interop_document.rs	keep_import_cache	6
 args	packages/browser-client/runtime/src/interop_document.rs	translate_a1	7
 args	packages/browser-client/runtime/src/interop_document.rs	translate_conditional_call	7
 args	packages/browser-client/runtime/src/interop_document.rs	translate_conditional_criterion	6
-args	packages/browser-client/runtime/src/interop_document.rs	translate_lookup_call	6
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness	7
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::apply_column_presentation	6
 args	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::build_window_rows	6
@@ -112,8 +110,7 @@ args	packages/browser-client/runtime/src/lib.rs	build_duplicate_collection	6
 args	packages/browser-client/runtime/src/lib.rs	copy_collection_entities	7
 args	packages/browser-client/runtime/src/lib.rs	designer_preview	7
 args	packages/browser-client/runtime/src/lib.rs	designer_preview_witnessed	6
-args	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	7
-args	packages/browser-client/runtime/src/native_tables_export.rs	projected_cell	7
+args	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	6
 args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::aggregate	6
 args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::column	6
 body	crates/cli/src/commands.rs	analysis_failure_output	62
@@ -131,10 +128,10 @@ body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required
 body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	136
 body	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	97
 body	crates/formula-engine/src/lib.rs	<RetainedCalculationState>::update	72
-body	crates/formula-engine/src/lib.rs	bind_node	193
+body	crates/formula-engine/src/lib.rs	bind_node	173
 body	crates/formula-engine/src/lib.rs	cyclic_components	88
 body	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	70
-body	crates/formula-engine/src/lib.rs	pregraph_failures	104
+body	crates/formula-engine/src/lib.rs	pregraph_failures	99
 body	crates/formula-engine/src/lib.rs	render_bound	152
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	88
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
@@ -147,7 +144,7 @@ body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	8
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
 body	crates/semantic-core/src/presentation.rs	validate_presentation	130
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
-body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	99
+body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	97
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	72
 body	crates/semantic-core/src/validation.rs	validate_column_conditional	80
@@ -222,10 +219,10 @@ body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_sp
 body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	78
 body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	81
 body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	68
-body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	88
+body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	77
 body	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	67
 body	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	94
-body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	299
+body	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	264
 body	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	82
 body	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	176
 body	packages/browser-client/runtime/src/interop_adapter.rs	import_xlsx_profile	485
@@ -259,7 +256,7 @@ body	packages/browser-client/runtime/src/interop_document.rs	native_budget_metad
 body	packages/browser-client/runtime/src/interop_document.rs	native_tracker_metadata	62
 body	packages/browser-client/runtime/src/interop_document.rs	promote_import_presentation	276
 body	packages/browser-client/runtime/src/interop_document.rs	reconcile_import_rows	64
-body	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	219
+body	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	218
 body	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	91
 body	packages/browser-client/runtime/src/interop_document.rs	validate_selection	98
 body	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	106
@@ -301,13 +298,12 @@ body	packages/browser-client/runtime/src/lib.rs	map_copy_references	77
 body	packages/browser-client/runtime/src/lib.rs	plan_filter	95
 body	packages/browser-client/runtime/src/lib.rs	predicate_matches	63
 body	packages/browser-client/runtime/src/lib.rs	process_wire_request	100
-body	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	171
-body	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	119
-body	packages/browser-client/runtime/src/native_tables_export.rs	projected_cell	90
-body	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	98
+body	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	168
+body	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	103
+body	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	95
 body	packages/browser-client/runtime/src/save_size.rs	expression_bytes	293
 body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	99
-body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	207
+body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	204
 body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadsheet	68
 body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadsheet	61
 body	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	64
@@ -325,7 +321,7 @@ branches	crates/diff-engine/src/lib.rs	compare_schema	17
 branches	crates/diff-engine/src/lib.rs	render_change	17
 branches	crates/diff-engine/src/lib.rs	require_diff_supported	17
 branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::criterion_index	17
-branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	24
+branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	18
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	26
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	22
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_over	16
@@ -338,7 +334,7 @@ branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_e
 branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::reaching_fields	17
 branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::replace_formula	22
 branches	crates/formula-engine/src/lib.rs	bind_conditional	13
-branches	crates/formula-engine/src/lib.rs	bind_node	40
+branches	crates/formula-engine/src/lib.rs	bind_node	37
 branches	crates/formula-engine/src/lib.rs	column_failures	14
 branches	crates/formula-engine/src/lib.rs	cyclic_components	34
 branches	crates/formula-engine/src/lib.rs	depth_first_finish_order	15
@@ -458,7 +454,7 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_n
 branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_parts	18
 branches	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	41
 branches	packages/browser-client/runtime/src/interop_adapter.rs	cell_value	22
-branches	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	70
+branches	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	54
 branches	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	27
 branches	packages/browser-client/runtime/src/interop_adapter.rs	conditional_shape	21
 branches	packages/browser-client/runtime/src/interop_adapter.rs	contains_lookup_call	35
@@ -466,7 +462,7 @@ branches	packages/browser-client/runtime/src/interop_adapter.rs	criterion_form	1
 branches	packages/browser-client/runtime/src/interop_adapter.rs	date_admission	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	decode_xstring	14
 branches	packages/browser-client/runtime/src/interop_adapter.rs	export_csv_for_profile	22
-branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	71
+branches	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	53
 branches	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	107
 branches	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	39
 branches	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	63
@@ -556,10 +552,10 @@ branches	packages/browser-client/runtime/src/lib.rs	process_wire_request	37
 branches	packages/browser-client/runtime/src/lib.rs	view_value	13
 branches	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	29
 branches	packages/browser-client/runtime/src/native_tables_export.rs	mapped_name	16
-branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	44
+branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	41
 branches	packages/browser-client/runtime/src/save_size.rs	expression_bytes	34
 branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	20
-branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	22
+branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	18
 branches	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	13
 branches	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	24
 branches	packages/browser-client/runtime/src/wasm.rs	process_portable_ro_candidate	17
@@ -613,7 +609,7 @@ depth	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	4
 depth	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	8
 depth	packages/browser-client/runtime/src/interop_adapter.rs	contains_lookup_call	6
 depth	packages/browser-client/runtime/src/interop_adapter.rs	decode_xstring	4
-depth	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	5
+depth	packages/browser-client/runtime/src/interop_adapter.rs	export_xlsx_for_profile	4
 depth	packages/browser-client/runtime/src/interop_adapter.rs	formula_admission	8
 depth	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_formula	6
 depth	packages/browser-client/runtime/src/interop_adapter.rs	import_csv_profile	7
@@ -654,13 +650,13 @@ depth	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	4
 file	crates/cli/src/commands.rs		1559
 file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
-file	crates/formula-engine/src/evaluation.rs		1331
-file	crates/formula-engine/src/lib.rs		3298
+file	crates/formula-engine/src/evaluation.rs		1305
+file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		968
 file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
-file	crates/semantic-core/src/validation.rs		1925
+file	crates/semantic-core/src/validation.rs		1881
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1202
 file	crates/storage/src/roproj/v1.rs		1484
@@ -672,10 +668,9 @@ file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6778
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1085
-file	packages/browser-client/runtime/src/interop_adapter.rs		6519
-file	packages/browser-client/runtime/src/interop_document.rs		5655
+file	packages/browser-client/runtime/src/interop_adapter.rs		6474
+file	packages/browser-client/runtime/src/interop_document.rs		5619
 file	packages/browser-client/runtime/src/lib.rs		13246
-file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1228
 inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
@@ -720,7 +715,7 @@ inline-test	packages/browser-client/runtime/src/wasm.rs	ranked_import_ingress_te
 inline-test	packages/browser-client/runtime/src/wasm.rs	row_rank_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	251
 pub	crates/ai-api/src/lib.rs		41
 pub	crates/ai-api/src/security_boundary.rs		43
-pub	crates/formula-engine/src/lib.rs		75
+pub	crates/formula-engine/src/lib.rs		70
 pub	crates/merge-engine/src/lib.rs		47
 pub	crates/semantic-core/src/model.rs		112
 pub	crates/workspace-engine/src/analysis_operations.rs		62

@@ -1,8 +1,10 @@
 //! Deterministic formula parsing, binding, projection, and evaluation.
 
+mod cell_failure;
 #[cfg(test)]
 mod column_graph_differential;
 mod evaluation;
+mod lookup_binding;
 mod parser;
 mod partitioned;
 
@@ -17,6 +19,8 @@ pub mod test_instrumentation {
     }
 }
 
+pub use cell_failure::{CellFailure, CellFailureCode};
+use lookup_binding::{bind_lookup, extract_value_columns, lookup_key_matches};
 pub use partitioned::PartitionedMap;
 use partitioned::PartitionedSet;
 
@@ -230,6 +234,7 @@ fn bind_column_reference(
     document: &Document,
     index: &AddressIndex,
     address: &ColumnAddress,
+    allow_auto: bool,
 ) -> Result<ColumnRef, FormulaBindError> {
     let unresolved = |source: AddressIndexError| FormulaBindError::Column {
         address: address.clone(),
@@ -253,7 +258,9 @@ fn bind_column_reference(
                 field: address.field.clone(),
             })
         })?;
-    if definition.field_type != FieldType::Number {
+    if definition.field_type != FieldType::Number
+        && !(allow_auto && definition.field_type == FieldType::Auto)
+    {
         return Err(FormulaBindError::NonNumericColumn {
             address: address.clone(),
         });
@@ -333,7 +340,7 @@ fn bind_conditional(
     }
     let aggregate = match aggregate {
         UnboundConditionalAggregate::Sum(address) => {
-            let column = bind_column_reference(document, index, address)?;
+            let column = bind_column_reference(document, index, address, false)?;
             schema.get_or_insert_with(|| column.schema.clone());
             if schema.as_ref() != Some(&column.schema) {
                 return Err(FormulaBindError::TypeMismatch {
@@ -343,7 +350,7 @@ fn bind_conditional(
             ConditionalAggregate::Sum(column)
         }
         UnboundConditionalAggregate::Average(address) => {
-            let column = bind_column_reference(document, index, address)?;
+            let column = bind_column_reference(document, index, address, false)?;
             schema.get_or_insert_with(|| column.schema.clone());
             if schema.as_ref() != Some(&column.schema) {
                 return Err(FormulaBindError::TypeMismatch {
@@ -406,34 +413,6 @@ fn bind_criterion_value(
     }
 }
 
-fn lookup_key_type<'a>(
-    document: &'a Document,
-    owner: &FieldRef,
-    key: &Expression,
-) -> Option<&'a FieldType> {
-    let (entity, field) = match key {
-        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-            (&reference.entity, &reference.field)
-        }
-        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-            (&owner.entity, field)
-        }
-        _ => {
-            return (key.expression_type() == Some(FormulaExpressionType::Number))
-                .then_some(&FieldType::Number);
-        }
-    };
-    let entity = document.entities.get(entity)?;
-    Some(
-        &document
-            .schemas
-            .get(&entity.schema)?
-            .fields
-            .get(field)?
-            .field_type,
-    )
-}
-
 #[allow(clippy::too_many_lines)] // One arm per closed-world expression node.
 fn bind_node(
     document: &Document,
@@ -475,11 +454,11 @@ fn bind_node(
             Expression::SameRowReference(bind_numeric_reference(document, index, &address)?.field)
         }
         UnboundExpression::ColumnTotal(address) => {
-            Expression::ColumnTotal(bind_column_reference(document, index, address)?)
+            Expression::ColumnTotal(bind_column_reference(document, index, address, false)?)
         }
         UnboundExpression::ColumnAggregate { function, column } => Expression::ColumnAggregate {
             function: *function,
-            column: bind_column_reference(document, index, column)?,
+            column: bind_column_reference(document, index, column, false)?,
         },
         UnboundExpression::ColumnConditional {
             aggregate,
@@ -490,33 +469,13 @@ fn bind_node(
             key_column,
             result_column,
             if_missing,
-        } => {
-            let key_column = bind_criterion_column(document, index, key_column)?;
-            let result_column = bind_column_reference(document, index, result_column)?;
-            let key = bind_criterion_value(document, index, owner, key)?;
-            if key_column.schema != result_column.schema
-                || lookup_key_type(document, owner, &key)
-                    != Some(
-                        &document.schemas[&key_column.schema].fields[&key_column.field].field_type,
-                    )
-            {
-                return Err(FormulaBindError::TypeMismatch {
-                    message:
-                        "LOOKUP requires columns in one schema and a key of the key column's type"
-                            .into(),
-                });
-            }
-            let if_missing = if_missing
-                .as_deref()
-                .map(|value| bind_node(document, index, owner, value).map(Box::new))
-                .transpose()?;
-            Expression::Lookup {
-                key: Box::new(key),
-                key_column,
-                result_column,
-                if_missing,
-            }
-        }
+        } => bind_lookup(
+            document,
+            index,
+            owner,
+            key,
+            (key_column, result_column, if_missing.as_deref()),
+        )?,
         UnboundExpression::Add { left, right } => Expression::Add {
             left: Box::new(bind_node(document, index, owner, left)?),
             right: Box::new(bind_node(document, index, owner, right)?),
@@ -830,7 +789,7 @@ fn project_through_index(
 
     let mut columns = BTreeMap::new();
     let mut unresolved_columns = BTreeSet::new();
-    let numeric_columns = extract_value_columns(expression);
+    let numeric_columns = extract_value_columns(document, owner, expression);
     for column in extract_column_totals(expression) {
         match column_address(document, &column, numeric_columns.contains(&column)) {
             Some(address) => {
@@ -1123,13 +1082,6 @@ fn column_address(
         return None;
     }
     Some(ColumnAddress::new(schema.key.clone(), field.key.clone()))
-}
-
-/// The columns whose cells the aggregate sums: the values column of a total or
-/// aggregate, and a conditional node's values column. Criterion columns feed
-/// row membership but are read whatever their scalar type.
-fn extract_value_columns(expression: &Expression) -> BTreeSet<ColumnRef> {
-    expression.numeric_columns().into_iter().cloned().collect()
 }
 
 /// Collect every column identity named by a bound expression.
@@ -1971,79 +1923,6 @@ pub enum CalculationFailure {
     },
 }
 
-/// A calculated error published in an Auto cell, with the cell where it began.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CellFailure {
-    pub code: CellFailureCode,
-    pub origin: FieldRef,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CellFailureCode {
-    DivisionByZero,
-    Value,
-    Number,
-    Reference,
-}
-
-impl CellFailureCode {
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::DivisionByZero => "division_by_zero",
-            Self::Value => "value",
-            Self::Number => "number",
-            Self::Reference => "reference",
-        }
-    }
-
-    #[must_use]
-    pub const fn display(self) -> &'static str {
-        match self {
-            Self::DivisionByZero => "#DIV/0!",
-            Self::Value => "#VALUE!",
-            Self::Number => "#NUM!",
-            Self::Reference => "#REF!",
-        }
-    }
-}
-
-impl CellFailure {
-    fn from_error(
-        owner: &FieldRef,
-        failure: &CalculationFailure,
-        cell_failures: &CellFailures,
-    ) -> Self {
-        let code = match failure {
-            CalculationFailure::DivisionByZero | CalculationFailure::EmptyAggregate => {
-                CellFailureCode::DivisionByZero
-            }
-            CalculationFailure::TypeMismatch => CellFailureCode::Value,
-            CalculationFailure::NonFiniteResult => CellFailureCode::Number,
-            CalculationFailure::FailedDependencies { dependencies } => {
-                let origin = dependencies
-                    .first()
-                    .expect("a failed dependency names its target");
-                return cell_failures.get(origin).cloned().unwrap_or_else(|| Self {
-                    code: CellFailureCode::Reference,
-                    origin: origin.clone(),
-                });
-            }
-            CalculationFailure::LookupMissingKey => CellFailureCode::Reference,
-            CalculationFailure::InvalidExpression { .. }
-            | CalculationFailure::InvalidReferences { .. }
-            | CalculationFailure::Cycle { .. }
-            | CalculationFailure::InvalidColumn { .. } => {
-                unreachable!("formula definition failures precede evaluation")
-            }
-        };
-        Self {
-            code,
-            origin: owner.clone(),
-        }
-    }
-}
-
 /// Binding/type classification for one directly referenced stable value node.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReferenceFailure {
@@ -2783,13 +2662,8 @@ fn pregraph_failures(
                 ..
             } = node
             {
-                let column_type = document
-                    .schemas
-                    .get(&key_column.schema)
-                    .and_then(|schema| schema.fields.get(&key_column.field))
-                    .map(|field| &field.field_type);
                 invalid_lookup |= key_column.schema != result_column.schema
-                    || lookup_key_type(document, formula, key) != column_type;
+                    || !lookup_key_matches(document, formula, key, key_column);
             }
             pending.extend(node.children());
         }
@@ -2797,7 +2671,7 @@ fn pregraph_failures(
             failures.insert(formula.clone(), CalculationFailure::TypeMismatch);
             continue;
         }
-        let columns = column_failures(document, expression);
+        let columns = column_failures(document, formula, expression);
         if !columns.is_empty() {
             failures.insert(
                 formula.clone(),
@@ -3113,10 +2987,11 @@ fn evaluate_formula<V: ValueStore>(
 
 fn column_failures(
     document: &Document,
+    owner: &FieldRef,
     expression: &Expression,
 ) -> BTreeMap<ColumnRef, ColumnFailure> {
     let mut failures = BTreeMap::new();
-    let value_columns = extract_value_columns(expression);
+    let value_columns = extract_value_columns(document, owner, expression);
     for column in extract_column_totals(expression) {
         let needs_number = value_columns.contains(&column);
         let failure = match document.schemas.get(&column.schema) {
