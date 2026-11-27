@@ -684,7 +684,7 @@ file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1146
 file	packages/browser-client/runtime/src/interop_adapter.rs		6680
 file	packages/browser-client/runtime/src/interop_document.rs		5661
-file	packages/browser-client/runtime/src/lib.rs		13538
+file	packages/browser-client/runtime/src/lib.rs		13490
 file	packages/browser-client/runtime/src/native_tables_export.rs		850
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1289
@@ -744,7 +744,7 @@ pub	crates/workspace-engine/src/patch_lifecycle.rs		186
 pub	crates/workspace-engine/src/resident_session.rs		79
 pub	packages/browser-client/runtime/src/interop_adapter.rs		84
 pub	packages/browser-client/runtime/src/interop_document.rs		74
-pub	packages/browser-client/runtime/src/lib.rs		335
+pub	packages/browser-client/runtime/src/lib.rs		315
 reason	crates/cli/src/main.rs	execute allow(clippy::too_many_lines)	1
 reason	crates/diff-engine/src/canonical_delta.rs	compare_schema allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression allow(clippy::too_many_lines)	1

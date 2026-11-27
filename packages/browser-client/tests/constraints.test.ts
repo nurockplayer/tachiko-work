@@ -14,6 +14,7 @@ const amount: ColumnProjection = {
   constraint: {kind: "number_inclusive_range", min: 0, max: 100},
 };
 const table: TableProjection = {
+  cell_styling: {status: "supported"},
   revision: "resident/0", collection: {id: "tasks", key: "tasks", display_name: "Tasks", headerless: false, data_start_row: 2, entity_count: 0},
   columns: [status, amount],
   rows: [],
