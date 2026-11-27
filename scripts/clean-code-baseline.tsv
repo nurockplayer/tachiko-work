@@ -331,7 +331,7 @@ branches	crates/diff-engine/src/lib.rs	compare_schema	17
 branches	crates/diff-engine/src/lib.rs	render_change	17
 branches	crates/diff-engine/src/lib.rs	require_diff_supported	17
 branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::criterion_index	17
-branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	24
+branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	18
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	26
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	22
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_over	16
@@ -663,7 +663,7 @@ depth	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	4
 file	crates/cli/src/commands.rs		1559
 file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
-file	crates/formula-engine/src/evaluation.rs		1300
+file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		982
