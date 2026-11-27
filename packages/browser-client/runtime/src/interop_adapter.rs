@@ -894,26 +894,15 @@ fn compatible_formula(
             remaining = strip_quoted_formula_reference(remaining, location, &refuse)?;
         } else if remaining.starts_with('"') {
             remaining = strip_criterion_literal(remaining, &refuse)?;
-        } else if remaining.starts_with("SUM(")
-            || remaining.starts_with("AVERAGE(")
-            || remaining.starts_with("COUNT(")
-            || remaining.starts_with("SUMIF(")
-            || remaining.starts_with("SUMIFS(")
-            || remaining.starts_with("AVERAGEIF(")
-            || remaining.starts_with("AVERAGEIFS(")
-            || remaining.starts_with("COUNTIF(")
-            || remaining.starts_with("COUNTIFS(")
-            || remaining.starts_with("MIN(")
-            || remaining.starts_with("MAX(")
-            || remaining.starts_with("IF(")
-            || remaining.starts_with("AND(")
-            || remaining.starts_with("OR(")
-            || remaining.starts_with("NOT(")
-            || remaining.starts_with("ROUND(")
-            || remaining.starts_with("ISBLANK(")
+        } else if let Some(arguments) = concat!(
+            "SUM( AVERAGE( COUNT( SUMIF( SUMIFS( AVERAGEIF( AVERAGEIFS( COUNTIF( COUNTIFS( ",
+            "MIN( MAX( IF( AND( OR( NOT( ROUND( ISBLANK( ",
+            "INDEX( MATCH( IFNA( SUBSTITUTE("
+        )
+        .split_ascii_whitespace()
+        .find_map(|prefix| remaining.strip_prefix(prefix))
         {
-            let open = remaining.find('(').ok_or_else(refuse)?;
-            remaining = &remaining[open + 1..];
+            remaining = arguments;
         } else if remaining.starts_with('$')
             || remaining
                 .as_bytes()
