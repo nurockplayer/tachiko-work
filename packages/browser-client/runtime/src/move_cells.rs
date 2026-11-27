@@ -96,13 +96,20 @@ pub(super) fn plan(
     let mut plan = MovePlan::default();
     for (field, original) in &originals {
         let source = by_destination.get(field);
-        let value = source.and_then(|source| {
-            let mut value = originals[source].value.cloned()?;
-            if let Value::Formula(expression) = &mut value {
-                retarget(expression, &source.entity, &field.entity, &by_source);
-            }
-            Some(value)
-        });
+        let value = match (
+            source,
+            original.column.required,
+            &original.column.field_type,
+        ) {
+            (Some(source), _, _) => originals[source].value.cloned().map(|mut value| {
+                if let Value::Formula(expression) = &mut value {
+                    retarget(expression, &source.entity, &field.entity, &by_source);
+                }
+                value
+            }),
+            (None, true, FieldType::Text) => Some(Value::Text(String::new())),
+            _ => None,
+        };
         admit_value(runtime, field, original, value.as_ref())?;
         plan.value(field, original.value, value.as_ref());
         plan.style(runtime, field, source);

@@ -8,8 +8,9 @@ use tachiko_workspace_engine::{ColumnRef, Document, FieldRef, FieldType, Value};
 
 use crate::interop_adapter::SummaryAggregate;
 use crate::interop_document::{
-    A1Geometry, ExportCell, ExportColumn, FormulaReferences, column_letters, criterion_type,
-    excel_extremum, export_expression, parse_a1_address, row_is_absolute, translate_a1_with,
+    A1ColumnMode, A1Geometry, ExportCell, ExportColumn, FormulaReferences, column_letters,
+    criterion_type, excel_extremum, export_expression, parse_a1_address, row_is_absolute,
+    translate_a1_with,
 };
 use crate::{
     DesignerError, DesignerRuntime, FormulaUpdateRequest, constraint_failure, designer_lifecycle,
@@ -167,6 +168,7 @@ fn validate_sheet(sheet: &A1SheetGeometry, document: &Document) -> Result<(), De
 struct GridGeometry<'a> {
     sheets: Vec<(&'a str, A1SheetGeometry)>,
     owner: &'a str,
+    auto_lookup_results: bool,
     notes: BTreeSet<A1TranslationNote>,
     tokens: Vec<(A1TokenSpan, std::ops::Range<usize>)>,
     /// The first conditional column's sheet and row span, for the same-rows rule.
@@ -185,7 +187,23 @@ struct GridColumn<'a, 'doc> {
     rows: &'a [String],
 }
 
-impl GridGeometry<'_> {
+impl<'a> GridGeometry<'a> {
+    fn add_named_sheets(
+        &mut self,
+        sheets: &'a BTreeMap<String, A1SheetGeometry>,
+        document: &Document,
+    ) -> Result<(), DesignerError> {
+        let mut names = BTreeSet::new();
+        for (name, sheet) in sheets {
+            if name.is_empty() || !names.insert(name.to_lowercase()) {
+                return Err(refusal(A1RefusalCode::InvalidGeometry));
+            }
+            validate_sheet(sheet, document)?;
+            self.sheets.push((name, sheet.clone()));
+        }
+        Ok(())
+    }
+
     fn source_span(&self, position: usize) -> A1TokenSpan {
         self.tokens
             .iter()
@@ -324,12 +342,15 @@ impl A1Geometry for GridGeometry<'_> {
         &mut self,
         argument: &str,
         current: usize,
-        numeric: bool,
+        mode: A1ColumnMode,
         document: &Document,
         references: &mut FormulaReferences,
     ) -> Result<String, DesignerError> {
         let column = self.whole_column(argument, current, document)?;
-        if numeric && column.field_type != FieldType::Number {
+        let auto_result = mode == A1ColumnMode::LookupResult
+            && self.auto_lookup_results
+            && column.field_type == FieldType::Auto;
+        if mode.needs_number() && column.field_type != FieldType::Number && !auto_result {
             return Err(refusal(A1RefusalCode::UnsupportedRange));
         }
         // A criterion range holding the header could match the header in Excel,
@@ -526,18 +547,15 @@ impl DesignerRuntime {
         let mut geometry = GridGeometry {
             sheets: vec![("", current)],
             owner: &input.row_entity_id,
+            auto_lookup_results: document.schemas[input.collection_id.as_str()].fields
+                [input.target_field_id.as_str()]
+            .field_type
+                == FieldType::Auto,
             notes: BTreeSet::new(),
             tokens: Vec::new(),
             conditional_span: None,
         };
-        let mut names = BTreeSet::new();
-        for (name, sheet) in &input.geometry.sheets {
-            if name.is_empty() || !names.insert(name.to_lowercase()) {
-                return Err(refusal(InvalidGeometry));
-            }
-            validate_sheet(sheet, document)?;
-            geometry.sheets.push((name, sheet.clone()));
-        }
+        geometry.add_named_sheets(&input.geometry.sheets, document)?;
         let (source, _) =
             translate_a1_with(&input.text, &mut geometry, 0, document).map_err(|error| {
                 if matches!(error, DesignerError::A1Translation { .. }) {

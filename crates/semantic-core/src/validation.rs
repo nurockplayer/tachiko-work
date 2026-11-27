@@ -1,3 +1,6 @@
+mod lookup;
+use lookup::validate_lookup;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
@@ -911,9 +914,7 @@ fn validate_expression(
                 validate_lookup(
                     document,
                     owner,
-                    key,
-                    key_column,
-                    result_column,
+                    (key, key_column, result_column),
                     path,
                     diagnostics,
                 );
@@ -934,49 +935,6 @@ fn validate_expression(
             _ => {}
         }
         pending.extend(node.children());
-    }
-}
-
-fn validate_lookup(
-    document: &Document,
-    owner: &FieldRef,
-    key: &Expression,
-    key_column: &ColumnRef,
-    result_column: &ColumnRef,
-    path: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    validate_formula_scalar_column(document, owner, key_column, path, diagnostics);
-    validate_formula_column(document, owner, result_column, path, diagnostics);
-    let column_type = document
-        .schemas
-        .get(&key_column.schema)
-        .and_then(|schema| schema.fields.get(&key_column.field))
-        .map(|field| &field.field_type);
-    let key_type = match key {
-        Expression::Reference(reference) | Expression::AnchoredReference(reference) => document
-            .entities
-            .get(&reference.entity)
-            .and_then(|entity| document.schemas.get(&entity.schema))
-            .and_then(|schema| schema.fields.get(&reference.field))
-            .map(|field| &field.field_type),
-        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-            document
-                .entities
-                .get(&owner.entity)
-                .and_then(|entity| document.schemas.get(&entity.schema))
-                .and_then(|schema| schema.fields.get(field))
-                .map(|field| &field.field_type)
-        }
-        _ => Some(&FieldType::Number),
-    };
-    if key_column.schema != result_column.schema || key_type != column_type {
-        diagnostics.push(core_diagnostic(
-            path,
-            DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
-            "LOOKUP requires columns in one schema and a key of the key column's type",
-            vec![SemanticSubject::EntityField(owner.clone())],
-        ));
     }
 }
 
@@ -1871,9 +1829,7 @@ mod issue_175_research {
                     super::validate_lookup(
                         document,
                         owner,
-                        key,
-                        key_column,
-                        result_column,
+                        (key, key_column, result_column),
                         path,
                         diagnostics,
                     );
