@@ -425,9 +425,10 @@ fn ordinary_native_open_keeps_generic_65_through_128_row_authoring() {
         // The column-total footer adds `,"column_totals":{}` (19 bytes): this
         // fixture declares only Text columns, so it has no Number total.
         // The collection summaries add `,"headerless":false` (2 x 19 bytes).
+        // The table adds `,"cell_styling":{"status":"supported"}` (38 bytes).
         assert_eq!(
             expected_bytes.len(),
-            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19
+            73_213 + 22 + 3 * 19 + 3 * 16 + 19 + 2 * 19 + 38
         );
         assert!(expected_bytes.len() > 65_536);
         assert_eq!(table(fresh), expected);
