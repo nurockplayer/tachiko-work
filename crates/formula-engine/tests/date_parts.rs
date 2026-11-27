@@ -121,8 +121,8 @@ fn date_functions_calculate_and_compose() {
             panic!("calculation failed: {source}");
         };
         assert_eq!(
-            result.value(&FieldRef::new("r", "output")),
-            Some(Number::new(expected).unwrap()),
+            result.value(&FieldRef::new("r", "output")).unwrap(),
+            Number::new(expected).unwrap(),
             "{source}"
         );
     }
@@ -141,8 +141,8 @@ fn date_subtraction_composes_with_numeric_operators_and_functions() {
             panic!("calculation failed: {source}");
         };
         assert_eq!(
-            result.value(&FieldRef::new("r", "output")),
-            Some(Number::new(expected).unwrap()),
+            result.value(&FieldRef::new("r", "output")).unwrap(),
+            Number::new(expected).unwrap(),
             "{source}"
         );
     }
@@ -184,8 +184,8 @@ fn date_functions_accept_calculated_dates() {
             panic!("calculation failed: {source}");
         };
         assert_eq!(
-            result.value(&owner),
-            Some(Number::new(expected).unwrap()),
+            result.value(&owner).unwrap(),
+            Number::new(expected).unwrap(),
             "{source}"
         );
     }
@@ -273,8 +273,8 @@ fn optional_blank_date_fails_and_iferror_catches_it() {
         panic!("IFERROR did not catch the missing date");
     };
     assert_eq!(
-        result.value(&FieldRef::new("r", "output")),
-        Some(Number::new(0.0).unwrap())
+        result.value(&FieldRef::new("r", "output")).unwrap(),
+        Number::new(0.0).unwrap()
     );
 }
 
@@ -307,8 +307,8 @@ fn same_row_date_edits_recalculate_through_retained_state() {
         panic!("date update failed");
     };
     assert_eq!(
-        calculation.value(&owner),
-        Some(Number::new(2027.0).unwrap())
+        calculation.value(&owner).unwrap(),
+        Number::new(2027.0).unwrap()
     );
     assert!(calculation.dependencies()[&owner].contains(&FieldRef::new("r", "d")));
 }

@@ -95,17 +95,17 @@ fn set_formula(document: &mut Document, source: &str) -> Expression {
     expression
 }
 
-fn value(outcome: &CalculationOutcome) -> f64 {
+fn value(outcome: &CalculationOutcome) -> Number {
     let CalculationOutcome::Complete(calculation) = outcome else {
         panic!("expected successful IFERROR: {outcome:?}");
     };
-    calculation.value(&owner()).unwrap().get()
+    calculation.value(&owner()).unwrap()
 }
 
 #[test]
 fn own_runtime_failures_are_caught_and_fallback_is_lazy() {
     for (source, expected) in [
-        ("IFERROR([r.a] / [r.z], 0)", 0.0_f64),
+        ("IFERROR([r.a] / [r.z], 0)", 0.0),
         ("IFERROR([r.a] / [r.b], 1 / 0)", 4.0),
         ("iferror(1, 1 / 0)", 1.0),
         ("IFERROR([t.x:average], -1)", -1.0),
@@ -127,8 +127,8 @@ fn own_runtime_failures_are_caught_and_fallback_is_lazy() {
         }
         set_formula(&mut document, source);
         assert_eq!(
-            value(&calculate_complete(&document)).to_bits(),
-            expected.to_bits(),
+            value(&calculate_complete(&document)),
+            Number::new(expected).unwrap(),
             "{source}"
         );
     }
@@ -256,7 +256,7 @@ fn retained_edits_switch_between_value_and_fallback_like_a_full_rebuild() {
     let mut document = document();
     set_formula(&mut document, "IFERROR([r.a] / [r.b], 0)");
     let (mut retained, _) = RetainedCalculationState::rebuild(&document);
-    for (denominator, expected) in [(0.0, 0.0_f64), (2.0, 4.0)] {
+    for denominator in [0.0, 2.0] {
         document
             .entities
             .get_mut("r")
@@ -265,8 +265,9 @@ fn retained_edits_switch_between_value_and_fallback_like_a_full_rebuild() {
             .insert(FieldId::from("b"), number(denominator));
         let _ = retained.update(&document, &BTreeSet::from([FieldRef::new("r", "b")]));
         let full = calculate_complete(&document);
-        assert_eq!(value(&retained.outcome()).to_bits(), value(&full).to_bits());
-        assert_eq!(value(&full).to_bits(), expected.to_bits());
+        assert_eq!(value(&retained.outcome()), value(&full));
+        let expected = if denominator == 0.0 { 0.0 } else { 4.0 };
+        assert_eq!(value(&full), Number::new(expected).unwrap());
         let CalculationOutcome::Complete(calculation) = full else {
             unreachable!()
         };

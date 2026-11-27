@@ -24,8 +24,8 @@ fn definition(id: &str, field_type: FieldType, required: bool) -> FieldDefinitio
     }
 }
 
-fn number(value: f64) -> Value {
-    Value::Number(Number::new(value).expect("test numbers are finite"))
+fn number(value: f64) -> Number {
+    Number::new(value).expect("test numbers are finite")
 }
 
 fn document() -> Document {
@@ -56,7 +56,7 @@ fn document() -> Document {
             FieldId::from(field),
             definition(field, FieldType::Number, true),
         );
-        values.insert(FieldId::from(field), number(0.0));
+        values.insert(FieldId::from(field), Value::Number(number(0.0)));
     }
     fields.insert(
         FieldId::from("blank_number"),
@@ -66,8 +66,8 @@ fn document() -> Document {
         FieldId::from("note"),
         definition("note", FieldType::Text, false),
     );
-    values.insert(FieldId::from("input"), number(2.675));
-    values.insert(FieldId::from("then_value"), number(42.0));
+    values.insert(FieldId::from("input"), Value::Number(number(2.675)));
+    values.insert(FieldId::from("then_value"), Value::Number(number(42.0)));
 
     let schema = Schema {
         headerless: false,
@@ -150,10 +150,7 @@ fn comparison_operators_bind_and_evaluate_as_conditions() {
         ("greater", 0.0),
         ("greater_equal", 1.0),
     ] {
-        assert_eq!(
-            calculation.value(&owner(target)),
-            Some(Number::new(expected).unwrap())
-        );
+        assert_eq!(calculation.value(&owner(target)).unwrap(), number(expected));
     }
     for (operator, expected) in [
         ("=", ComparisonOperator::Equal),
@@ -232,24 +229,12 @@ fn round_uses_half_away_from_zero_and_is_stable_at_supported_precisions() {
         set_formula(&mut document, target, source);
     }
     let outcome = calculate_complete(&document);
-    assert_eq!(
-        number_at(&outcome, "round_2675"),
-        Number::new(2.68).unwrap()
-    );
-    assert_eq!(number_at(&outcome, "round_half"), Number::new(1.0).unwrap());
-    assert_eq!(
-        number_at(&outcome, "round_negative_half"),
-        Number::new(-1.0).unwrap()
-    );
-    assert_eq!(
-        number_at(&outcome, "round_large"),
-        Number::new(1e15).unwrap()
-    );
-    assert_eq!(
-        number_at(&outcome, "round_ten"),
-        Number::new(2.675).unwrap()
-    );
-    assert_eq!(number_at(&outcome, "percent"), Number::new(0.5).unwrap());
+    assert_eq!(number_at(&outcome, "round_2675"), number(2.68));
+    assert_eq!(number_at(&outcome, "round_half"), number(1.0));
+    assert_eq!(number_at(&outcome, "round_negative_half"), number(-1.0));
+    assert_eq!(number_at(&outcome, "round_large"), number(1e15));
+    assert_eq!(number_at(&outcome, "round_ten"), number(2.675));
+    assert_eq!(number_at(&outcome, "percent"), number(0.5));
 }
 
 #[test]
@@ -276,7 +261,7 @@ fn chosen_if_branch_controls_failure_while_dependencies_include_both_branches() 
     );
 
     let outcome = calculate_complete(&document);
-    assert_eq!(number_at(&outcome, "output"), Number::new(42.0).unwrap());
+    assert_eq!(number_at(&outcome, "output"), number(42.0));
     assert_eq!(
         match &outcome {
             CalculationOutcome::Complete(calculation) => {
@@ -292,7 +277,7 @@ fn chosen_if_branch_controls_failure_while_dependencies_include_both_branches() 
         .get_mut("row")
         .unwrap()
         .fields
-        .insert(FieldId::from("input"), number(-1.0));
+        .insert(FieldId::from("input"), Value::Number(number(-1.0)));
     let CalculationOutcome::Failed(failures) = calculate_complete(&document) else {
         panic!("the now-chosen branch divides by zero");
     };
@@ -339,17 +324,14 @@ fn and_or_not_and_isblank_work_with_optional_blank_number_and_text_references() 
     let CalculationOutcome::Complete(calculation) = calculate_complete(&document) else {
         panic!("blank optional Number and ISBLANK formulas calculate");
     };
+    assert_eq!(calculation.value(&owner("logical")).unwrap(), number(1.0));
     assert_eq!(
-        calculation.value(&owner("logical")),
-        Some(Number::new(1.0).unwrap())
+        calculation.value(&owner("blank_arithmetic")).unwrap(),
+        number(2.0)
     );
     assert_eq!(
-        calculation.value(&owner("blank_arithmetic")),
-        Some(Number::new(2.0).unwrap())
-    );
-    assert_eq!(
-        calculation.value(&owner("blank_probe")),
-        Some(Number::new(1.0).unwrap())
+        calculation.value(&owner("blank_probe")).unwrap(),
+        number(1.0)
     );
     let blank_number_dependency = BTreeSet::from([owner("blank_number")]);
     assert_eq!(
@@ -372,8 +354,8 @@ fn and_or_not_and_isblank_work_with_optional_blank_number_and_text_references() 
         panic!("ISBLANK treats empty Text as present");
     };
     assert_eq!(
-        calculation.value(&owner("blank_probe")),
-        Some(Number::new(0.0).unwrap())
+        calculation.value(&owner("blank_probe")).unwrap(),
+        number(0.0)
     );
 }
 
@@ -423,7 +405,7 @@ fn arity_errors_are_located_and_comparison_precedence_is_below_arithmetic() {
     );
     assert_eq!(
         number_at(&calculate_complete(&document), "output"),
-        Number::new(3.0).unwrap()
+        number(3.0)
     );
 }
 
@@ -435,10 +417,10 @@ fn percent_literals_scale_the_decimal_before_binary64_conversion() {
         ("1e310%", 1e308),
         ("1e-324%", 0.0),
     ] {
-        let UnboundExpression::Number(number) = parse_expression(source).unwrap() else {
+        let UnboundExpression::Number(parsed) = parse_expression(source).unwrap() else {
             panic!("percent must lower to Number");
         };
-        assert_eq!(number, Number::new(expected).unwrap());
+        assert_eq!(parsed, number(expected));
     }
     assert!(parse_expression("1e999%").is_err());
     assert!(parse_expression("(50)%").is_err());
@@ -446,7 +428,7 @@ fn percent_literals_scale_the_decimal_before_binary64_conversion() {
     set_formula(&mut document, "output", "-50% + 200% * 50%");
     assert_eq!(
         number_at(&calculate_complete(&document), "output"),
-        Number::new(0.5).unwrap()
+        number(0.5)
     );
 }
 
@@ -531,7 +513,7 @@ fn incremental_conditionals_match_full_recomputation_across_failures_and_blanks(
     for input in [Some(0.0), Some(2.675), None, Some(-1.0), Some(4.5)] {
         let fields = &mut document.entities.get_mut("row").unwrap().fields;
         if let Some(input) = input {
-            fields.insert("input".into(), number(input));
+            fields.insert("input".into(), Value::Number(number(input)));
         } else {
             fields.remove("input");
         }
@@ -569,7 +551,7 @@ fn absent_scalar_fields_are_valid_presence_probes() {
         set_formula(&mut document, "output", "IF(ISBLANK([.note]), 3, 4)");
         assert_eq!(
             number_at(&calculate_complete(&document), "output"),
-            Number::new(3.0).unwrap()
+            number(3.0)
         );
     }
 }
@@ -590,9 +572,9 @@ fn round_decides_on_the_decimal_not_the_scaled_binary_product() {
         let mut document = document();
         set_formula(&mut document, "output", source);
         let actual = number_at(&calculate_complete(&document), "output");
-        assert_eq!(actual, Number::new(expected).unwrap(), "{source}");
+        assert_eq!(actual, number(expected), "{source}");
         assert!(
-            !actual.get().is_sign_negative() || actual.get() != 0.0,
+            actual.to_bits() != (-0.0_f64).to_bits(),
             "{source} is not -0"
         );
     }
@@ -615,7 +597,7 @@ fn a_missing_required_value_fails_only_the_selected_if_branch() {
     );
     assert_eq!(
         number_at(&calculate_complete(&document), "output"),
-        Number::new(42.0).unwrap()
+        number(42.0)
     );
 
     set_formula(
