@@ -6,6 +6,8 @@ Accepted
 
 Amendment: 2026-11-12 JST — column widths enter stored presentation for MVP 1.0.
 
+Amendment: 2026-11-27 JST — row and column visibility enters stored presentation ([#974](https://github.com/nurockplayer/tachiko-work/issues/974)).
+
 Decision issue: [#668](https://github.com/nurockplayer/tachiko-work/issues/668)
 
 Authority: [Work lead's design note](https://github.com/nurockplayer/tachiko-work/issues/668#issuecomment-6690046800)
@@ -146,6 +148,20 @@ host default. Hosts convert to pixels. The strict reader refuses invalid widths 
 unknown fields. A width is its own merge identity: concurrent unequal widths take
 the larger value and the report lists the choice. Pruning drops widths for removed
 fields or tables. There is no separate capacity bound.
+
+### Row and column visibility (#974)
+
+A table stores optional `hidden_rows` and `hidden_fields` sets. They refer to the
+table's stable entity and field IDs. The strict reader refuses missing or foreign
+IDs. Absence means visible and preserves the existing tree and package bytes.
+Under ADR-0046, older strict readers refuse visibility-bearing documents.
+
+A batch hide or unhide publishes one revision and one Undo step. Whole-table and
+window projections retain the rows and fields and mark hidden entries. Formulas
+continue to read hidden cells. Save prunes removed targets under §7. Visibility
+has no semantic delta. Each ID's hidden membership is its own three-way
+presentation identity. XLSX maps explicit visibility for represented rows and
+columns both ways.
 
 ### 7. Not semantic, still saved
 

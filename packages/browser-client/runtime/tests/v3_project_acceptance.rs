@@ -1197,6 +1197,7 @@ fn independent_opened_projection(
     .into_iter()
     .enumerate()
     .map(|(index, (key, field_type))| ColumnProjection {
+        hidden: false,
         required: false,
         id: FIELD_IDS[index].to_owned(),
         key: key.to_owned(),
@@ -1233,6 +1234,7 @@ fn independent_opened_projection(
     let rows = source_rows
         .into_iter()
         .map(|(row_id, row_key, values)| RowProjection {
+            hidden: false,
             blank_fields: Vec::new(),
             styles: Vec::new(),
             id: row_id.to_owned(),
@@ -2285,6 +2287,7 @@ fn successful_legacy_replacement_clears_v3_origin_marker() {
                 data_start_row: 2,
             },
             columns: vec![ColumnProjection {
+                hidden: false,
                 required: true,
                 id: new_field_id.into(),
                 key: "value".into(),

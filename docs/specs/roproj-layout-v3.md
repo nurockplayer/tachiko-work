@@ -26,7 +26,7 @@ optional member is omitted, and unknown members fail admission.
 
 ```json
 {"kind":"style","id":"<32 hex>","style":{"bold":true,"fill":"#FFEE00"}}
-{"kind":"table","schema":"<id>","title":"Q3 budget","footer":{"<field id>":"sum"},"column_styles":{"<field id>":"<style id>"},"column_widths":{"<field id>":2560}}
+{"kind":"table","schema":"<id>","title":"Q3 budget","footer":{"<field id>":"sum"},"column_styles":{"<field id>":"<style id>"},"column_widths":{"<field id>":2560},"hidden_rows":["<entity id>"],"hidden_fields":["<field id>"]}
 {"kind":"rule","id":"<id>","schema":"<id>","rank":"a0","fields":["<field id>"],"condition":{"op":"..."},"style":"<style id>"}
 {"kind":"cell","entity":"<id>","field":"<id>","style":"<style id>"}
 ```
@@ -40,11 +40,14 @@ optional member is omitted, and unknown members fail admission.
   ADR-0049 value in the v3 DTO spec.
 - **`id`** on a style is the first 32 lowercase hexadecimal digits of the SHA-256 of the
   `style` object's canonical compact JSON bytes.
-- **`table`** has `schema` and at least one of `title`, `footer`, `column_styles` and `column_widths`. All
+- **`table`** has `schema` and at least one presentation member shown above. All
   maps are in stable-ID key order and nonempty when present. `footer` values are `sum`,
   `count`, `average`, `min` or `max`. Widths are integers from 1 to 65280 inclusive,
   in 1/256 of an Excel character; their field IDs must exist in the schema. Absent
-  widths use the host default.
+  widths use the host default. `hidden_rows` and `hidden_fields` are nonempty arrays
+  of stable IDs in unsigned UTF-8 order, with no duplicates. Each ID must belong
+  to the table. The arrays are omitted when empty. Older strict readers refuse
+  documents containing either array.
 - **`rule`:** `rank` is in the ADR-0048 rank grammar, `fields` is nonempty and in stable-ID
   order, and `condition` is a Bound Expression under the limits in ADR-0049 §5.
 

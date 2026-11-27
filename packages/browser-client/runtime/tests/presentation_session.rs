@@ -156,6 +156,7 @@ fn styled_store(
             footer: BTreeMap::from([(FieldId::from(rule_field), FooterAggregate::Sum)]),
             column_styles: BTreeMap::from([(FieldId::from(rule_field), cell_style.clone())]),
             column_widths: BTreeMap::new(),
+            ..TablePresentation::default()
         },
     );
     PresentationStore {
