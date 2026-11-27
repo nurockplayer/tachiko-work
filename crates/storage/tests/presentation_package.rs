@@ -138,6 +138,7 @@ fn store() -> PresentationStore {
                 footer: BTreeMap::from([(FieldId::from("f1"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("f2"), StyleId::from(STYLE_FULL))]),
                 column_widths: BTreeMap::new(),
+                ..TablePresentation::default()
             },
         )]),
         rules: BTreeMap::from([(

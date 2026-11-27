@@ -135,6 +135,7 @@ export type ConstraintFailureProjection = {
 export type CellAlignment = "left" | "center" | "right";
 
 export type ColumnProjection = {
+  hidden?: true;
   id: string;
   key: string;
   display_name: string;
@@ -153,6 +154,7 @@ export type ColumnProjection = {
 };
 
 export type TableRowProjection = {
+  hidden?: true;
   id: string;
   key: string;
   /**
@@ -639,6 +641,7 @@ export type TrackerCommand =
   | { type: "set_column_wrap"; expected_revision: string; collection: string; field: string; wrap: boolean | null }
   | { type: "set_cell_style"; expected_revision: string; collection: string; entities: string[]; fields: string[]; changes: CellStyleChange[] }
   | { type: "set_cell_style_range"; expected_revision: string; collection: string; row: number; row_count: number; fields: string[]; changes: CellStyleChange[] }
+  | { type: "set_table_visibility"; expected_revision: string; collection: string; entities: string[]; fields: string[]; hidden: boolean }
   | { type: "set_column_width"; expected_revision: string; collection: string; field: string; width: number | null }
   | { type: "move_column"; expected_revision: string; collection: string; field: string; to_index: number }
   | { type: "move_collection"; expected_revision: string; collection: string; to_index: number }
@@ -696,6 +699,7 @@ export type DesignerRequest =
   | { type: "new_budget"; occurrence_id: string; profile?: "working_size" }
   | { type: "new_blank_workbook"; occurrence_id: string; profile: "working_size" }
   | { type: "new_table"; occurrence_id: string; name: string; columns: NewTableColumnInput[]; profile?: "working_size" }
+  | { type: "range_to_table"; expected_revision: string; range: SelectionStatisticsRange; name: string; has_header: boolean }
   | { type: "duplicate_collection"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string> }
   | { type: "duplicate_collection_at"; expected_revision: string; collection: string; name: string; column_names?: Record<string, string>; to_index: number }
   | { type: "delete_table"; expected_revision: string; collection: string }

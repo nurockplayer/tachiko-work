@@ -58,6 +58,7 @@ fn store() -> PresentationStore {
                 footer: BTreeMap::from([(FieldId::from("f1"), FooterAggregate::Sum)]),
                 column_styles: BTreeMap::from([(FieldId::from("f2"), StyleId::from(STYLE_FULL))]),
                 column_widths: BTreeMap::new(),
+                ..TablePresentation::default()
             },
         )]),
         rules: BTreeMap::from([(
@@ -342,4 +343,19 @@ fn column_widths_are_canonical_and_strict() {
         ));
     }
     refuse("{\"kind\":\"table\",\"schema\":\"orders\",\"column_widths\":{}}\n");
+}
+
+#[test]
+fn table_visibility_is_canonical_and_strict() {
+    let bytes = b"{\"kind\":\"table\",\"schema\":\"orders\",\"hidden_rows\":[\"e1\",\"e2\"],\"hidden_fields\":[\"f1\"]}\n";
+    let store = decode_presentation(bytes).unwrap();
+    assert_eq!(
+        encode_presentation(&store).unwrap().as_deref(),
+        Some(bytes.as_slice())
+    );
+    for ids in [r#"["e2","e1"]"#, r#"["e1","e1"]"#, "[]", "null"] {
+        refuse(&format!(
+            "{{\"kind\":\"table\",\"schema\":\"orders\",\"title\":\"Orders\",\"hidden_rows\":{ids}}}\n"
+        ));
+    }
 }
