@@ -18,6 +18,8 @@ use crate::{
     strict_json::{FrontendError, VersionToken, inspect_roproj},
 };
 
+mod products_writer;
+
 pub const ROPROJ_V2_FORMAT_VERSION: u32 = 2;
 // A deepest valid entity is: entity -> fields -> value -> 64 expression
 // objects, with one binary `args` object between each expression node and one
@@ -1279,38 +1281,7 @@ fn write_definition(
     )?;
     push_indent(output, indent + 1);
     output.push_str("},\n");
-    pretty_member_prefix(output, indent + 1, "products")?;
-    output.push_str("{\n");
-    pretty_member_string(
-        output,
-        indent + 2,
-        "schema",
-        &definition.products.schema,
-        true,
-    )?;
-    pretty_member_string(
-        output,
-        indent + 2,
-        "key_field",
-        &definition.products.key_field,
-        true,
-    )?;
-    pretty_member_string(
-        output,
-        indent + 2,
-        "category_field",
-        &definition.products.category_field,
-        true,
-    )?;
-    pretty_member_string(
-        output,
-        indent + 2,
-        "price_field",
-        &definition.products.price_field,
-        false,
-    )?;
-    push_indent(output, indent + 1);
-    output.push_str("}\n");
+    products_writer::write_products(output, &definition.products, indent + 1)?;
     push_indent(output, indent);
     output.push('}');
     Ok(())
