@@ -230,37 +230,30 @@ impl MergeConflictV2 {
             right: right.into(),
         }
     }
-
     #[must_use]
     pub const fn contract(&self) -> &'static str {
         SEMANTIC_CONFLICT_V2
     }
-
     #[must_use]
     pub fn document(&self) -> &DocumentId {
         &self.document
     }
-
     #[must_use]
     pub fn target(&self) -> &ConflictTarget {
         &self.target
     }
-
     #[must_use]
     pub const fn facet(&self) -> ConflictFacetV2 {
         self.facet
     }
-
     #[must_use]
     pub const fn kind(&self) -> ConflictKind {
         self.kind
     }
-
     #[must_use]
     pub fn base(&self) -> &ConflictFactV2 {
         &self.base
     }
-
     #[must_use]
     pub fn left(&self) -> &ConflictFactV2 {
         &self.left
@@ -303,7 +296,6 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
     {
         return MergeOutcomeV2::UnsupportedKeyedGroupedSumDefinitionChange;
     }
-
     let base_v1 = without_field_orders(&without_constraints(base));
     let left_v1 = without_field_orders(&without_constraints(left));
     let right_v1 = without_field_orders(&without_constraints(right));
@@ -337,12 +329,31 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         }
     };
 
-    add_complete_subject_conflicts(base, left, right, &mut conflicts);
-    add_entity_subject_conflicts(base, left, right, &mut conflicts);
-    add_rank_conflicts(base, left, right, &mut conflicts);
-    add_constraint_conflicts(base, left, right, &mut conflicts);
-    add_name_conflicts(base, left, right, &mut conflicts);
-    add_field_order_conflicts(base, left, right, &mut conflicts);
+    collect_conflicts(base, left, right, &mut conflicts);
+    if !conflicts.is_empty() {
+        return MergeOutcomeV2::Conflicted(conflicts);
+    }
+
+    let mut candidate = candidate.expect("v1 conflict-free result must retain a candidate");
+    apply_selected_constraints(base, left, right, &mut candidate);
+    apply_selected_names(base, left, right, &mut candidate);
+    apply_selected_field_orders(base, left, right, &mut candidate);
+    apply_selected_ranks(base, left, right, &mut candidate);
+    MergeOutcomeV2::Merged(candidate)
+}
+
+fn collect_conflicts(
+    base: &Document,
+    left: &Document,
+    right: &Document,
+    conflicts: &mut Vec<MergeConflictV2>,
+) {
+    add_complete_subject_conflicts(base, left, right, conflicts);
+    add_entity_subject_conflicts(base, left, right, conflicts);
+    add_rank_conflicts(base, left, right, conflicts);
+    add_constraint_conflicts(base, left, right, conflicts);
+    add_name_conflicts(base, left, right, conflicts);
+    add_field_order_conflicts(base, left, right, conflicts);
     conflicts.sort_by(|left, right| {
         left.target
             .canonical_cmp(&right.target)
@@ -354,17 +365,6 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
             })
             .then_with(|| left.kind.canonical_rank().cmp(&right.kind.canonical_rank()))
     });
-
-    if !conflicts.is_empty() {
-        return MergeOutcomeV2::Conflicted(conflicts);
-    }
-
-    let mut candidate = candidate.expect("v1 conflict-free result must retain a candidate");
-    apply_selected_constraints(base, left, right, &mut candidate);
-    apply_selected_names(base, left, right, &mut candidate);
-    apply_selected_field_orders(base, left, right, &mut candidate);
-    apply_selected_ranks(base, left, right, &mut candidate);
-    MergeOutcomeV2::Merged(candidate)
 }
 
 #[cfg(test)]
