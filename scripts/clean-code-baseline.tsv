@@ -216,10 +216,10 @@ body	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::pa
 body	packages/browser-client/runtime/src/blank_workbook.rs	<DesignerRuntime>::write_cell_at	96
 body	packages/browser-client/runtime/src/header_promotion.rs	<DesignerRuntime>::promote_first_row_to_headers	64
 body	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsheet	102
-body	packages/browser-client/runtime/src/host_bridge.rs	export_native_budget_spreadsheet	73
-body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_spreadsheet	66
-body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	83
-body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	99
+body	packages/browser-client/runtime/src/host_bridge.rs	export_native_budget_spreadsheet	68
+body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_spreadsheet	61
+body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	78
+body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	81
 body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	68
 body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	77
 body	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	67
@@ -261,7 +261,7 @@ body	packages/browser-client/runtime/src/interop_document.rs	reconcile_import_ro
 body	packages/browser-client/runtime/src/interop_document.rs	translate_a1_inner	218
 body	packages/browser-client/runtime/src/interop_document.rs	validate_exact_import_metadata	91
 body	packages/browser-client/runtime/src/interop_document.rs	validate_selection	98
-body	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	125
+body	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	106
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_column_with_requiredness	85
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::add_table	91
 body	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::budget_document	118
@@ -306,11 +306,11 @@ body	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	
 body	packages/browser-client/runtime/src/save_size.rs	expression_bytes	293
 body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	99
 body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	204
-body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadsheet	73
-body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadsheet	66
+body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadsheet	68
+body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadsheet	61
 body	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	64
-body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	83
-body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	99
+body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	78
+body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	81
 body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	75
 branches	crates/cli/src/commands.rs	analysis_failure_output	14
 branches	crates/cli/src/commands.rs	parse_analysis_predicate	19
@@ -445,7 +445,7 @@ branches	packages/browser-client/runtime/src/display_text.rs	natural_folded_cmp	
 branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::open_candidate	16
 branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsheet	21
 branches	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	24
-branches	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	18
+branches	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	16
 branches	packages/browser-client/runtime/src/interop_adapter.rs	archive	17
 branches	packages/browser-client/runtime/src/interop_adapter.rs	builtin_format	29
 branches	packages/browser-client/runtime/src/interop_adapter.rs	c_unknown	25
@@ -521,7 +521,7 @@ branches	packages/browser-client/runtime/src/interop_number_format.rs	currency_c
 branches	packages/browser-client/runtime/src/interop_number_format.rs	inspect	21
 branches	packages/browser-client/runtime/src/interop_number_format.rs	token_prefix	17
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::failure_projection	15
-branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	43
+branches	packages/browser-client/runtime/src/lib.rs	<DesignerError>::generic_failure	42
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::change_column_type	24
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::changed_cells	15
 branches	packages/browser-client/runtime/src/lib.rs	<DesignerRuntime>::copy_formula	26
@@ -552,7 +552,6 @@ branches	packages/browser-client/runtime/src/lib.rs	native_table_row	21
 branches	packages/browser-client/runtime/src/lib.rs	plan_filter	15
 branches	packages/browser-client/runtime/src/lib.rs	process_wire_request	37
 branches	packages/browser-client/runtime/src/lib.rs	view_value	13
-branches	packages/browser-client/runtime/src/move_cells.rs	plan	16
 branches	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	29
 branches	packages/browser-client/runtime/src/native_tables_export.rs	mapped_name	16
 branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	41
@@ -563,7 +562,7 @@ branches	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	13
 branches	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	24
 branches	packages/browser-client/runtime/src/wasm.rs	process_portable_ro_candidate	17
 branches	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	24
-branches	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	18
+branches	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	16
 branches	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	14
 depth	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	4
 depth	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	5
@@ -670,12 +669,12 @@ file	crates/workspace-engine/src/formula_operations.rs		1225
 file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6778
 file	crates/workspace-engine/src/resident_session.rs		1811
-file	packages/browser-client/runtime/src/host_bridge.rs		1146
+file	packages/browser-client/runtime/src/host_bridge.rs		1085
 file	packages/browser-client/runtime/src/interop_adapter.rs		6474
 file	packages/browser-client/runtime/src/interop_document.rs		5619
-file	packages/browser-client/runtime/src/lib.rs		13258
+file	packages/browser-client/runtime/src/lib.rs		13246
 file	packages/browser-client/runtime/src/save_size.rs		922
-file	packages/browser-client/runtime/src/wasm.rs		1289
+file	packages/browser-client/runtime/src/wasm.rs		1228
 inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
 inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
