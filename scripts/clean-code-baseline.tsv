@@ -147,7 +147,6 @@ body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
 body	crates/semantic-core/src/presentation.rs	validate_presentation	130
-body	crates/semantic-core/src/presentation.rs	validate_rule_condition	67
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	99
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
@@ -365,7 +364,7 @@ branches	crates/semantic-core/src/model.rs	<Expression>::reference_uses	20
 branches	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	22
 branches	crates/semantic-core/src/presentation.rs	rule_survives_prune	29
 branches	crates/semantic-core/src/presentation.rs	validate_presentation	41
-branches	crates/semantic-core/src/presentation.rs	validate_rule_condition	23
+branches	crates/semantic-core/src/presentation.rs	validate_rule_condition	16
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	23
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	15
 branches	crates/semantic-core/src/validation.rs	validate_column_conditional	20

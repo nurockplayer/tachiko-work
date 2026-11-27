@@ -3,8 +3,10 @@
 //! The store sits beside [`Document`]; it is never part of the semantic document
 //! and a change to it is never a semantic change.
 
+mod column_conditional;
 mod table;
 
+use column_conditional::validate_column_conditional;
 pub use table::TablePresentation;
 use table::{prune_table, validate_table};
 
@@ -15,8 +17,8 @@ use std::{
 };
 
 use crate::{
-    ConditionalAggregate, Document, EntityId, Expression, FieldId, FormulaExpressionType,
-    MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
+    Document, EntityId, Expression, FieldId, FormulaExpressionType, MAX_EXPRESSION_DEPTH,
+    MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
 };
 
 /// Maximum number of styles a document may hold.
@@ -473,15 +475,7 @@ fn validate_rule_condition(
                 aggregate,
                 criteria,
             } => {
-                match aggregate.as_ref() {
-                    ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) => {
-                        check_column(document, column)?;
-                    }
-                    ConditionalAggregate::Count => {}
-                }
-                for criterion in criteria {
-                    check_column(document, &criterion.column)?;
-                }
+                validate_column_conditional(document, aggregate, criteria)?;
             }
             _ => {}
         }
