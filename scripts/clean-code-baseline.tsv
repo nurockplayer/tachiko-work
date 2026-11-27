@@ -166,7 +166,6 @@ body	crates/storage/src/portable_package/v1.rs	build_zip	64
 body	crates/storage/src/portable_package/v1.rs	parse_container_at_end	83
 body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
 body	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	67
-body	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	62
 body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
 body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
@@ -391,7 +390,7 @@ branches	crates/storage/src/presentation.rs	parse_presentation	16
 branches	crates/storage/src/presentation.rs	write_style_object	22
 branches	crates/storage/src/presentation.rs	write_table_record	23
 branches	crates/storage/src/roproj/host.rs	collect_entity_records	13
-branches	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	31
+branches	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	28
 branches	crates/storage/src/roproj/host.rs	resolve_component_path	16
 branches	crates/storage/src/roproj/v1.rs	decode_entities	14
 branches	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	24
@@ -674,7 +673,6 @@ file	crates/semantic-core/src/presentation.rs		889
 file	crates/semantic-core/src/validation.rs		1925
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1202
-file	crates/storage/src/roproj/host.rs		806
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1721
 file	crates/storage/src/roproj/v3.rs		2914
