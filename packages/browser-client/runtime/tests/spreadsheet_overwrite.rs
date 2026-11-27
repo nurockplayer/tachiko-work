@@ -114,8 +114,11 @@ fn overwrite_exports_current_edit_and_leaves_one_undo() {
         |xml| {
             let attributes = r#"r="A2" s="0" t="inlineStr""#;
             assert!(xml.contains(attributes));
+            let preserved = r#"<t xml:space="preserve">before</t>"#;
+            assert!(xml.contains(preserved));
             let xml = xml
                 .replace(attributes, r#"t="inlineStr" r="A2" s="0""#)
+                .replace(preserved, "<t>before</t>")
                 .replace(" xmlns=", " xmlns:m=")
                 .replace('<', "<m:")
                 .replace("<m:/", "</m:")
@@ -168,6 +171,23 @@ fn overwrite_refuses_a_dropped_cell_attribute() {
         |xml| {
             assert!(xml.contains(r#"<c r="A2" "#));
             xml.replace(r#"<c r="A2" "#, r#"<c r="A2" ph="1" "#)
+        },
+        &[],
+    );
+    let mut host = DesignerHost::new();
+    open(&mut host, &original, FIRST, 1);
+    let expected = ok(&host.observe_occurrence());
+    let diagnostics = refusal(&overwrite(&mut host, &expected), "xlsx_overwrite_refused");
+    has_reason(&diagnostics, "xlsx_source_part_changed", SHEET);
+}
+
+#[test]
+fn overwrite_refuses_changed_space_handling_for_padded_text() {
+    let original = repack(
+        |xml| {
+            let preserved = r#"<t xml:space="preserve">before</t>"#;
+            assert!(xml.contains(preserved));
+            xml.replace(preserved, "<t> before </t>")
         },
         &[],
     );

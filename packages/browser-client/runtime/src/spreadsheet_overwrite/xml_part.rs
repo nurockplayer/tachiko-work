@@ -10,6 +10,8 @@ use quick_xml::{
 type ExpandedName = (String, String);
 type Attributes = BTreeMap<ExpandedName, String>;
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
+const SPREADSHEET_NAMESPACE: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const XML_WHITESPACE: [char; 4] = [' ', '\t', '\n', '\r'];
 
 #[derive(PartialEq, Eq)]
 enum Token {
@@ -35,9 +37,58 @@ pub(super) fn equivalent(path: &str, original: &[u8], regenerated: &[u8]) -> boo
     loop {
         match (original.next(), regenerated.next()) {
             (Some(Token::Eof), Some(Token::Eof)) => return true,
-            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) => {
+                if !equivalent_tokens(left, right, &mut original, &mut regenerated) {
+                    return false;
+                }
+            }
             _ => return false,
         }
+    }
+}
+
+fn equivalent_tokens(
+    original: Token,
+    regenerated: Token,
+    original_xml: &mut XmlPart<'_>,
+    regenerated_xml: &mut XmlPart<'_>,
+) -> bool {
+    if original == regenerated {
+        return true;
+    }
+    let (Token::Start(name, attributes), Token::Start(other_name, other_attributes)) =
+        (original, regenerated)
+    else {
+        return false;
+    };
+    name == other_name
+        && name.0 == SPREADSHEET_NAMESPACE
+        && name.1 == "t"
+        && equivalent_text_attributes(attributes, other_attributes)
+        && equivalent_unpadded_text(original_xml, regenerated_xml)
+}
+
+fn equivalent_text_attributes(mut original: Attributes, mut regenerated: Attributes) -> bool {
+    let key = (XML_NAMESPACE.to_owned(), "space".to_owned());
+    [original.remove(&key), regenerated.remove(&key)]
+        .iter()
+        .all(|space| matches!(space.as_deref(), None | Some("default" | "preserve")))
+        && original == regenerated
+}
+
+fn equivalent_unpadded_text(original: &mut XmlPart<'_>, regenerated: &mut XmlPart<'_>) -> bool {
+    // xml:space can change how a reader interprets leading or trailing whitespace.
+    match (original.next(), regenerated.next()) {
+        (Some(Token::End), Some(Token::End)) => true,
+        (Some(Token::Text(left)), Some(Token::Text(right)))
+            if left == right && left == left.trim_matches(XML_WHITESPACE) =>
+        {
+            matches!(
+                (original.next(), regenerated.next()),
+                (Some(Token::End), Some(Token::End))
+            )
+        }
+        _ => false,
     }
 }
 
@@ -104,7 +155,7 @@ impl<'a> XmlPart<'a> {
                 .elements
                 .last()
                 .is_some_and(|element| element.preserve_space || element.carries_value)
-                || !text.trim_matches([' ', '\t', '\n', '\r']).is_empty())
+                || !text.trim_matches(XML_WHITESPACE).is_empty())
     }
 
     fn structure(&mut self, event: Event<'a>) -> Option<Token> {
