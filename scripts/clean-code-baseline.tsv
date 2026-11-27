@@ -685,7 +685,6 @@ inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]
 inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
 inline-test	crates/formula-engine/src/partitioned.rs	tests[cfg(test)]	225
-inline-test	crates/merge-engine/src/lib.rs	tests[cfg(test)]	11
 inline-test	crates/semantic-core/src/criterion.rs	tests[cfg(test)]	250
 inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
 inline-test	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::tests[cfg(test)]	204
