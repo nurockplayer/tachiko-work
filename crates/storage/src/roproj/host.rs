@@ -21,6 +21,8 @@ use super::v3::{
 };
 use crate::FormatError;
 
+mod root_entry_types;
+
 static NEXT_STAGING_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 /// Read an exact canonical `.roproj/v1` tree from an ordinary directory.
@@ -611,18 +613,7 @@ fn require_exact_root_entries_inner(
             "required regular file is missing",
         );
     }
-    require_regular_file(&root.join("manifest.json"), "manifest.json")?;
-    require_regular_file(&root.join("schemas.json"), "schemas.json")?;
-    if definitions {
-        require_regular_file(&root.join("definitions.json"), "definitions.json")?;
-    }
-    if presentation && found_presentation {
-        require_regular_file(
-            &root.join(ROPROJ_V3_PRESENTATION_PATH),
-            ROPROJ_V3_PRESENTATION_PATH,
-        )?;
-    }
-    require_directory(&root.join("entities"), "entities directory")
+    root_entry_types::require_root_entry_types(root, definitions, found_presentation)
 }
 
 pub(super) fn require_exact_entity_entries(entities: &Path) -> Result<(), FormatError> {
