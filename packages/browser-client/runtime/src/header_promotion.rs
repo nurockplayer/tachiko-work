@@ -9,7 +9,7 @@ use crate::{
     blank_workbook, display_text, name_admission, view_value,
 };
 
-fn header_names(
+pub(super) fn header_names(
     texts: &[String],
     schema: &str,
 ) -> Result<(Vec<String>, Vec<Option<HeaderFallbackReason>>), DesignerError> {
@@ -52,13 +52,12 @@ fn header_names(
 }
 
 impl DesignerRuntime {
-    fn header_texts(
+    pub(super) fn header_texts(
         &self,
-        spec: &crate::CollectionSpec,
+        columns: &[crate::ColumnSpec],
         row: &crate::Entity,
     ) -> Result<Vec<String>, DesignerError> {
-        let targets: Vec<_> = spec
-            .columns
+        let targets: Vec<_> = columns
             .iter()
             .filter(|column| row.fields.contains_key(&column.id))
             .map(|column| FieldRef::new(row.id.clone(), column.id.clone()))
@@ -69,7 +68,7 @@ impl DesignerRuntime {
             .iter()
             .map(|value| (&value.field.field, value))
             .collect();
-        spec.columns
+        columns
             .iter()
             .map(|column| {
                 let value = values.get(&column.id).and_then(|value| view_value(value));
@@ -102,7 +101,7 @@ impl DesignerRuntime {
         }
         let row_id = spec.entities.first().ok_or(DesignerError::NoHeaderRow)?;
         let row = self.session.document().entities[row_id].clone();
-        let texts = self.header_texts(&spec, &row)?;
+        let texts = self.header_texts(&spec.columns, &row)?;
         let (names, reasons) = header_names(&texts, schema_id.as_str())?;
         let mut forward = vec![SemanticCommand::SetSchemaHeaderless {
             schema: schema_id.clone(),

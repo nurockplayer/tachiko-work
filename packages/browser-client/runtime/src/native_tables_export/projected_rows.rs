@@ -5,7 +5,7 @@ use tachiko_workspace_engine::formula_operations::FormulaCalculationOutcome;
 use tachiko_workspace_engine::{Document, EntityId, FieldRef, Value};
 
 use crate::interop_adapter::xlsx_cells::CachedErrors;
-use crate::interop_adapter::{SourceCell, SourceValue};
+use crate::interop_adapter::{CellStyle, SourceCell, SourceValue};
 use crate::{CollectionSpec, ColumnSpec, DesignerError, DesignerRuntime};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,7 +134,7 @@ fn styled_cell(
     format: ProjectionFormat,
 ) -> SourceCell {
     let style = if format == ProjectionFormat::Csv {
-        Default::default()
+        CellStyle::default()
     } else {
         let schema = &runtime.session.document().schemas[spec.summary.id.as_str()];
         crate::interop_date_format::cell_style(
@@ -143,7 +143,7 @@ fn styled_cell(
             &schema.fields[&column.id],
             entity,
             &value,
-            Default::default(),
+            CellStyle::default(),
         )
     };
     SourceCell {

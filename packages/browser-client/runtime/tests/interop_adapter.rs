@@ -1203,10 +1203,9 @@ fn workbook_omissions_and_column_width_tails_are_explicit() {
 #[test]
 fn multiple_column_groups_are_all_inspected_and_singleton_duplicates_rejected() {
     let bytes = export_xlsx(&simple()).unwrap();
-    for (attribute, code) in [
-        ("hidden=\"1\"", "hidden_column"),
-        ("style=\"1\"", "inherited_column_style"),
-    ] {
+    {
+        let attribute = "style=\"1\"";
+        let code = "inherited_column_style";
         let changed = mutate(&bytes, "xl/worksheets/sheet1.xml", |s| {
             s.replace(
                 "<sheetData>",
@@ -1436,10 +1435,6 @@ fn hidden_source_content_is_blocked_with_explicit_visibility_inventory() {
     }
     for (xml, code) in [
         ("<sheetData><row r=\"1\" hidden=\"true\">", "hidden_row"),
-        (
-            "<cols><col min=\"1\" max=\"2\" hidden=\"1\"/></cols><sheetData><row r=\"1\">",
-            "hidden_column",
-        ),
         (
             "<sheetFormatPr zeroHeight=\"true\"/><sheetData><row r=\"1\">",
             "hidden_default_rows",

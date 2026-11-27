@@ -7,6 +7,10 @@ All notable changes to Tachiko Work are documented in this file.
 - Publish exact lookup misses as `#N/A` in Auto cells. Native XLSX export
   keeps worksheet formulas with their typed cached errors (#979).
 
+- Create a table from a selected rectangle with `rangeToTable`. Choose whether
+  the first row supplies headers and keep formulas live. The new table has one
+  Undo step and retains its identities on save and reopen (#964).
+
 - Expose per-collection cell-styling eligibility in full and windowed browser
   client table projections so Sheet can enable formatting from the same rule
   the styling commands use (#965, Sheet #586).

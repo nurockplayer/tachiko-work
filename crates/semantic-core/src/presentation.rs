@@ -3,6 +3,11 @@
 //! The store sits beside [`Document`]; it is never part of the semantic document
 //! and a change to it is never a semantic change.
 
+mod table;
+
+pub use table::TablePresentation;
+use table::{prune_table, validate_table};
+
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
@@ -12,7 +17,6 @@ use std::{
 use crate::{
     ConditionalAggregate, Document, EntityId, Expression, FieldId, FormulaExpressionType,
     MAX_EXPRESSION_DEPTH, MAX_EXPRESSION_NODES, NumberFormat, NumberFormatError, Schema, SchemaId,
-    display_name_failures,
 };
 
 /// Maximum number of styles a document may hold.
@@ -115,15 +119,6 @@ pub enum FooterAggregate {
     Average,
     Minimum,
     Maximum,
-}
-
-/// Presentation of one whole table.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TablePresentation {
-    pub title: Option<String>,
-    pub footer: BTreeMap<FieldId, FooterAggregate>,
-    pub column_styles: BTreeMap<FieldId, StyleId>,
-    pub column_widths: BTreeMap<FieldId, u32>,
 }
 
 /// One conditional formatting rule. Its identity is the map key that holds it.
@@ -513,42 +508,8 @@ pub fn prune_presentation(store: &PresentationStore, document: &Document) -> Pre
     let tables = store
         .tables
         .iter()
-        .filter_map(|(schema_id, table)| {
-            let schema = document.schemas.get(schema_id)?;
-            let footer = table
-                .footer
-                .iter()
-                .filter(|(field, _)| schema.fields.contains_key(*field))
-                .map(|(field, aggregate)| (field.clone(), *aggregate))
-                .collect::<BTreeMap<_, _>>();
-            let column_styles = table
-                .column_styles
-                .iter()
-                .filter(|(field, _)| schema.fields.contains_key(*field))
-                .map(|(field, style)| (field.clone(), style.clone()))
-                .collect::<BTreeMap<_, _>>();
-            let column_widths = table
-                .column_widths
-                .iter()
-                .filter(|(field, _)| schema.fields.contains_key(*field))
-                .map(|(field, width)| (field.clone(), *width))
-                .collect::<BTreeMap<_, _>>();
-            if table.title.is_none()
-                && footer.is_empty()
-                && column_styles.is_empty()
-                && column_widths.is_empty()
-            {
-                return None;
-            }
-            Some((
-                schema_id.clone(),
-                TablePresentation {
-                    title: table.title.clone(),
-                    footer,
-                    column_styles,
-                    column_widths,
-                },
-            ))
+        .filter_map(|(schema, table)| {
+            prune_table(schema, table, document).map(|table| (schema.clone(), table))
         })
         .collect::<BTreeMap<_, _>>();
 
@@ -750,61 +711,8 @@ pub fn validate_presentation(
         }
     }
 
-    for (schema_id, table) in &store.tables {
-        let schema =
-            document
-                .schemas
-                .get(schema_id)
-                .ok_or_else(|| PresentationError::MissingSchema {
-                    schema: schema_id.clone(),
-                })?;
-        if table.title.is_none()
-            && table.footer.is_empty()
-            && table.column_styles.is_empty()
-            && table.column_widths.is_empty()
-        {
-            return Err(PresentationError::EmptyTable {
-                schema: schema_id.clone(),
-            });
-        }
-        if let Some(title) = &table.title {
-            let failures = display_name_failures(title);
-            if !failures.is_empty() {
-                return Err(PresentationError::InvalidTitle {
-                    schema: schema_id.clone(),
-                    failures,
-                });
-            }
-        }
-        for field in table
-            .footer
-            .keys()
-            .chain(table.column_styles.keys())
-            .chain(table.column_widths.keys())
-        {
-            if !schema.fields.contains_key(field) {
-                return Err(PresentationError::MissingField {
-                    schema: schema_id.clone(),
-                    field: field.clone(),
-                });
-            }
-        }
-        for (field, width) in &table.column_widths {
-            if !(1..=65280).contains(width) {
-                return Err(PresentationError::InvalidColumnWidth {
-                    schema: schema_id.clone(),
-                    field: field.clone(),
-                    width: *width,
-                });
-            }
-        }
-        for style in table.column_styles.values() {
-            if !store.styles.contains_key(style) {
-                return Err(PresentationError::MissingStyle {
-                    style: style.clone(),
-                });
-            }
-        }
+    for (schema, table) in &store.tables {
+        validate_table(schema, table, store, document)?;
     }
 
     for (rule_id, rule) in &store.rules {

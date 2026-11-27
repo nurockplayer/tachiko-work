@@ -68,6 +68,7 @@ Only these constructs may enter v3 during the window.
 | Column Date format | 5 | Presentation |
 | A stored construct for conditional formatting, if rules need one | 5 | Presentation |
 | Manifest: optional worksheet order | #953 | Worksheet order amendment below |
+| Presentation table: optional hidden row and field IDs | #974 | [ADR-0049 visibility amendment](ADR-0049-stored-presentation.md#row-and-column-visibility-974) |
 
 Anything else needs an amendment to this ADR. The numeric and conditional
 functions already in the Expression vocabulary stay as they are, and further

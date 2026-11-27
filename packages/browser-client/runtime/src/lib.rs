@@ -34,7 +34,10 @@ mod calculation_projection_tests;
 mod capacity_tests;
 mod collection_order;
 mod column_presentation;
+mod table_visibility;
 use column_presentation::ColumnPresentation;
+use table_visibility::column_projections;
+pub use table_visibility::{ColumnProjection, RowProjection};
 #[cfg(test)]
 mod constraints_tests;
 #[cfg(test)]
@@ -111,6 +114,7 @@ use tachiko_workspace_engine::{
 use thiserror::Error;
 
 mod cell_style;
+mod collection_copy_formula;
 mod imported_lifecycle;
 #[cfg(test)]
 mod imported_lifecycle_tests;
@@ -121,6 +125,9 @@ mod interop_number_format;
 #[cfg(test)]
 mod interop_presentation_tests;
 mod native_tables_export;
+mod range_to_table;
+#[cfg(test)]
+mod range_to_table_tests;
 mod sized_reply;
 pub(crate) use sized_reply::encode_sized_reply;
 mod source_reuse;
@@ -400,6 +407,13 @@ pub enum DesignerRequest {
         field: String,
         width: Option<u32>,
     },
+    SetTableVisibility {
+        expected_revision: String,
+        collection: String,
+        entities: Vec<String>,
+        fields: Vec<String>,
+        hidden: bool,
+    },
     MoveColumn {
         expected_revision: String,
         collection: String,
@@ -441,6 +455,12 @@ pub enum DesignerRequest {
         expected_revision: String,
         name: String,
         columns: Vec<NewTableColumnInput>,
+    },
+    RangeToTable {
+        expected_revision: String,
+        range: SelectionStatisticsRange,
+        name: String,
+        has_header: bool,
     },
     DuplicateCollection {
         expected_revision: String,
@@ -1350,52 +1370,6 @@ pub struct ColumnStyleProjection {
     pub alignment: Option<ColumnAlignment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap: Option<bool>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ColumnProjection {
-    #[serde(default = "default_required")]
-    pub required: bool,
-    pub id: String,
-    pub key: String,
-    pub display_name: String,
-    /// Stored display name is present, even when equal to the generated key.
-    /// Omission means the projected name is only the key fallback.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name_explicit: Option<bool>,
-    pub field_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dropdown_options: Option<Vec<String>>,
-    /// The declared durable constraint, if any. Absence means unconstrained.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub constraint: Option<FieldConstraintProjection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub number_format: Option<tachiko_workspace_engine::NumberFormat>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub date_format: Option<tachiko_workspace_engine::DateFormat>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<ColumnStyleProjection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub width: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RowProjection {
-    pub id: String,
-    pub key: String,
-    /// One-based stored position in the collection. A window sets it so a host
-    /// keeps the row number a filter or view sort would otherwise change;
-    /// every other reply omits the key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<usize>,
-    /// Declared fields without a value, in column presentation order.
-    /// `fields` retains its sparse present-value payload; absence is never a placeholder.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub blank_fields: Vec<String>,
-    pub fields: Vec<FieldProjection>,
-    /// Resolved stored styles in column order, shared with imported rows.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub styles: Vec<interop_adapter::CellStyle>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -4181,17 +4155,10 @@ impl DesignerRuntime {
                     &changes,
                 )
                 .map(DesignerResponse::Published),
-            DesignerRequest::SetColumnWidth {
-                expected_revision,
-                collection,
-                field,
-                width,
-            } => Ok(DesignerResponse::Published(self.set_column_width(
-                &expected_revision,
-                &collection,
-                &field,
-                width,
-            )?)),
+            request @ (DesignerRequest::SetColumnWidth { .. }
+            | DesignerRequest::SetTableVisibility { .. }) => {
+                self.dispatch_table_presentation(request)
+            }
             DesignerRequest::MoveColumn {
                 expected_revision,
                 collection,
@@ -4256,40 +4223,12 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Published(
                 self.delete_table(&expected_revision, &collection)?,
             )),
-            DesignerRequest::AddTable {
-                expected_revision,
-                name,
-                columns,
-            } => Ok(DesignerResponse::Duplicated(self.add_table(
-                &expected_revision,
-                &name,
-                &columns,
-            )?)),
-            DesignerRequest::DuplicateCollection {
-                expected_revision,
-                collection,
-                name,
-                column_names,
-            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
-                &expected_revision,
-                &collection,
-                &name,
-                &column_names,
-                None,
-            )?)),
-            DesignerRequest::DuplicateCollectionAt {
-                expected_revision,
-                collection,
-                name,
-                column_names,
-                to_index,
-            } => Ok(DesignerResponse::Duplicated(self.duplicate_collection(
-                &expected_revision,
-                &collection,
-                &name,
-                &column_names,
-                Some(to_index),
-            )?)),
+            DesignerRequest::AddTable { .. }
+            | DesignerRequest::RangeToTable { .. }
+            | DesignerRequest::DuplicateCollection { .. }
+            | DesignerRequest::DuplicateCollectionAt { .. } => {
+                self.dispatch_table_creation(request)
+            }
             DesignerRequest::EditCells {
                 expected_revision,
                 edits,
@@ -5070,6 +5009,7 @@ impl DesignerRuntime {
                     .iter()
                     .map(|entity| RowProjection {
                         id: entity.id.to_string(),
+                        hidden: self.row_hidden(spec, &entity.id),
                         key: entity.key.to_string(),
                         position: None,
                         styles: self.row_styles(spec, &entity.id),
@@ -5093,7 +5033,6 @@ impl DesignerRuntime {
             let index = spec.stored_indices[row.id.as_str()];
             stored_rows[index] = Some(row);
         }
-        let rows = stored_rows.into_iter().flatten().collect();
         Ok(TableProjection {
             tracker_profile: is_tracker_spec(spec).then_some(true),
             native_table_profile: is_native_table_spec(spec).then_some(true),
@@ -5101,7 +5040,7 @@ impl DesignerRuntime {
             revision: entities.revision().as_str().to_owned(),
             collection: spec.summary.clone(),
             columns: column_projections(spec, &self.presentation),
-            rows,
+            rows: stored_rows.into_iter().flatten().collect(),
             column_totals,
         })
     }
@@ -5153,6 +5092,7 @@ impl DesignerRuntime {
             .collect();
         Ok(RowProjection {
             id: entity.id.to_string(),
+            hidden: self.row_hidden(spec, &entity.id),
             key: entity.key.to_string(),
             position: None,
             blank_fields: blank_field_ids(entity, spec),
@@ -6437,11 +6377,7 @@ impl DesignerRuntime {
         } else {
             table.column_widths.remove(field);
         }
-        if table.title.is_none()
-            && table.footer.is_empty()
-            && table.column_styles.is_empty()
-            && table.column_widths.is_empty()
-        {
+        if *table == tachiko_workspace_engine::TablePresentation::default() {
             candidate.tables.remove(schema);
         }
         if let Some(id) = old_style {
@@ -9229,54 +9165,6 @@ impl DesignerRuntime {
     }
 }
 
-/// The single column projection shared by the complete table query and the
-/// bounded window query.
-fn column_projections(
-    spec: &CollectionSpec,
-    presentation: &PresentationStore,
-) -> Vec<ColumnProjection> {
-    let table = presentation
-        .tables
-        .get(&SchemaId::from(spec.summary.id.clone()));
-    spec.columns
-        .iter()
-        .map(|column| ColumnProjection {
-            required: column.required,
-            id: column.id.to_string(),
-            key: column.key.clone(),
-            display_name: column.display_name.clone(),
-            display_name_explicit: column.display_name_explicit.then_some(true),
-            field_type: field_type_name(&column.field_type).to_owned(),
-            dropdown_options: match &column.constraint {
-                tachiko_workspace_engine::FieldConstraint::TextLiteralSet { values } => {
-                    Some(values.clone())
-                }
-                _ if column.field_type == FieldType::Boolean => {
-                    Some(vec!["true".to_owned(), "false".to_owned()])
-                }
-                _ => None,
-            },
-            constraint: constraint_projection(&column.constraint),
-            number_format: column.number_format.clone(),
-            date_format: column.date_format,
-            style: table
-                .and_then(|table| table.column_styles.get(&column.id))
-                .and_then(|id| presentation.styles.get(id))
-                .and_then(|style| {
-                    (style.alignment.is_some() || style.wrap.is_some()).then_some(
-                        ColumnStyleProjection {
-                            alignment: style.alignment.map(Into::into),
-                            wrap: style.wrap,
-                        },
-                    )
-                }),
-            width: table
-                .and_then(|table| table.column_widths.get(&column.id))
-                .copied(),
-        })
-        .collect()
-}
-
 /// Deterministic digest of the column definitions. It depends only on the
 /// projected columns, so an ordinary row edit keeps it stable. FNV-1a is
 /// sufficient here: the value identifies one schema shape for the client, it
@@ -11447,6 +11335,7 @@ fn copy_collection_entities(
         .zip(ordered_ids)
         .collect();
     let mut entities = Vec::with_capacity(source_spec.entities.len());
+    let remap = collection_copy_formula::CopyReferences::whole(&entity_map, field_map, &schema_map);
     for source_id in &source_spec.entities {
         let source =
             document
@@ -11474,7 +11363,7 @@ fn copy_collection_entities(
             let target_field = field_map
                 .get(source_field)
                 .ok_or_else(|| table_error("field mapping is incomplete"))?;
-            let value = remap_duplicate_value(value, &entity_map, field_map, &schema_map)?;
+            let value = remap.value(value)?;
             copied.fields.insert(target_field.clone(), value);
         }
         entities.push(copied);
@@ -11530,125 +11419,6 @@ fn copied_column_names(
     }
     name_admission::refuse(failures)?;
     Ok(named)
-}
-
-fn remap_duplicate_value(
-    value: &Value,
-    entities: &BTreeMap<EntityId, EntityId>,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<Value, DesignerError> {
-    match value {
-        Value::Reference(entity) => Ok(Value::Reference(
-            entities
-                .get(entity)
-                .cloned()
-                .unwrap_or_else(|| entity.clone()),
-        )),
-        Value::Formula(expression) => {
-            let mut expression = expression.clone();
-            map_duplicate_expression(&mut expression, entities, fields, schemas)?;
-            Ok(Value::Formula(expression))
-        }
-        Value::Number(number) => Ok(Value::Number(*number)),
-        Value::Text(text) => Ok(Value::Text(text.clone())),
-        Value::Boolean(value) => Ok(Value::Boolean(*value)),
-        Value::Date(value) => Ok(Value::Date(*value)),
-    }
-}
-
-fn map_duplicate_expression(
-    expression: &mut Expression,
-    entities: &BTreeMap<EntityId, EntityId>,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<(), DesignerError> {
-    match expression {
-        Expression::Number(_) => Ok(()),
-        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-            if let Some(entity) = entities.get(&reference.entity) {
-                reference.entity = entity.clone();
-                reference.field = fields.get(&reference.field).cloned().ok_or_else(|| {
-                    table_error(&format!(
-                        "internal formula reference '{}' has no copied field",
-                        reference.field
-                    ))
-                })?;
-            }
-            Ok(())
-        }
-        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-            // The copy has its own field IDs; the reference follows its row.
-            *field = fields.get(field).cloned().ok_or_else(|| {
-                table_error(&format!(
-                    "internal same-row formula field '{field}' has no copied field"
-                ))
-            })?;
-            Ok(())
-        }
-        Expression::ColumnTotal(column) | Expression::ColumnAggregate { column, .. } => {
-            map_duplicate_column(column, fields, schemas)
-        }
-        // Every column of the node follows the copy, and a criterion
-        // expression is remapped like any other formula subtree.
-        Expression::ColumnConditional {
-            aggregate,
-            criteria,
-        } => {
-            if let ConditionalAggregate::Sum(column) | ConditionalAggregate::Average(column) =
-                aggregate.as_mut()
-            {
-                map_duplicate_column(column, fields, schemas)?;
-            }
-            for criterion in criteria {
-                map_duplicate_column(&mut criterion.column, fields, schemas)?;
-                if let Some(expression) = &mut criterion.value {
-                    map_duplicate_expression(expression, entities, fields, schemas)?;
-                }
-            }
-            Ok(())
-        }
-        Expression::Lookup {
-            key,
-            key_column,
-            result_column,
-            if_missing,
-        } => {
-            map_duplicate_column(key_column, fields, schemas)?;
-            map_duplicate_column(result_column, fields, schemas)?;
-            map_duplicate_expression(key, entities, fields, schemas)?;
-            if let Some(fallback) = if_missing {
-                map_duplicate_expression(fallback, entities, fields, schemas)?;
-            }
-            Ok(())
-        }
-        _ => {
-            for child in expression.children_mut() {
-                map_duplicate_expression(child, entities, fields, schemas)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-/// A column of the copied table's own schema follows the copy; any other
-/// table's column keeps pointing at that table.
-fn map_duplicate_column(
-    column: &mut ColumnRef,
-    fields: &BTreeMap<FieldId, FieldId>,
-    schemas: &BTreeMap<SchemaId, SchemaId>,
-) -> Result<(), DesignerError> {
-    if let Some(schema) = schemas.get(&column.schema) {
-        let field = fields.get(&column.field).cloned().ok_or_else(|| {
-            table_error(&format!(
-                "internal column-total field '{}' has no copied field",
-                column.field
-            ))
-        })?;
-        column.schema = schema.clone();
-        column.field = field;
-    }
-    Ok(())
 }
 
 fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
@@ -16358,13 +16128,13 @@ mod tests {
             stored_indices: BTreeMap::new(),
         }
     }
-
     fn total_row(
         id: &str,
         stored: Option<super::StoredValueProjection>,
         calculated: Option<super::CalculationProjection>,
     ) -> super::RowProjection {
         super::RowProjection {
+            hidden: false,
             id: id.to_owned(),
             key: id.to_owned(),
             position: None,
@@ -16386,11 +16156,11 @@ mod tests {
             }],
         }
     }
-
     #[test]
     fn column_totals_skip_blank_cells_and_refuse_a_partial_sum() {
         let spec = total_spec();
         let blank = super::RowProjection {
+            hidden: false,
             id: "blank".to_owned(),
             key: "blank".to_owned(),
             position: None,
@@ -16453,62 +16223,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicated_expressions_remap_column_aggregates() {
-        let mut expression = Expression::ColumnAggregate {
-            function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
-            column: ColumnRef::new("plan", "reserve"),
-        };
-        super::map_duplicate_expression(
-            &mut expression,
-            &BTreeMap::new(),
-            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
-            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
-        )
-        .unwrap();
-        assert_eq!(
-            expression,
-            Expression::ColumnAggregate {
-                function: tachiko_workspace_engine::ColumnAggregateFunction::Average,
-                column: ColumnRef::new("plan_copy_schema", "reserve_copy"),
-            }
-        );
-    }
-
-    #[test]
-    fn duplicated_lookups_move_own_columns_and_keep_foreign_ones() {
-        let lookup = |schema: &str, key: &str, result: &str| Expression::Lookup {
-            key: Box::new(Expression::SameRowReference(FieldId::from("name"))),
-            key_column: ColumnRef::new(schema, key),
-            result_column: ColumnRef::new(schema, result),
-            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
-                "reserve",
-            )))),
-        };
-        let mut own = lookup("plan", "name", "reserve");
-        let mut foreign = lookup("settings", "label", "rate");
-        let fields = BTreeMap::from([
-            (FieldId::from("name"), FieldId::from("name_copy")),
-            (FieldId::from("reserve"), FieldId::from("reserve_copy")),
-        ]);
-        let schemas =
-            BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]);
-        for expression in [&mut own, &mut foreign] {
-            super::map_duplicate_expression(expression, &BTreeMap::new(), &fields, &schemas)
-                .expect("the duplicated lookup maps");
-        }
-        let copied = |schema: &str, key: &str, result: &str| Expression::Lookup {
-            key: Box::new(Expression::SameRowReference(FieldId::from("name_copy"))),
-            key_column: ColumnRef::new(schema, key),
-            result_column: ColumnRef::new(schema, result),
-            if_missing: Some(Box::new(Expression::SameRowReference(FieldId::from(
-                "reserve_copy",
-            )))),
-        };
-        assert_eq!(own, copied("plan_copy_schema", "name_copy", "reserve_copy"));
-        assert_eq!(foreign, copied("settings", "label", "rate"));
-    }
-
-    #[test]
     fn copied_lookups_visit_a_bare_key_as_non_numeric() {
         let mut expression = Expression::Lookup {
             key: Box::new(Expression::Reference(tachiko_semantic_core::FieldRef::new(
@@ -16533,31 +16247,6 @@ mod tests {
         assert_eq!(
             visited,
             [("name".to_owned(), false), ("reserve".to_owned(), true)]
-        );
-    }
-
-    #[test]
-    fn duplicated_expressions_move_own_column_totals_and_keep_foreign_ones() {
-        let mut expression = Expression::Add {
-            left: Box::new(Expression::ColumnTotal(ColumnRef::new("plan", "reserve"))),
-            right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
-        };
-        super::map_duplicate_expression(
-            &mut expression,
-            &BTreeMap::new(),
-            &BTreeMap::from([(FieldId::from("reserve"), FieldId::from("reserve_copy"))]),
-            &BTreeMap::from([(SchemaId::from("plan"), SchemaId::from("plan_copy_schema"))]),
-        )
-        .expect("the duplicated expression maps");
-        assert_eq!(
-            expression,
-            Expression::Add {
-                left: Box::new(Expression::ColumnTotal(ColumnRef::new(
-                    "plan_copy_schema",
-                    "reserve_copy"
-                ))),
-                right: Box::new(Expression::ColumnTotal(ColumnRef::new("settings", "rate"))),
-            }
         );
     }
 }

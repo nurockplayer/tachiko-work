@@ -254,6 +254,10 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened_window", await this.#command({type: "new_table", occurrence_id: freshOccurrenceId(), name, columns, profile: "working_size"}));
   }
 
+  async rangeToTable(expectedRevision: string, range: SelectionStatisticsRange, name: string, hasHeader: boolean): Promise<DuplicateCollectionProjection> {
+    return expectResponse("duplicated", await this.#command({type: "range_to_table", expected_revision: expectedRevision, range, name, has_header: hasHeader}));
+  }
+
   async duplicateCollection(expectedRevision: string, collection: string, name: string, columnNames?: Record<string, string>, toIndex?: number): Promise<DuplicateCollectionProjection> {
     const columns = columnNames === undefined ? {} : {column_names: columnNames};
     const copy = {expected_revision: expectedRevision, collection, name, ...columns};
@@ -325,6 +329,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async setCellStyleRange(expectedRevision: string, collection: string, row: number, rowCount: number, fields: string[], changes: CellStyleChange[]): Promise<PublicationProjection> {
     return this.trackerCommand({type: "set_cell_style_range", expected_revision: expectedRevision, collection, row, row_count: rowCount, fields, changes});
+  }
+
+  async setTableVisibility(expectedRevision: string, collection: string, entities: string[], fields: string[], hidden: boolean): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "set_table_visibility", expected_revision: expectedRevision, collection, entities, fields, hidden});
   }
 
   async setColumnWidth(expectedRevision: string, collection: string, field: string, width: number | null): Promise<PublicationProjection> {
