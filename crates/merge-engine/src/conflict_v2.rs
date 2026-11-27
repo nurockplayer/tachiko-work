@@ -12,6 +12,8 @@ use crate::{
     MergeOutcome, MergeValue, OptionalChoice, choose, choose_optional,
 };
 
+mod collect;
+
 /// The explicitly selected constraint-aware semantic conflict contract.
 pub const SEMANTIC_CONFLICT_V2: &str = "tachiko.semantic-conflict/v2";
 
@@ -337,23 +339,7 @@ pub fn merge_v2(base: &Document, left: &Document, right: &Document) -> MergeOutc
         }
     };
 
-    add_complete_subject_conflicts(base, left, right, &mut conflicts);
-    add_entity_subject_conflicts(base, left, right, &mut conflicts);
-    add_rank_conflicts(base, left, right, &mut conflicts);
-    add_constraint_conflicts(base, left, right, &mut conflicts);
-    add_name_conflicts(base, left, right, &mut conflicts);
-    add_field_order_conflicts(base, left, right, &mut conflicts);
-    conflicts.sort_by(|left, right| {
-        left.target
-            .canonical_cmp(&right.target)
-            .then_with(|| {
-                left.facet
-                    .canonical_rank(&left.target)
-                    .unwrap_or(u8::MAX)
-                    .cmp(&right.facet.canonical_rank(&right.target).unwrap_or(u8::MAX))
-            })
-            .then_with(|| left.kind.canonical_rank().cmp(&right.kind.canonical_rank()))
-    });
+    collect::collect_conflicts(base, left, right, &mut conflicts);
 
     if !conflicts.is_empty() {
         return MergeOutcomeV2::Conflicted(conflicts);

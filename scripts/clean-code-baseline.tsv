@@ -141,7 +141,6 @@ body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
 body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
-body	crates/merge-engine/src/conflict_v2.rs	merge_v2	71
 body	crates/merge-engine/src/lib.rs	merge_supported	90
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
@@ -658,7 +657,7 @@ file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1331
 file	crates/formula-engine/src/lib.rs		3298
 file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		982
+file	crates/merge-engine/src/conflict_v2.rs		968
 file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1925
@@ -687,7 +686,6 @@ inline-test	crates/semantic-core/src/criterion.rs	tests[cfg(test)]	250
 inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
 inline-test	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::tests[cfg(test)]	204
 inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
-inline-test	crates/storage/src/roproj/v1.rs	tests[cfg(test)]	10
 inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
 inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
