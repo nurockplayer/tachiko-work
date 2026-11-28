@@ -669,7 +669,6 @@ inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
 inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
 inline-test	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::tests[cfg(test)]	204
-inline-test	crates/storage/src/portable_package/v1.rs	tests[cfg(test)]	212
 inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
 inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
