@@ -154,7 +154,6 @@ body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	87
 body	crates/storage/src/direct_ro/v2.rs	write_expression	140
 body	crates/storage/src/portable_package/v1.rs	parse_container_at_end	83
 body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
-body	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	67
 body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
 body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
@@ -168,7 +167,6 @@ body	crates/storage/src/roproj/v3.rs	write_definition	65
 body	crates/storage/src/roproj/v3.rs	write_expression	249
 body	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	76
 body	crates/workspace-engine/src/analysis_operations.rs	resolve_candidate_domain	72
-body	crates/workspace-engine/src/capability_discovery.rs	<PatchLifecycle>::query_field_capabilities	67
 body	crates/workspace-engine/src/capability_discovery.rs	describe_field_capabilities	82
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	71
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_formula_reasoning	91
@@ -368,7 +366,7 @@ branches	crates/storage/src/lib.rs	normalize_v2_number_tokens	16
 branches	crates/storage/src/portable_package/v1.rs	parse_container_at_end	17
 branches	crates/storage/src/portable_package/v1.rs	parse_manifest	15
 branches	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	13
-branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	33
+branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	26
 branches	crates/storage/src/presentation.rs	parse_presentation	16
 branches	crates/storage/src/presentation.rs	write_style_object	22
 branches	crates/storage/src/presentation.rs	write_table_record	14
@@ -649,7 +647,7 @@ file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872
 file	crates/storage/src/direct_ro/v2.rs		1457
-file	crates/storage/src/portable_package/v1.rs		1184
+file	crates/storage/src/portable_package/v1.rs		1175
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1692
 file	crates/storage/src/roproj/v3.rs		2914
@@ -668,7 +666,6 @@ inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]
 inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
 inline-test	crates/semantic-core/src/model.rs	tests[cfg(test)]	62
-inline-test	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	tests[cfg(test)]	450
 inline-test	crates/workspace-engine/src/lib.rs	evaluation_counters[cfg(test)]	91
 inline-test	crates/workspace-engine/src/lib.rs	planning_counters[cfg(test)]	52
 inline-test	crates/workspace-engine/src/patch_lifecycle.rs	calculated_date_formula_impacts_reach_patch_evidence	21
