@@ -11,6 +11,7 @@ import type {
   TrackerCommand,
   ScalarEditInput,
   PasteCellInput,
+  PositionalCellMove,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -257,6 +258,10 @@ export class WorkerDesignerClient implements DesignerClient {
 
   async pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection> {
     return this.trackerCommand({type: "paste_cells_at", expected_revision: expectedRevision, collection, row, column, rows});
+  }
+
+  async moveCellsAt(expectedRevision: string, collection: string, moves: PositionalCellMove[]): Promise<PublicationProjection> {
+    return this.trackerCommand({type: "move_cells_at", expected_revision: expectedRevision, collection, moves});
   }
 
   async newTable(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection> {

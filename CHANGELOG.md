@@ -4,6 +4,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Cut and paste into unallocated worksheet space with `moveCellsAt`. Work
+  allocates the destination and moves the cells in one Undo step (#1013).
+
 - Reopen a live XLSX import at working size before editing while keeping its
   formatting and overwrite proof (#1012).
 

@@ -5,6 +5,7 @@
 
 mod insert_rows;
 mod move_cells;
+pub use move_cells::{CellMove, PositionalCellMove};
 #[cfg(test)]
 mod positional_insert_tests;
 mod translate_a1;
@@ -487,6 +488,11 @@ pub enum DesignerRequest {
     MoveCells {
         expected_revision: String,
         moves: Vec<CellMove>,
+    },
+    MoveCellsAt {
+        expected_revision: String,
+        collection: String,
+        moves: Vec<PositionalCellMove>,
     },
     PasteCells {
         expected_revision: String,
@@ -1051,12 +1057,6 @@ fn wire_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64,
 pub struct CellEdit {
     pub target: FieldTarget,
     pub input: ScalarEditInput,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CellMove {
-    pub from: FieldTarget,
-    pub to: FieldTarget,
 }
 
 /// Private authoring input for the bounded native table creation path.
@@ -4223,12 +4223,9 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Published(
                 self.edit_cells(&expected_revision, &edits)?,
             )),
-            DesignerRequest::MoveCells {
-                expected_revision,
-                moves,
-            } => Ok(DesignerResponse::Published(
-                self.move_cells(&expected_revision, &moves)?,
-            )),
+            DesignerRequest::MoveCells { .. } | DesignerRequest::MoveCellsAt { .. } => {
+                move_cells::dispatch(self, request)
+            }
             DesignerRequest::PasteCells {
                 expected_revision,
                 collection,
@@ -8597,16 +8594,6 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
-    fn move_cells(
-        &mut self,
-        expected: &str,
-        moves: &[CellMove],
-    ) -> Result<PublicationProjection, DesignerError> {
-        self.check_revision(expected)?;
-        let movement = move_cells::plan(self, moves)?;
-        movement.publish(self, expected)
-    }
-
     fn edit_cells(
         &mut self,
         expected: &str,
@@ -11469,17 +11456,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         }
                         fields.into_iter()
                     }
-                    .map(|field| ColumnSpec {
-                        id: field.id.clone(),
-                        key: field.key.to_string(),
-                        display_name: field.effective_name().to_owned(),
-                        display_name_explicit: explicit_column_display_name(field).is_some(),
-                        field_type: field.field_type.clone(),
-                        required: field.required,
-                        constraint: field.constraint.clone(),
-                        number_format: field.number_format.clone(),
-                        date_format: field.date_format,
-                    })
+                    .map(ColumnSpec::from)
                     .collect(),
                     canonical_entities,
                     entities,

@@ -63,6 +63,22 @@ fn positional_block_paste_uses_the_same_wasm_and_native_host_boundary() {
         table["response"]["payload"]["rows"][0]["fields"][0]["stored"]["value"],
         "00123"
     );
+    let row = &table["response"]["payload"]["rows"][0];
+    let field = &table["response"]["payload"]["columns"][0]["id"];
+    let moved = exchange(
+        &mut host,
+        &json!({
+            "type": "move_cells_at",
+            "expected_revision": "resident/2",
+            "collection": collection,
+            "moves": [{"from": {"entity": row["id"], "field": field}, "row": 42, "column": 5}],
+        }),
+    );
+    assert_eq!(moved["status"], "ok", "{moved}");
+    assert_eq!(
+        moved["response"]["payload"]["resulting_revision"],
+        "resident/3"
+    );
     tachiko_designer_project_close();
 }
 
