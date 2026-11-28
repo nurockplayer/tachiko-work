@@ -165,7 +165,6 @@ body	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	144
 body	crates/storage/src/roproj/v3.rs	write_definition	65
 body	crates/storage/src/roproj/v3.rs	write_expression	249
 body	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	76
-body	crates/workspace-engine/src/analysis_operations.rs	resolve_candidate_domain	72
 body	crates/workspace-engine/src/capability_discovery.rs	describe_field_capabilities	82
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	71
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_formula_reasoning	91
@@ -392,7 +391,6 @@ branches	crates/storage/src/strict_json.rs	inspect_object	17
 branches	crates/storage/src/strict_json.rs	json_nesting_depth	20
 branches	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	15
 branches	crates/workspace-engine/src/analysis_operations.rs	group_entities	13
-branches	crates/workspace-engine/src/analysis_operations.rs	resolve_candidate_domain	17
 branches	crates/workspace-engine/src/analysis_operations.rs	select_entities	21
 branches	crates/workspace-engine/src/analysis_operations.rs	validate_targets	16
 branches	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum	44
@@ -650,7 +648,7 @@ file	crates/storage/src/portable_package/v1.rs		1175
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1692
 file	crates/storage/src/roproj/v3.rs		2914
-file	crates/workspace-engine/src/analysis_operations.rs		1426
+file	crates/workspace-engine/src/analysis_operations.rs		1415
 file	crates/workspace-engine/src/formula_operations.rs		1225
 file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6778
@@ -716,13 +714,10 @@ reason	crates/formula-engine/src/lib.rs	bind_node allow(clippy::too_many_lines)	
 reason	crates/formula-engine/src/lib.rs	bind_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
 reason	crates/formula-engine/src/lib.rs	pregraph_failures allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/lib.rs	render_bound allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/src/parser.rs	format_unbound_expression allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	a_criterion_can_read_another_cell allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/tests/conditional_aggregate.rs	update allow(clippy::needless_pass_by_value)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
-reason	crates/semantic-core/src/criterion.rs	<CriterionTest>::matches_equal allow(clippy::float_cmp)	1
 reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
 reason	crates/semantic-core/src/presentation.rs	validate_presentation allow(clippy::too_many_lines)	1
 reason	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value allow(clippy::too_many_arguments)	1
@@ -756,7 +751,6 @@ reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::i
 reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::insert_command_disclosures allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/formula_operations.rs	FormulaReasoningOutcome allow(clippy::large_enum_variant)	1
 reason	crates/workspace-engine/src/incremental_preparation_tests.rs	prepared_evaluation_matches_full_validation_for_every_candidate_kind allow(clippy::too_many_lines)	1
-reason	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	formula_diagnostics allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	serialize_optional_calculated_value allow(clippy::ref_option)	1
 reason	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures allow(clippy::too_many_lines)	1
