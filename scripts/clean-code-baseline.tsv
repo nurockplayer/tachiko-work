@@ -145,7 +145,6 @@ body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issu
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	72
 body	crates/semantic-core/src/validation.rs	validate_column_conditional	80
-body	crates/semantic-core/src/validation.rs	validate_formula_reference	71
 body	crates/semantic-core/src/validation.rs	validate_schemas	89
 body	crates/semantic-core/src/validation.rs	validate_value	66
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	97
@@ -649,7 +648,7 @@ file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		943
 file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
-file	crates/semantic-core/src/validation.rs		1881
+file	crates/semantic-core/src/validation.rs		1872
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1184
 file	crates/storage/src/roproj/v1.rs		1484
