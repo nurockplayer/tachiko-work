@@ -21,6 +21,9 @@ use tachiko_workspace_engine::{
 };
 use zip::ZipArchive;
 
+#[path = "native_tables_export/working_xlsx.rs"]
+mod working_xlsx;
+
 const OCCURRENCE: &str = "00000000-0000-4000-8000-000000000545";
 const NEXT: &str = "00000000-0000-4000-8000-000000000546";
 

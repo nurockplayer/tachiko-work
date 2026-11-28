@@ -3040,10 +3040,8 @@ fn a_large_paste_reaches_working_size_through_the_wire() {
         let Some(StoredValueProjection::Number { value }) = &projected(first, field).stored else {
             panic!("the first pasted row has no {field} value");
         };
-        assert_eq!(
-            value.to_bits(),
-            (1_000_000.0 + f64::from(u32::try_from(column).expect("bounded columns"))).to_bits()
-        );
+        let expected = 1_000_000.0 + f64::from(u32::try_from(column).expect("bounded columns"));
+        assert_eq!(value.to_bits(), expected.to_bits());
     }
     assert!(
         window
