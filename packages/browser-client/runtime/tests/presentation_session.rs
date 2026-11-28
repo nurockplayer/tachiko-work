@@ -5,9 +5,12 @@
 
 use std::collections::BTreeMap;
 
+use tachiko_designer_runtime::interop_adapter::{ImportOptions, import_csv};
 use tachiko_designer_runtime::{
-    DesignerRequest, DesignerResponse, DesignerRuntime, OpenedProjection, close_project,
-    inspect_project, open_portable_ro, open_project, verify_portable_ro,
+    CellBorderTarget, CellStyleChange, DesignerError, DesignerRequest, DesignerResponse,
+    DesignerRuntime, ImportFieldType, ImportSelection, OpenedProjection, ProjectExport,
+    close_project, import_workbook, inspect_project, open_imported_project, open_portable_ro,
+    open_project, verify_portable_ro,
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, ROPROJ_V3_PRESENTATION_PATH, decode_portable_package_v1,
@@ -258,6 +261,70 @@ fn open(bytes: &[u8], occurrence_id: &str) -> (Option<DesignerRuntime>, OpenedPr
     let mut slot = None;
     let opened = open_project(&mut slot, bytes, occurrence_id).unwrap();
     (slot, opened)
+}
+
+fn assert_imported_open_styles(
+    export: impl FnOnce(&DesignerRuntime, &str) -> Result<ProjectExport, DesignerError>,
+) {
+    let source = import_csv(b"Name\r\nFirst\r\n", &ImportOptions::default()).unwrap();
+    let selection = ImportSelection {
+        column_types: vec![vec![ImportFieldType::Text]],
+        extra_columns: vec![vec![]],
+    };
+    let (mut runtime, imported) = import_workbook(&source, &selection, RESIDENT).unwrap();
+    let sheet = &imported.metadata.sheets[0];
+    let revision = published(
+        runtime
+            .handle(DesignerRequest::SetCellStyle {
+                expected_revision: runtime.observe_occurrence().revision,
+                collection: sheet.schema_id.clone(),
+                entities: vec![sheet.rows[0].entity_id.clone()],
+                fields: vec![sheet.columns[0].field_id.clone()],
+                changes: vec![
+                    CellStyleChange::Fill {
+                        color: Some("#FFEE00".into()),
+                    },
+                    CellStyleChange::Border {
+                        target: CellBorderTarget::Top,
+                        value: true,
+                    },
+                ],
+            })
+            .unwrap(),
+    );
+    let saved = export(&runtime, &revision).unwrap();
+    let mut resident = None;
+    let opened = open_imported_project(
+        &mut resident,
+        &saved.bytes,
+        saved.import_metadata.as_ref().unwrap(),
+        SECOND,
+    )
+    .unwrap();
+    let DesignerResponse::Table(queried) = resident
+        .as_mut()
+        .unwrap()
+        .handle(DesignerRequest::QueryTable {
+            collection: sheet.schema_id.clone(),
+        })
+        .unwrap()
+    else {
+        panic!("expected the reopened table");
+    };
+    let style = &queried.rows[0].styles[0];
+    assert_eq!(style.fill.as_deref(), Some("FFEE00"));
+    assert!(style.border);
+    assert_eq!(opened.table, queried);
+}
+
+#[test]
+fn portable_imported_project_opens_with_saved_cell_styles() {
+    assert_imported_open_styles(DesignerRuntime::export_portable_ro);
+}
+
+#[test]
+fn private_imported_project_opens_with_saved_cell_styles() {
+    assert_imported_open_styles(DesignerRuntime::export_project_v3);
 }
 
 #[test]
