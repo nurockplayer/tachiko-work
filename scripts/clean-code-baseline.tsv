@@ -153,7 +153,6 @@ body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
 body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
 body	crates/storage/src/roproj/v2.rs	<ExpressionV2>::from_semantic	61
-body	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	118
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	89
 body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	107
@@ -370,7 +369,6 @@ branches	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_
 branches	crates/storage/src/roproj/v2.rs	<UnorderedRoProjectV2>::prove_scoped_uniqueness	15
 branches	crates/storage/src/roproj/v2.rs	canonicalize_unordered	21
 branches	crates/storage/src/roproj/v2.rs	decode_entities	14
-branches	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	24
 branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	30
 branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	29
 branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	35
@@ -565,7 +563,6 @@ depth	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	6
 depth	crates/storage/src/roproj/host.rs	resolve_component_path	4
 depth	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	4
 depth	crates/storage/src/roproj/v2.rs	canonicalize_unordered	4
-depth	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	4
 depth	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	5
 depth	crates/storage/src/roproj/v3.rs	write_constraint	4
 depth	crates/storage/src/strict_json.rs	inspect_object	4
@@ -638,7 +635,7 @@ file	crates/semantic-core/src/validation.rs		1872
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1153
 file	crates/storage/src/roproj/v1.rs		1484
-file	crates/storage/src/roproj/v2.rs		1692
+file	crates/storage/src/roproj/v2.rs		1642
 file	crates/storage/src/roproj/v3.rs		2903
 file	crates/workspace-engine/src/analysis_operations.rs		1415
 file	crates/workspace-engine/src/formula_operations.rs		1219
