@@ -601,8 +601,8 @@ fn assert_working_success(source: &[u8], format: &str) {
                     assert_eq!(value.as_str().unwrap(), (start + 1).to_string());
                 } else {
                     assert_eq!(
-                        value.as_f64().unwrap(),
-                        f64::from(u32::try_from(start + 1).unwrap())
+                        value.as_f64().unwrap().to_bits(),
+                        f64::from(u32::try_from(start + 1).unwrap()).to_bits()
                     );
                     assert_eq!(row["fields"][3]["calculated"]["value"], 6.0);
                 }
@@ -1592,7 +1592,11 @@ fn assert_imported_column_total(
         } else {
             &field["stored"]["value"]
         };
-        assert_eq!(value.as_f64().unwrap(), expected, "{field}");
+        assert_eq!(
+            value.as_f64().unwrap().to_bits(),
+            expected.to_bits(),
+            "{field}"
+        );
     }
     payload.clone()
 }
