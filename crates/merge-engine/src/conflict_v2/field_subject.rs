@@ -7,6 +7,7 @@ use super::{
     subject_presence_conflicts,
 };
 
+#[derive(Clone, Copy)]
 pub(super) struct SchemaVersions<'a> {
     pub(super) base: &'a Schema,
     pub(super) left: &'a Schema,
