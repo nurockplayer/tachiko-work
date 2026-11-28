@@ -555,9 +555,7 @@ fn merge_supported(base: &Document, ours: &Document, theirs: &Document) -> Merge
             ConflictTarget::Document(base.id.clone()),
             ConflictFacet::Title,
         ),
-        &base.title,
-        &ours.title,
-        &theirs.title,
+        ThreeWay::new(&base.title, &ours.title, &theirs.title),
         |title| MergeValue::DocumentTitle(title.clone()),
         &mut conflicts,
     );
@@ -652,9 +650,7 @@ fn merge_schemas(
                     ConflictTarget::Schema(schema_id.clone()),
                     ConflictFacet::Subject,
                 ),
-                base,
-                ours,
-                theirs,
+                ThreeWay::new(base, ours, theirs),
                 |schema| MergeValue::SchemaSubject(SchemaSubject::from(schema)),
                 conflicts,
             ) {
@@ -692,9 +688,7 @@ fn merge_schema(
             ConflictTarget::Schema(schema_id.clone()),
             ConflictFacet::Key,
         ),
-        &base.key,
-        &ours.key,
-        &theirs.key,
+        ThreeWay::new(&base.key, &ours.key, &theirs.key),
         |key| MergeValue::SchemaKey(key.clone()),
         conflicts,
     );
@@ -750,9 +744,7 @@ fn merge_schema_fields(
                     },
                     ConflictFacet::Subject,
                 ),
-                base,
-                ours,
-                theirs,
+                ThreeWay::new(base, ours, theirs),
                 |field| MergeValue::SchemaFieldSubject(SchemaFieldSubject::from(field)),
                 conflicts,
             ) {
@@ -783,25 +775,19 @@ fn merge_field_definition(
     };
     let key = merge_scalar(
         ConflictCoordinate::new(document, target(), ConflictFacet::Key),
-        &base.key,
-        &ours.key,
-        &theirs.key,
+        ThreeWay::new(&base.key, &ours.key, &theirs.key),
         |key| MergeValue::FieldKey(key.clone()),
         conflicts,
     );
     let field_type = merge_scalar(
         ConflictCoordinate::new(document, target(), ConflictFacet::FieldType),
-        &base.field_type,
-        &ours.field_type,
-        &theirs.field_type,
+        ThreeWay::new(&base.field_type, &ours.field_type, &theirs.field_type),
         |field_type| MergeValue::FieldType(field_type.clone()),
         conflicts,
     );
     let required = merge_scalar(
         ConflictCoordinate::new(document, target(), ConflictFacet::Requiredness),
-        &base.required,
-        &ours.required,
-        &theirs.required,
+        ThreeWay::new(&base.required, &ours.required, &theirs.required),
         |required| MergeValue::Required(*required),
         conflicts,
     );
@@ -862,9 +848,7 @@ fn merge_entities(
                     ConflictTarget::Entity(entity_id.clone()),
                     ConflictFacet::Subject,
                 ),
-                base,
-                ours,
-                theirs,
+                ThreeWay::new(base, ours, theirs),
                 |entity| MergeValue::EntitySubject(EntitySubject::from(entity)),
                 conflicts,
             ) {
@@ -895,9 +879,7 @@ fn merge_entity(
             ConflictTarget::Entity(entity_id.clone()),
             ConflictFacet::Schema,
         ),
-        &base.schema,
-        &ours.schema,
-        &theirs.schema,
+        ThreeWay::new(&base.schema, &ours.schema, &theirs.schema),
         |schema| MergeValue::SchemaId(schema.clone()),
         conflicts,
     );
@@ -907,9 +889,7 @@ fn merge_entity(
             ConflictTarget::Entity(entity_id.clone()),
             ConflictFacet::Key,
         ),
-        &base.key,
-        &ours.key,
-        &theirs.key,
+        ThreeWay::new(&base.key, &ours.key, &theirs.key),
         |key| MergeValue::EntityKey(key.clone()),
         conflicts,
     );
@@ -980,9 +960,7 @@ fn merge_entity_fields(
                 },
                 ConflictFacet::StoredValue,
             ),
-            qualified_field(base, &schema_id, &field_id),
-            qualified_field(ours, &schema_id, &field_id),
-            qualified_field(theirs, &schema_id, &field_id),
+            qualified_fields(ThreeWay::new(base, ours, theirs), &schema_id, &field_id),
             |field| MergeValue::FieldValue(field.clone()),
             evidence.conflicts,
         ) {
@@ -1011,14 +989,21 @@ fn merge_entity_fields(
     complete.then_some(fields)
 }
 
-fn qualified_field<'entity>(
-    entity: &'entity Entity,
+fn qualified_fields<'entity>(
+    entities: ThreeWay<&'entity Entity>,
     schema: &SchemaId,
     field: &FieldId,
-) -> Option<&'entity Value> {
-    (entity.schema == *schema)
-        .then(|| entity.fields.get(field))
-        .flatten()
+) -> ThreeWay<Option<&'entity Value>> {
+    let lookup = |entity: &'entity Entity| {
+        (entity.schema == *schema)
+            .then(|| entity.fields.get(field))
+            .flatten()
+    };
+    ThreeWay {
+        base: lookup(entities.base),
+        ours: lookup(entities.ours),
+        theirs: lookup(entities.theirs),
+    }
 }
 
 struct ConflictCoordinate<'document> {
@@ -1037,14 +1022,26 @@ impl<'document> ConflictCoordinate<'document> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ThreeWay<T> {
+    base: T,
+    ours: T,
+    theirs: T,
+}
+
+impl<T> ThreeWay<T> {
+    fn new(base: T, ours: T, theirs: T) -> Self {
+        Self { base, ours, theirs }
+    }
+}
+
 fn merge_scalar<T: Clone + PartialEq>(
     coordinate: ConflictCoordinate<'_>,
-    base: &T,
-    ours: &T,
-    theirs: &T,
+    inputs: ThreeWay<&T>,
     value: impl Fn(&T) -> MergeValue,
     conflicts: &mut Vec<MergeConflict>,
 ) -> Option<T> {
+    let ThreeWay { base, ours, theirs } = inputs;
     let selected = choose(base, ours, theirs);
     if selected.is_none() {
         conflicts.push(MergeConflict::new(
@@ -1059,12 +1056,11 @@ fn merge_scalar<T: Clone + PartialEq>(
 
 fn merge_optional<T: Clone + PartialEq>(
     coordinate: ConflictCoordinate<'_>,
-    base: Option<&T>,
-    ours: Option<&T>,
-    theirs: Option<&T>,
+    inputs: ThreeWay<Option<&T>>,
     value: impl Fn(&T) -> MergeValue,
     conflicts: &mut Vec<MergeConflict>,
 ) -> OptionalChoice<T> {
+    let ThreeWay { base, ours, theirs } = inputs;
     let selected = choose_optional(base, ours, theirs);
     if matches!(selected, OptionalChoice::Conflict) {
         conflicts.push(MergeConflict::new(
