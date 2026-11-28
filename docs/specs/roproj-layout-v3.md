@@ -33,8 +33,12 @@ optional member is omitted, and unknown members fail admission.
 
 - **`style` members,** all optional, in this order: `bold`, `italic`, `fill`, `text_color`,
   `alignment`, `wrap`, `borders`, `number_format`, `date_format`. Booleans may be `true`
-  or `false`, because a cell can turn off what its column turned on. `fill` and
-  `text_color` are `#` and six uppercase hexadecimal digits. `alignment` is `left`,
+  or `false`, because a cell can turn off what its column turned on. Solid `fill`
+  and `text_color` are `#` and six uppercase hexadecimal digits. In that same
+  member position, canonical `"fill":false` clears the static fill after imported
+  source and column styles have been applied. The palette style must have a
+  cell binding and cannot be used by a column or rule. Omitted `fill` inherits.
+  `true` and `null` fail admission. `alignment` is `left`,
   `center` or `right`. `borders` is a subset of `top`, `right`, `bottom`, `left`, in that
   order, and `[]` means none. `number_format` is the R3 object. `date_format` is the
   ADR-0049 value in the v3 DTO spec.

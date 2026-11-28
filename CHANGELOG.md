@@ -4,8 +4,15 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Cut and paste into unallocated worksheet space with `moveCellsAt`. Work
+  allocates the destination and moves the cells in one Undo step (#1013).
+
 - Reopen a live XLSX import at working size before editing while keeping its
   formatting and overwrite proof (#1012).
+
+- Deleting a row referenced by an Auto formula keeps the formula and shows
+  `#REF!`. Save and XLSX export preserve the error, and one Undo restores
+  the row and the original formula (#979).
 
 - Publish exact lookup misses as `#N/A` in Auto cells. Native XLSX export
   keeps worksheet formulas with their typed cached errors (#979).
@@ -296,6 +303,8 @@ All notable changes to Tachiko Work are documented in this file.
   refuse formatted documents rather than dropping display metadata.
 
 ### Fixed
+
+- Clearing a fill inherited from an imported spreadsheet stays cleared after save and reopen and in XLSX exports (#1041).
 
 - Natural view sort ties now defer to later sort keys before original text bytes (#699).
 

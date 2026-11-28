@@ -74,6 +74,9 @@ pub(super) fn lookup_key_matches(
     key: &Expression,
     column: &ColumnRef,
 ) -> bool {
+    if matches!(key, Expression::DeletedReference {}) {
+        return true;
+    }
     let column_type = column_type(document, column);
     let key_type = lookup_key_type(document, owner, key);
     key_type == column_type

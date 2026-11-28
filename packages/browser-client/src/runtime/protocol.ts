@@ -620,12 +620,15 @@ export type CellStyleChange =
   | { kind: "number_format"; format: NumberFormat }
   | { kind: "border"; target: "top" | "right" | "bottom" | "left" | "outline" | "all"; value: boolean };
 
+export type PositionalCellMove = { from: FieldTarget; row: number; column: number };
+
 export type TrackerCommand =
   | { type: "promote_first_row_to_headers"; expected_revision: string; collection: string }
   | { type: "write_cell_at"; expected_revision: string; collection: string; row: number; column: number; input: ScalarEditInput }
   | { type: "paste_cells_at"; expected_revision: string; collection: string; row: number; column: number; rows: PasteCellInput[][] }
   | { type: "edit_cells"; expected_revision: string; edits: Array<{ target: FieldTarget; input: ScalarEditInput }> }
   | { type: "move_cells"; expected_revision: string; moves: Array<{ from: FieldTarget; to: FieldTarget }> }
+  | { type: "move_cells_at"; expected_revision: string; collection: string; moves: PositionalCellMove[] }
   | { type: "paste_cells"; expected_revision: string; collection: string; start_entity: string | null; start_field: string; rows: PasteCellInput[][] }
   | { type: "append_row"; expected_revision: string; collection: string }
   | { type: "remove_rows"; expected_revision: string; entities: string[] }

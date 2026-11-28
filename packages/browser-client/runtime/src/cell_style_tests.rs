@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 use tachiko_workspace_engine::{
-    CellStyle, Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldId,
-    FieldKey, FieldType, Number, Schema, SchemaId, SchemaKey, TablePresentation, Value,
+    CellFill, CellStyle, Document, Entity, EntityId, EntityKey, FieldConstraint, FieldDefinition,
+    FieldId, FieldKey, FieldType, Number, Schema, SchemaId, SchemaKey, TablePresentation, Value,
 };
 
 use crate::{
@@ -605,7 +605,7 @@ fn fill_follows_identity_through_sort_and_portable_save_reopen() {
 
 fn column_fill(runtime: &mut DesignerRuntime) {
     let style = CellStyle {
-        fill: Some("#123ABC".into()),
+        fill: Some(CellFill::Solid("#123ABC".into())),
         bold: Some(true),
         ..CellStyle::default()
     };
@@ -639,6 +639,115 @@ fn clearing_inherited_fill_preserves_neighbours_and_undo_restores_column_style()
             if row.id == "r2" { None } else { Some("123ABC") }
         );
         assert!(row.styles[1].bold);
+    }
+    history(&mut runtime, false);
+    assert_eq!(runtime.presentation, original);
+}
+
+#[test]
+fn clearing_inherited_fill_preserves_fill_for_inserted_rows() {
+    let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    column_fill(&mut runtime);
+    edit(
+        &mut runtime,
+        &["r2"],
+        &["b"],
+        &json!([{"kind": "fill", "color": null}]),
+    )
+    .unwrap();
+
+    insert_unstyled_row(&mut runtime);
+    assert_cleared_and_inserted_row_fills(&mut runtime);
+}
+
+fn insert_unstyled_row(runtime: &mut DesignerRuntime) {
+    runtime
+        .handle(DesignerRequest::InsertRow {
+            count: None,
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "rows".into(),
+            position: None,
+            initializers: vec![crate::RowInitializer {
+                field: "a".into(),
+                input: crate::ScalarEditInput::Number { input: "4".into() },
+            }],
+        })
+        .unwrap();
+}
+
+fn assert_cleared_and_inserted_row_fills(runtime: &mut DesignerRuntime) {
+    let shown = window(runtime, &TableView::default());
+    let cleared = shown.rows.iter().find(|row| row.id == "r2").unwrap();
+    assert_eq!(cleared.styles[1].fill, None);
+    let inserted = shown
+        .rows
+        .iter()
+        .find(|row| !matches!(row.id.as_str(), "r1" | "r2" | "r3"))
+        .unwrap();
+    assert_eq!(inserted.styles[1].fill.as_deref(), Some("123ABC"));
+}
+
+#[test]
+fn cleared_column_fill_survives_saved_projects_and_xlsx_export() {
+    use crate::interop_adapter::{CellStyle as SourceStyle, SourceValue, export_xlsx, import_xlsx};
+
+    let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    column_fill(&mut runtime);
+    let original = runtime.presentation.clone();
+    edit(
+        &mut runtime,
+        &["r2"],
+        &["b"],
+        &json!([{"kind": "fill", "color": null}]),
+    )
+    .unwrap();
+    assert_eq!(runtime.presentation.tables, original.tables);
+    assert_eq!(
+        runtime
+            .presentation
+            .cells
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [(EntityId::from("r2"), FieldId::from("b"))]
+    );
+    let resolved = crate::interop_date_format::cell_style(
+        &runtime.presentation,
+        &SchemaId::from("rows"),
+        &runtime.session.document().schemas["rows"].fields["b"],
+        &EntityId::from("r2"),
+        &SourceValue::Empty,
+        SourceStyle {
+            fill: Some("FFAA00CC".into()),
+            ..SourceStyle::default()
+        },
+    );
+    assert_eq!(resolved.fill, None);
+
+    let revision = runtime.current_revision();
+    let v3 = runtime.export_project_v3(revision).unwrap();
+    let package = runtime.export_portable_ro(revision).unwrap();
+    let mut v3_reopened = None;
+    crate::open_project(&mut v3_reopened, &v3.bytes, OCCURRENCE).unwrap();
+    let (portable_reopened, _) = admit_portable_ro(&package.bytes, OCCURRENCE).unwrap();
+    for mut reopened in [v3_reopened.unwrap(), portable_reopened] {
+        assert_eq!(reopened.presentation, runtime.presentation);
+        insert_unstyled_row(&mut reopened);
+        assert_cleared_and_inserted_row_fills(&mut reopened);
+
+        let workbook = reopened
+            .export_native_tables_workbook(reopened.current_revision(), "rows")
+            .unwrap();
+        let xlsx = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+        let rows = &xlsx.sheets[0].rows;
+        assert_eq!(rows.len(), 4);
+        for row in rows {
+            if row[0].value == (SourceValue::Number { value: 1.0 }) {
+                assert_eq!(row[1].style.fill, None);
+            } else {
+                assert!(row[1].style.fill.as_deref().unwrap().ends_with("123ABC"));
+            }
+        }
     }
     history(&mut runtime, false);
     assert_eq!(runtime.presentation, original);
@@ -855,6 +964,67 @@ fn imported_styles_and_native_styles_use_the_same_projection() {
 }
 
 #[test]
+fn cleared_imported_source_fill_survives_save_reopen_and_xlsx_export() {
+    use crate::interop_adapter::{export_xlsx, import_xlsx};
+
+    let (runtime, _) = imported_styling_fixture();
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    // Model a saved import whose fill is still in the source sidecar.
+    let mut metadata = saved.import_metadata.unwrap();
+    metadata.sheets[0].rows[0].styles[0].fill = Some("FFFF00".into());
+    let (mut runtime, _) =
+        crate::admit_imported_project(&saved.bytes, OCCURRENCE, &metadata).unwrap();
+    assert!(runtime.presentation.tables.is_empty());
+    let sheet = &metadata.sheets[0];
+    let original = runtime
+        .export_workbook(runtime.current_revision(), &metadata)
+        .unwrap();
+    assert_eq!(
+        original.sheets[0].rows[0][0].style.fill.as_deref(),
+        Some("FFFF00")
+    );
+    let set_fill = |runtime: &mut DesignerRuntime, color: Option<&str>| {
+        let request = serde_json::from_value(json!({
+            "type": "set_cell_style", "expected_revision": runtime.current_revision(),
+            "collection": sheet.schema_id, "entities": [sheet.rows[0].entity_id],
+            "fields": [sheet.columns[0].field_id], "changes": [
+                {"kind": "fill", "color": color},
+            ],
+        }))
+        .unwrap();
+        runtime.handle(request).unwrap();
+    };
+    set_fill(&mut runtime, Some("#123ABC"));
+    let before_clear = runtime.presentation.clone();
+    set_fill(&mut runtime, None);
+    let table = runtime.query_table(&sheet.schema_id).unwrap();
+    assert!(
+        table.rows[0]
+            .styles
+            .iter()
+            .all(|style| style.fill.is_none())
+    );
+
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let metadata = saved.import_metadata.as_ref().unwrap();
+    let (reopened, opened) =
+        crate::admit_imported_project(&saved.bytes, OCCURRENCE, metadata).unwrap();
+    assert_eq!(opened.table.rows[0].styles, table.rows[0].styles);
+    let workbook = reopened
+        .export_workbook(reopened.current_revision(), metadata)
+        .unwrap();
+    let xlsx = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    assert_eq!(xlsx.sheets[0].rows[0][0].style.fill, None);
+    assert_eq!(reopened.presentation, runtime.presentation);
+    history(&mut runtime, false);
+    assert_eq!(runtime.presentation, before_clear);
+}
+
+#[test]
 fn cell_style_fill_requires_explicit_color() {
     let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
     edit(
@@ -885,6 +1055,7 @@ fn cell_style_fill_requires_explicit_color() {
         &json!([{"kind":"fill","color":null}]),
     )
     .unwrap();
+    assert!(runtime.presentation.is_empty());
 }
 
 #[test]

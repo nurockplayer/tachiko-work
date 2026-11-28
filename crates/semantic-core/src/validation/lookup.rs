@@ -33,6 +33,7 @@ pub(super) fn validate_lookup(
     }
     let column_type = column_type(document, key_column);
     let key_type = match key {
+        Expression::DeletedReference {} => None,
         Expression::Reference(reference) | Expression::AnchoredReference(reference) => document
             .entities
             .get(&reference.entity)
@@ -55,7 +56,11 @@ pub(super) fn validate_lookup(
             key_type,
             Some(FieldType::Number | FieldType::Text | FieldType::Date | FieldType::Boolean)
         );
-    if key_column.schema != result_column.schema || (key_type != column_type && !dynamic_key) {
+    if key_column.schema != result_column.schema
+        || (key_type != column_type
+            && !dynamic_key
+            && !matches!(key, Expression::DeletedReference {}))
+    {
         diagnostics.push(core_diagnostic(
             path,
             DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,

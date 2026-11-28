@@ -45,8 +45,8 @@ use tachiko_semantic_core::{
     validate_formula_value_constraint, validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
-    StyleId, TablePresentation,
+    BorderSide, CellAlignment, CellFill, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
+    RuleId, StyleId, TablePresentation,
 };
 pub use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,
@@ -3121,30 +3121,7 @@ fn formula_diagnostics(
             CalculationFailure::FailedDependencies { .. } => {
                 unreachable!("failed dependencies are projected after primary failures")
             }
-            CalculationFailure::LookupMissingKey => formula_diagnostic(
-                diagnostic_codes::FORMULA_LOOKUP_MISSING_KEY,
-                vec![subject],
-                path,
-                format!("formula '{formula}' has no matching lookup key"),
-            ),
-            CalculationFailure::EmptyAggregate => formula_diagnostic(
-                diagnostic_codes::FORMULA_AGGREGATE_EMPTY,
-                vec![subject],
-                path,
-                format!("formula '{formula}' reads an empty aggregate"),
-            ),
-            CalculationFailure::DivisionByZero => formula_diagnostic(
-                diagnostic_codes::FORMULA_DIVISION_BY_ZERO,
-                vec![subject],
-                path,
-                format!("formula '{formula}' divided by zero"),
-            ),
-            CalculationFailure::NonFiniteResult => formula_diagnostic(
-                diagnostic_codes::FORMULA_NON_FINITE_RESULT,
-                vec![subject],
-                path,
-                format!("formula '{formula}' produced a non-finite result"),
-            ),
+            local => formula_projection::local_failure_diagnostic(local, formula, subject, path),
         };
         if let CalculationFailure::Cycle { members } = failure {
             surviving_failures.extend(members.iter().cloned());
@@ -3358,6 +3335,7 @@ fn formula_prerequisites_available(
         | CalculationFailure::InvalidReferences { .. }
         | CalculationFailure::FailedDependencies { .. }
         | CalculationFailure::DivisionByZero
+        | CalculationFailure::DeletedReference
         | CalculationFailure::LookupMissingKey
         | CalculationFailure::EmptyAggregate
         | CalculationFailure::NonFiniteResult
@@ -3591,8 +3569,7 @@ fn drop_expression_iteratively(expression: Expression) {
                 value: left,
                 fallback: right,
             } => {
-                stack.push(*right);
-                stack.push(*left);
+                stack.extend([*right, *left]);
             }
             Expression::If {
                 condition,
@@ -3626,6 +3603,7 @@ fn drop_expression_iteratively(expression: Expression) {
                 );
             }
             Expression::Number(_)
+            | Expression::DeletedReference {}
             | Expression::Reference(_)
             | Expression::SameRowReference(_)
             | Expression::AnchoredReference(_)
