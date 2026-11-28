@@ -2251,7 +2251,7 @@ pub(crate) fn write_expression(
     output.push('{');
     match expression {
         ExpressionV3::DeletedReference {} => {
-            output.push_str(r#""op":"deleted_reference","args":{}"#)
+            output.push_str(r#""op":"deleted_reference","args":{}"#);
         }
         ExpressionV3::Number(number) => {
             compact_member_string(output, "op", "number", true)?;
