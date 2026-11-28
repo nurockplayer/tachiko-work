@@ -7,7 +7,6 @@ args	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_row
 args	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	6
 args	crates/formula-engine/src/lib.rs	render_bound_binary	6
 args	crates/merge-engine/src/conflict_v2.rs	<MergeConflictV2>::new	6
-args	crates/merge-engine/src/conflict_v2.rs	name_conflict	6
 args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
 args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
@@ -642,7 +641,7 @@ file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		943
+file	crates/merge-engine/src/conflict_v2.rs		889
 file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872

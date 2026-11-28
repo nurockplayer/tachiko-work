@@ -13,7 +13,10 @@ use crate::{
 };
 
 mod collect;
+mod display_name;
 mod field_subject;
+
+use display_name::add_name_conflicts;
 
 /// The explicitly selected constraint-aware semantic conflict contract.
 pub const SEMANTIC_CONFLICT_V2: &str = "tachiko.semantic-conflict/v2";
@@ -634,63 +637,6 @@ fn apply_selected_constraints(
                     }
                 }
             }
-        }
-    }
-}
-
-fn name_conflict(
-    document: &DocumentId,
-    target: ConflictTarget,
-    base: Option<&str>,
-    left: Option<&str>,
-    right: Option<&str>,
-    conflicts: &mut Vec<MergeConflictV2>,
-) {
-    if choose(&base, &left, &right).is_none() {
-        conflicts.push(MergeConflictV2::new(
-            document,
-            target,
-            ConflictFacetV2::DisplayName,
-            Some(MergeValueV2::DisplayName(base.map(str::to_owned))),
-            Some(MergeValueV2::DisplayName(left.map(str::to_owned))),
-            Some(MergeValueV2::DisplayName(right.map(str::to_owned))),
-        ));
-    }
-}
-
-fn add_name_conflicts(
-    base: &Document,
-    left: &Document,
-    right: &Document,
-    conflicts: &mut Vec<MergeConflictV2>,
-) {
-    for (schema_id, b) in &base.schemas {
-        let (Some(l), Some(r)) = (left.schemas.get(schema_id), right.schemas.get(schema_id)) else {
-            continue;
-        };
-        name_conflict(
-            &base.id,
-            ConflictTarget::Schema(schema_id.clone()),
-            b.display_name.as_deref(),
-            l.display_name.as_deref(),
-            r.display_name.as_deref(),
-            conflicts,
-        );
-        for (field_id, b) in &b.fields {
-            let (Some(l), Some(r)) = (l.fields.get(field_id), r.fields.get(field_id)) else {
-                continue;
-            };
-            name_conflict(
-                &base.id,
-                ConflictTarget::SchemaField {
-                    schema: schema_id.clone(),
-                    field: field_id.clone(),
-                },
-                b.display_name.as_deref(),
-                l.display_name.as_deref(),
-                r.display_name.as_deref(),
-                conflicts,
-            );
         }
     }
 }
