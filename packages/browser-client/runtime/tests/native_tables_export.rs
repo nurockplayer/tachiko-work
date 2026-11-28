@@ -2426,7 +2426,7 @@ fn native_xlsx_exports_deleted_reference_with_cached_ref_error() {
     document.schemas.get_mut("errors").unwrap().headerless = true;
     let mut host = host_for(document);
     let deleted = host.request(
-        &json!({
+        json!({
             "type": "remove_table_rows", "expected_revision": "resident/0",
             "collection": "errors", "entities": ["errors-r000"],
         })
