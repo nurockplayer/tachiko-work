@@ -2952,7 +2952,7 @@ fn fill_lookups_keep_their_messages_and_targets() {
     let Some(StoredValueProjection::Number { value }) = &field.stored else {
         panic!("the mirror cell is not a stored Number");
     };
-    assert_eq!(*value, 12.0);
+    assert_eq!(value.to_bits(), 12.0_f64.to_bits());
     let grid = window_cells(&mut runtime, "grid");
     let Some(Some(field)) = grid.get(&("r00000".to_owned(), "value".to_owned())) else {
         panic!("the grid cell is missing");
@@ -2960,7 +2960,11 @@ fn fill_lookups_keep_their_messages_and_targets() {
     let Some(StoredValueProjection::Number { value }) = &field.stored else {
         panic!("the grid cell is not a stored Number");
     };
-    assert_eq!(*value, 1.0, "the other collection is untouched");
+    assert_eq!(
+        value.to_bits(),
+        1.0_f64.to_bits(),
+        "the other collection is untouched"
+    );
 
     assert_tracker_message(
         &expect_error(runtime.handle(copy_request(
@@ -3036,10 +3040,8 @@ fn a_large_paste_reaches_working_size_through_the_wire() {
         let Some(StoredValueProjection::Number { value }) = &projected(first, field).stored else {
             panic!("the first pasted row has no {field} value");
         };
-        assert_eq!(
-            *value,
-            1_000_000.0 + f64::from(u32::try_from(column).expect("bounded columns"))
-        );
+        let expected = 1_000_000.0 + f64::from(u32::try_from(column).expect("bounded columns"));
+        assert_eq!(value.to_bits(), expected.to_bits());
     }
     assert!(
         window

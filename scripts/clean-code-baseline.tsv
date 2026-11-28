@@ -701,7 +701,7 @@ inline-test	packages/browser-client/runtime/src/interop_document.rs	import_depen
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
 inline-test	packages/browser-client/runtime/src/interop_number_format.rs	tests[cfg(test)]	278
 inline-test	packages/browser-client/runtime/src/lib.rs	admission_counters[cfg(test)]	25
-inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2788
+inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2768
 inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
