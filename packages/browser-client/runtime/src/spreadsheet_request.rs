@@ -1,11 +1,11 @@
-//! Shared request codec for native and browser spreadsheet bridges.
+//! Shared requests for native and browser spreadsheet bridges.
 use serde::Deserialize;
 
 use crate::interop_adapter::{ImportOptions, SourceWorkbook};
 use crate::source_reuse::InspectedSource;
 use crate::{
-    DesignerError, DesignerProfile, ImportSelection, InteropMetadata,
-    NativeBudgetExportPresentation, NativeTrackerExportPresentation,
+    DesignerError, DesignerProfile, DesignerResponse, DesignerRuntime, ImportSelection,
+    InteropMetadata, NativeBudgetExportPresentation, NativeTrackerExportPresentation,
 };
 
 #[derive(Clone, Copy, Deserialize)]
@@ -36,6 +36,10 @@ pub(super) enum SpreadsheetOperation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<DesignerProfile>,
     },
+    ReopenImportedXlsxWorkingSize {
+        expected: crate::OccurrenceProjection,
+        occurrence_id: String,
+    },
     Export {
         expected_revision: String,
         metadata: InteropMetadata,
@@ -60,6 +64,26 @@ pub(super) enum SpreadsheetOperation {
         presentation: NativeBudgetExportPresentation,
         format: SpreadsheetFormat,
     },
+}
+
+pub(super) fn admit_saved_import(
+    project: &[u8],
+    occurrence_id: &str,
+    metadata: &InteropMetadata,
+    profile: Option<DesignerProfile>,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    match profile {
+        None => {
+            let (candidate, opened) =
+                crate::admit_imported_project(project, occurrence_id, metadata)?;
+            Ok((candidate, DesignerResponse::Opened(Box::new(opened))))
+        }
+        Some(DesignerProfile::WorkingSize) => {
+            let (candidate, opened) =
+                crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
+            Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+        }
+    }
 }
 
 #[derive(Deserialize)]
