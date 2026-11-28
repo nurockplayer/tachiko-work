@@ -162,7 +162,7 @@ fn style_ids_are_stable_and_false_differs_from_absent() {
 
 #[test]
 fn clear_fill_is_canonical_only_for_cell_bindings() {
-    const ID: &str = "300b2cdc5c2c07ac870aad501600250d9b";
+    const ID: &str = "300b2cdc5c2c07ac870aad501600250d";
     let style = format!("{{\"kind\":\"style\",\"id\":\"{ID}\",\"style\":{{\"fill\":false}}}}\n");
     let cell =
         format!("{{\"kind\":\"cell\",\"entity\":\"e1\",\"field\":\"f1\",\"style\":\"{ID}\"}}\n");
