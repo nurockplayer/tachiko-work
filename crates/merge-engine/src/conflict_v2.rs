@@ -13,6 +13,7 @@ use crate::{
 };
 
 mod collect;
+mod field_subject;
 
 /// The explicitly selected constraint-aware semantic conflict contract.
 pub const SEMANTIC_CONFLICT_V2: &str = "tachiko.semantic-conflict/v2";
@@ -507,7 +508,16 @@ fn add_complete_subject_conflicts(
         let r = right.schemas.get(&schema_id);
         match (b, l, r) {
             (Some(b), Some(l), Some(r)) => {
-                add_field_subject_conflicts(base, &schema_id, b, l, r, conflicts);
+                field_subject::add_field_subject_conflicts(
+                    base,
+                    &schema_id,
+                    field_subject::SchemaVersions {
+                        base: b,
+                        left: l,
+                        right: r,
+                    },
+                    conflicts,
+                );
             }
             _ => {
                 if subject_presence_conflicts(b, l, r) {
@@ -521,41 +531,6 @@ fn add_complete_subject_conflicts(
                     ));
                 }
             }
-        }
-    }
-}
-
-fn add_field_subject_conflicts(
-    base: &Document,
-    schema_id: &SchemaId,
-    base_schema: &Schema,
-    left_schema: &Schema,
-    right_schema: &Schema,
-    conflicts: &mut Vec<MergeConflictV2>,
-) {
-    let field_ids: BTreeSet<_> = base_schema
-        .fields
-        .keys()
-        .chain(left_schema.fields.keys())
-        .chain(right_schema.fields.keys())
-        .cloned()
-        .collect();
-    for field_id in field_ids {
-        let b = base_schema.fields.get(&field_id);
-        let l = left_schema.fields.get(&field_id);
-        let r = right_schema.fields.get(&field_id);
-        if subject_presence_conflicts(b, l, r) {
-            conflicts.push(MergeConflictV2::new(
-                &base.id,
-                ConflictTarget::SchemaField {
-                    schema: schema_id.clone(),
-                    field: field_id,
-                },
-                ConflictFacetV2::Subject,
-                b.map(|field| MergeValueV2::SchemaFieldSubject(SchemaFieldSubjectV2::from(field))),
-                l.map(|field| MergeValueV2::SchemaFieldSubject(SchemaFieldSubjectV2::from(field))),
-                r.map(|field| MergeValueV2::SchemaFieldSubject(SchemaFieldSubjectV2::from(field))),
-            ));
         }
     }
 }

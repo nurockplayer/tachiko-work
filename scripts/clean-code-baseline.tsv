@@ -7,7 +7,6 @@ args	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_row
 args	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	6
 args	crates/formula-engine/src/lib.rs	render_bound_binary	6
 args	crates/merge-engine/src/conflict_v2.rs	<MergeConflictV2>::new	6
-args	crates/merge-engine/src/conflict_v2.rs	add_field_subject_conflicts	6
 args	crates/merge-engine/src/conflict_v2.rs	name_conflict	6
 args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
@@ -649,7 +648,7 @@ file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		968
+file	crates/merge-engine/src/conflict_v2.rs		943
 file	crates/merge-engine/src/lib.rs		1107
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1881
@@ -703,7 +702,6 @@ inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
 inline-test	packages/browser-client/runtime/src/wasm.rs	native_tables_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	85
-inline-test	packages/browser-client/runtime/src/wasm.rs	ranked_import_ingress_tests[cfg(all(test,not(target_arch="wasm32")))]	46
 inline-test	packages/browser-client/runtime/src/wasm.rs	row_rank_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	251
 pub	crates/ai-api/src/lib.rs		41
 pub	crates/ai-api/src/security_boundary.rs		43
