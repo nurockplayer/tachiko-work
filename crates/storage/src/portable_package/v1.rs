@@ -14,6 +14,7 @@ use crate::{
 };
 
 mod central_directory;
+mod local_header;
 
 const PACKAGE_FORMAT: &str = "tachiko.portable-package";
 const PACKAGE_FORMAT_VERSION: u32 = 1;
@@ -890,17 +891,7 @@ fn validate_canonical_profile(container: &Container<'_>) -> Result<(), PortableP
     for (index, expected_name) in local_names.iter().enumerate() {
         let local = &container.local_records[index];
         let central = &container.central_records[index];
-        if local.version_needed != ZIP_VERSION_NEEDED
-            || local.flags != ZIP_UTF8_FLAG
-            || local.method != ZIP_STORE_METHOD
-            || local.dos_time != ZIP_DOS_TIME
-            || local.dos_date != ZIP_DOS_DATE
-            || local.extra_length != 0
-        {
-            return noncanonical_container(&format!(
-                "'{expected_name}' local header has noncanonical metadata"
-            ));
-        }
+        local_header::validate_canonical_metadata(local, expected_name)?;
         if central.version_made_by != ZIP_VERSION_MADE_BY
             || central.version_needed != ZIP_VERSION_NEEDED
             || central.flags != ZIP_UTF8_FLAG
