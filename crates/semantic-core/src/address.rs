@@ -69,6 +69,68 @@ pub enum AddressIndexError {
     },
 }
 
+fn validate_store_ids(document: &Document) -> Result<(), AddressIndexError> {
+    for (stored, schema) in &document.schemas {
+        if stored != &schema.id {
+            return Err(AddressIndexError::SchemaStoreIdMismatch {
+                stored: stored.clone(),
+                nested: schema.id.clone(),
+            });
+        }
+        for (field_stored, field) in &schema.fields {
+            if field_stored != &field.id {
+                return Err(AddressIndexError::FieldStoreIdMismatch {
+                    schema: stored.clone(),
+                    stored: field_stored.clone(),
+                    nested: field.id.clone(),
+                });
+            }
+        }
+    }
+    for (stored, entity) in &document.entities {
+        if stored != &entity.id {
+            return Err(AddressIndexError::EntityStoreIdMismatch {
+                stored: stored.clone(),
+                nested: entity.id.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn build_field_index(
+    document: &Document,
+) -> Result<BTreeMap<SchemaId, BTreeMap<FieldKey, FieldId>>, AddressIndexError> {
+    let mut fields = BTreeMap::new();
+    for (schema_id, schema) in &document.schemas {
+        let field_groups = schema.fields.values().fold(
+            BTreeMap::<FieldKey, Vec<FieldId>>::new(),
+            |mut groups, field| {
+                groups
+                    .entry(field.key.clone())
+                    .or_default()
+                    .push(field.id.clone());
+                groups
+            },
+        );
+        if let Some((key, ids)) = field_groups.iter().find(|(_, ids)| ids.len() > 1) {
+            return Err(AddressIndexError::DuplicateFieldKey {
+                schema: schema_id.clone(),
+                key: key.clone(),
+                ids: ids.clone(),
+            });
+        }
+        fields.insert(
+            schema_id.clone(),
+            field_groups
+                .into_iter()
+                .map(|(key, mut ids)| (key, ids.remove(0)))
+                .collect(),
+        );
+    }
+    Ok(fields)
+}
+
 impl AddressIndex {
     /// Build derived address lookup state from one document snapshot.
     ///
@@ -77,31 +139,7 @@ impl AddressIndex {
     /// Returns the first duplicate category in deterministic schema/field/entity
     /// order, with conflicting stable IDs sorted by their opaque tokens.
     pub fn build(document: &Document) -> Result<Self, AddressIndexError> {
-        for (stored, schema) in &document.schemas {
-            if stored != &schema.id {
-                return Err(AddressIndexError::SchemaStoreIdMismatch {
-                    stored: stored.clone(),
-                    nested: schema.id.clone(),
-                });
-            }
-            for (field_stored, field) in &schema.fields {
-                if field_stored != &field.id {
-                    return Err(AddressIndexError::FieldStoreIdMismatch {
-                        schema: stored.clone(),
-                        stored: field_stored.clone(),
-                        nested: field.id.clone(),
-                    });
-                }
-            }
-        }
-        for (stored, entity) in &document.entities {
-            if stored != &entity.id {
-                return Err(AddressIndexError::EntityStoreIdMismatch {
-                    stored: stored.clone(),
-                    nested: entity.id.clone(),
-                });
-            }
-        }
+        validate_store_ids(document)?;
 
         let schema_groups = document.schemas.values().fold(
             BTreeMap::<SchemaKey, Vec<SchemaId>>::new(),
@@ -120,33 +158,7 @@ impl AddressIndex {
             });
         }
 
-        let mut fields = BTreeMap::new();
-        for (schema_id, schema) in &document.schemas {
-            let field_groups = schema.fields.values().fold(
-                BTreeMap::<FieldKey, Vec<FieldId>>::new(),
-                |mut groups, field| {
-                    groups
-                        .entry(field.key.clone())
-                        .or_default()
-                        .push(field.id.clone());
-                    groups
-                },
-            );
-            if let Some((key, ids)) = field_groups.iter().find(|(_, ids)| ids.len() > 1) {
-                return Err(AddressIndexError::DuplicateFieldKey {
-                    schema: schema_id.clone(),
-                    key: key.clone(),
-                    ids: ids.clone(),
-                });
-            }
-            fields.insert(
-                schema_id.clone(),
-                field_groups
-                    .into_iter()
-                    .map(|(key, mut ids)| (key, ids.remove(0)))
-                    .collect(),
-            );
-        }
+        let fields = build_field_index(document)?;
 
         let entity_groups = document.entities.values().fold(
             BTreeMap::<EntityKey, Vec<EntityId>>::new(),
