@@ -5340,35 +5340,25 @@ fn export_in(
 ) -> Result<String, DesignerError> {
     match expression {
         Expression::Number(number) => Ok(number.get().to_string()),
+        Expression::DeletedReference {} => Ok("#REF!".to_owned()),
         // Same row means same sheet, so an unqualified relative address keeps
         // the meaning through a spreadsheet fill-down.
         Expression::SameRowReference(field) => addresses
             .get(&FieldRef::new(owner.entity.clone(), field.clone()))
             .map(ExportCell::relative)
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
-        // A fixed identity keeps pointing at that identity when filled down.
-        Expression::Reference(reference) => addresses
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => addresses
             .get(reference)
             .map(|cell| {
                 let mut cell = cell.clone();
-                let owner_cell = addresses
-                    .get(owner)
-                    .expect("formula owner is outside the export mapping");
-                cell.legacy_relative_column = cell.collection == owner_cell.collection;
+                cell.legacy_relative_column =
+                    uses_relative_export_column(expression, &cell, owner, addresses);
                 cell.absolute()
             })
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::AnchoredSameRowReference(field) => addresses
             .get(&FieldRef::new(owner.entity.clone(), field.clone()))
             .map(|cell| format!("${}", cell.relative()))
-            .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
-        Expression::AnchoredReference(reference) => addresses
-            .get(reference)
-            .map(|cell| {
-                let mut anchored = cell.clone();
-                anchored.legacy_relative_column = false;
-                anchored.absolute()
-            })
             .ok_or_else(|| tracker_error("formula stable target is outside the export mapping")),
         Expression::ColumnTotal(column) => export_column("SUM", column, columns),
         Expression::ColumnAggregate { function, column } => {
@@ -5517,6 +5507,16 @@ fn export_in(
             export_in(reference, owner, addresses, columns, present)?
         )),
     }
+}
+
+fn uses_relative_export_column(
+    expression: &Expression,
+    cell: &ExportCell,
+    owner: &FieldRef,
+    addresses: &BTreeMap<FieldRef, ExportCell>,
+) -> bool {
+    !matches!(expression, Expression::AnchoredReference(_))
+        && cell.collection == addresses[owner].collection
 }
 
 fn export_date_argument(

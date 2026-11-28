@@ -1007,6 +1007,7 @@ fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value
             "dependencies": dependencies,
         }),
         CalculationFailure::DivisionByZero => json!({ "kind": "division_by_zero" }),
+        CalculationFailure::DeletedReference => json!({ "kind": "deleted_reference" }),
         CalculationFailure::LookupMissingKey => json!({ "kind": "lookup_missing_key" }),
         CalculationFailure::EmptyAggregate => json!({ "kind": "aggregate_empty" }),
         CalculationFailure::NonFiniteResult => json!({ "kind": "non_finite_result" }),
@@ -1019,7 +1020,6 @@ fn calculation_failure_output(failure: &CalculationFailure) -> serde_json::Value
         }),
     }
 }
-
 const fn column_failure_name(failure: ColumnFailure) -> &'static str {
     match failure {
         ColumnFailure::MissingSchema => "missing_schema",

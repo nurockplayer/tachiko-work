@@ -641,45 +641,73 @@ fn compare_bytes(operator: ComparisonOperator, left: &Expression, right: &Expres
     ])
 }
 
+fn round_expression_bytes(op: &str, value: &Expression, digits: u8) -> u64 {
+    total([
+        1, // "{"
+        compact_string("op", op, true),
+        compact_prefix("args"),
+        1, // "{"
+        compact_prefix("value"),
+        expression_bytes(value),
+        1, // ","
+        compact_literal("digits", number_text_bytes(f64::from(digits)), false),
+        2, // "}}"
+    ])
+}
+
+fn same_row_reference_bytes(field: &str, anchored: bool) -> u64 {
+    let op = if anchored {
+        "anchored_same_row_reference"
+    } else {
+        "same_row_reference"
+    };
+    total([
+        1,
+        compact_string("op", op, true),
+        compact_string("args", field, false),
+        1,
+    ])
+}
+
+fn reference_bytes(reference: &tachiko_workspace_engine::FieldRef, anchored: bool) -> u64 {
+    let op = if anchored {
+        "anchored_reference"
+    } else {
+        "reference"
+    };
+    total([
+        1,
+        compact_string("op", op, true),
+        compact_prefix("args"),
+        1,
+        compact_string("entity", reference.entity.as_str(), true),
+        compact_string("field", reference.field.as_str(), false),
+        2,
+    ])
+}
+
 #[allow(clippy::too_many_lines)] // One arm per closed-world expression variant keeps the mirror auditable.
 fn expression_bytes(expression: &Expression) -> u64 {
     match expression {
+        Expression::DeletedReference {} => r#"{"op":"deleted_reference","args":{}}"#.len() as u64,
         Expression::Number(number) => total([
             1,
             compact_string("op", "number", true),
             compact_number("args", *number, false),
             1,
         ]),
-        Expression::Reference(reference) => total([
-            1,
-            compact_string("op", "reference", true),
-            compact_prefix("args"),
-            1, // "{"
-            compact_string("entity", reference.entity.as_str(), true),
-            compact_string("field", reference.field.as_str(), false),
-            2, // "}}"
-        ]),
-        Expression::SameRowReference(field) => total([
-            1,
-            compact_string("op", "same_row_reference", true),
-            compact_string("args", field.as_str(), false),
-            1,
-        ]),
-        Expression::AnchoredReference(reference) => total([
-            1,
-            compact_string("op", "anchored_reference", true),
-            compact_prefix("args"),
-            1,
-            compact_string("entity", reference.entity.as_str(), true),
-            compact_string("field", reference.field.as_str(), false),
-            2,
-        ]),
-        Expression::AnchoredSameRowReference(field) => total([
-            1,
-            compact_string("op", "anchored_same_row_reference", true),
-            compact_string("args", field.as_str(), false),
-            1,
-        ]),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            reference_bytes(
+                reference,
+                matches!(expression, Expression::AnchoredReference(_)),
+            )
+        }
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            same_row_reference_bytes(
+                field.as_str(),
+                matches!(expression, Expression::AnchoredSameRowReference(_)),
+            )
+        }
         Expression::ColumnTotal(column) => total([
             1,
             compact_string("op", "column_total", true),
@@ -853,39 +881,11 @@ fn expression_bytes(expression: &Expression) -> u64 {
             expression_bytes(value),
             1,
         ]),
-        Expression::Round { value, digits } => total([
-            1, // "{"
-            compact_string("op", "round", true),
-            compact_prefix("args"),
-            1, // "{"
-            compact_prefix("value"),
-            expression_bytes(value),
-            1, // ","
-            compact_literal("digits", number_text_bytes(f64::from(*digits)), false),
-            2, // "}}"
-        ]),
-        Expression::RoundUp { value, digits } => total([
-            1, // "{"
-            compact_string("op", "round_up", true),
-            compact_prefix("args"),
-            1, // "{"
-            compact_prefix("value"),
-            expression_bytes(value),
-            1, // ","
-            compact_literal("digits", number_text_bytes(f64::from(*digits)), false),
-            2, // "}}"
-        ]),
-        Expression::RoundDown { value, digits } => total([
-            1, // "{"
-            compact_string("op", "round_down", true),
-            compact_prefix("args"),
-            1, // "{"
-            compact_prefix("value"),
-            expression_bytes(value),
-            1, // ","
-            compact_literal("digits", number_text_bytes(f64::from(*digits)), false),
-            2, // "}}"
-        ]),
+        Expression::Round { value, digits } => round_expression_bytes("round", value, *digits),
+        Expression::RoundUp { value, digits } => round_expression_bytes("round_up", value, *digits),
+        Expression::RoundDown { value, digits } => {
+            round_expression_bytes("round_down", value, *digits)
+        }
         Expression::DatePart { part, operand } => total([
             1,
             compact_string("op", "date_part", true),

@@ -86,9 +86,10 @@ pub enum KeyedGroupedSumOutcome {
 /// Exact Text lookup is ordinary Rust `String` equality over decoded Unicode
 /// scalar sequences: no normalization, case folding, locale handling, wildcard,
 /// or numeric coercion occurs.
-// The evaluation pipeline is intentionally linear and cohesive; extracting
-// helpers solely to satisfy the line-count lint would broaden this change.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "One evaluation stages the complete Product key index and any required authoritative calculation before reducing contributions, preserving complete diagnostics and an atomic outcome"
+)]
 #[must_use]
 pub fn evaluate_keyed_grouped_sum(
     document: &Document,
