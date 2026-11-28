@@ -304,6 +304,8 @@ All notable changes to Tachiko Work are documented in this file.
 
 ### Fixed
 
+- Clearing a fill inherited from an imported spreadsheet stays cleared after save and reopen and in XLSX exports (#1041).
+
 - Natural view sort ties now defer to later sort keys before original text bytes (#699).
 
 - Whole-column formula imports share column dependencies and numeric admission scans, keeping repeated totals within working-size capacity (#678).

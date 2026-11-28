@@ -123,7 +123,12 @@ impl DesignerRuntime {
                         CellStyleChange::Bold { value } => style.bold = Some(*value),
                         CellStyleChange::Italic { value } => style.italic = Some(*value),
                         CellStyleChange::Fill { color } => {
-                            style.fill = fill_change(&candidate, &schema, field, color.as_deref());
+                            style.fill = color
+                                .as_ref()
+                                .map(|color| CellFill::Solid(color.clone()))
+                                .or_else(|| {
+                                    self.clear_inherited_fill(&candidate, &schema, entity, field)
+                                });
                         }
                         CellStyleChange::NumberFormat { format } => {
                             style.number_format = Some(format.clone());
@@ -339,23 +344,7 @@ impl DesignerRuntime {
         entity: &EntityId,
         field: &FieldId,
     ) -> Vec<BorderSide> {
-        let style = self.imported.as_ref().and_then(|state| {
-            let sheet = state
-                .metadata
-                .sheets
-                .iter()
-                .find(|sheet| sheet.schema_id == schema.as_str())?;
-            let column = sheet
-                .columns
-                .iter()
-                .position(|column| column.field_id == field.as_str())?;
-            let row = sheet
-                .rows
-                .iter()
-                .find(|row| row.entity_id == entity.as_str())?;
-            Some(&row.styles[column])
-        });
-        match style {
+        match self.source_cell_style(schema, entity, field) {
             Some(style) if style.border && style.border_sides.is_empty() => vec![
                 BorderSide::Top,
                 BorderSide::Right,
@@ -366,28 +355,54 @@ impl DesignerRuntime {
             None => Vec::new(),
         }
     }
+
+    fn clear_inherited_fill(
+        &self,
+        store: &PresentationStore,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Option<CellFill> {
+        let column_fill = store
+            .tables
+            .get(schema)
+            .and_then(|table| table.column_styles.get(field))
+            .and_then(|id| store.styles[id].fill.as_ref());
+        (column_fill.is_some()
+            || self
+                .source_cell_style(schema, entity, field)
+                .is_some_and(|style| style.fill.is_some()))
+        .then_some(CellFill::Clear)
+    }
+
+    fn source_cell_style(
+        &self,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Option<&interop_adapter::CellStyle> {
+        let sheet = self
+            .imported
+            .as_ref()?
+            .metadata
+            .sheets
+            .iter()
+            .find(|sheet| sheet.schema_id == schema.as_str())?;
+        let column = sheet
+            .columns
+            .iter()
+            .position(|column| column.field_id == field.as_str())?;
+        let row = sheet
+            .rows
+            .iter()
+            .find(|row| row.entity_id == entity.as_str())?;
+        Some(&row.styles[column])
+    }
 }
 
 fn history_action(store: PresentationStore) -> Result<HistoryAction, DesignerError> {
     let bytes = tachiko_storage::encode_presentation(&store)?.map_or(0, |bytes| bytes.len());
     Ok(HistoryAction::CellPresentation { store, bytes })
-}
-
-fn fill_change(
-    store: &PresentationStore,
-    schema: &SchemaId,
-    field: &FieldId,
-    color: Option<&str>,
-) -> Option<CellFill> {
-    if let Some(color) = color {
-        return Some(CellFill::Solid(color.to_owned()));
-    }
-    store
-        .tables
-        .get(schema)
-        .and_then(|table| table.column_styles.get(field))
-        .and_then(|id| store.styles[id].fill.as_ref())
-        .map(|_| CellFill::Clear)
 }
 
 fn cell_override(store: &PresentationStore, entity: &EntityId, field: &FieldId) -> CellStyle {
