@@ -964,6 +964,67 @@ fn imported_styles_and_native_styles_use_the_same_projection() {
 }
 
 #[test]
+fn cleared_imported_source_fill_survives_save_reopen_and_xlsx_export() {
+    use crate::interop_adapter::{export_xlsx, import_xlsx};
+
+    let (runtime, _) = imported_styling_fixture();
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    // Model a saved import whose fill is still in the source sidecar.
+    let mut metadata = saved.import_metadata.unwrap();
+    metadata.sheets[0].rows[0].styles[0].fill = Some("FFFF00".into());
+    let (mut runtime, _) =
+        crate::admit_imported_project(&saved.bytes, OCCURRENCE, &metadata).unwrap();
+    assert!(runtime.presentation.tables.is_empty());
+    let sheet = &metadata.sheets[0];
+    let original = runtime
+        .export_workbook(runtime.current_revision(), &metadata)
+        .unwrap();
+    assert_eq!(
+        original.sheets[0].rows[0][0].style.fill.as_deref(),
+        Some("FFFF00")
+    );
+    let set_fill = |runtime: &mut DesignerRuntime, color: Option<&str>| {
+        let request = serde_json::from_value(json!({
+            "type": "set_cell_style", "expected_revision": runtime.current_revision(),
+            "collection": sheet.schema_id, "entities": [sheet.rows[0].entity_id],
+            "fields": [sheet.columns[0].field_id], "changes": [
+                {"kind": "fill", "color": color},
+            ],
+        }))
+        .unwrap();
+        runtime.handle(request).unwrap();
+    };
+    set_fill(&mut runtime, Some("#123ABC"));
+    let before_clear = runtime.presentation.clone();
+    set_fill(&mut runtime, None);
+    let table = runtime.query_table(&sheet.schema_id).unwrap();
+    assert!(
+        table.rows[0]
+            .styles
+            .iter()
+            .all(|style| style.fill.is_none())
+    );
+
+    let saved = runtime
+        .export_project_v3(runtime.current_revision())
+        .unwrap();
+    let metadata = saved.import_metadata.as_ref().unwrap();
+    let (reopened, opened) =
+        crate::admit_imported_project(&saved.bytes, OCCURRENCE, metadata).unwrap();
+    assert_eq!(opened.table.rows[0].styles, table.rows[0].styles);
+    let workbook = reopened
+        .export_workbook(reopened.current_revision(), metadata)
+        .unwrap();
+    let xlsx = import_xlsx(&export_xlsx(&workbook).unwrap()).unwrap();
+    assert_eq!(xlsx.sheets[0].rows[0][0].style.fill, None);
+    assert_eq!(reopened.presentation, runtime.presentation);
+    history(&mut runtime, false);
+    assert_eq!(runtime.presentation, before_clear);
+}
+
+#[test]
 fn cell_style_fill_requires_explicit_color() {
     let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
     edit(
@@ -994,6 +1055,7 @@ fn cell_style_fill_requires_explicit_color() {
         &json!([{"kind":"fill","color":null}]),
     )
     .unwrap();
+    assert!(runtime.presentation.is_empty());
 }
 
 #[test]
