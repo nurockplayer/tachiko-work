@@ -132,7 +132,6 @@ body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
 body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
-body	crates/merge-engine/src/lib.rs	merge_supported	88
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	77
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
@@ -632,7 +631,7 @@ file	crates/formula-engine/src/evaluation.rs		1300
 file	crates/formula-engine/src/lib.rs		3172
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		889
-file	crates/merge-engine/src/lib.rs		1108
+file	crates/merge-engine/src/lib.rs		1072
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872
 file	crates/storage/src/direct_ro/v2.rs		1457

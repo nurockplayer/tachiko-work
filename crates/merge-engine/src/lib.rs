@@ -1,6 +1,7 @@
 //! Semantic three-way merge for Tachiko Work documents.
 
 mod conflict_v2;
+mod v1_support;
 
 pub use conflict_v2::{
     ConflictFacetV2, ConflictFactV2, EntitySubjectV2, MergeConflictV2, MergeOutcomeV2,
@@ -514,37 +515,8 @@ pub fn merge(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcom
 }
 
 fn merge_supported(base: &Document, ours: &Document, theirs: &Document) -> MergeOutcome {
-    if [base, ours, theirs]
-        .iter()
-        .any(|document| document.has_row_ranks())
-    {
-        return MergeOutcome::UnsupportedRowRank;
-    }
-    if [base, ours, theirs]
-        .iter()
-        .any(|document| document.has_number_formats() || document.has_date_formats())
-    {
-        return MergeOutcome::UnsupportedNumberFormat;
-    }
-    if [base, ours, theirs]
-        .iter()
-        .any(|document| document.has_field_orders())
-    {
-        return MergeOutcome::UnsupportedFieldOrder;
-    }
-    if [base, ours, theirs]
-        .iter()
-        .any(|document| document.has_display_names())
-    {
-        return MergeOutcome::UnsupportedDisplayName;
-    }
-    if has_field_constraints(base) || has_field_constraints(ours) || has_field_constraints(theirs) {
-        return MergeOutcome::UnsupportedFieldConstraintChange;
-    }
-    if base.keyed_grouped_sum_definitions != ours.keyed_grouped_sum_definitions
-        || base.keyed_grouped_sum_definitions != theirs.keyed_grouped_sum_definitions
-    {
-        return MergeOutcome::UnsupportedKeyedGroupedSumDefinitionChange;
+    if let Some(refusal) = v1_support::first_refusal(base, ours, theirs) {
+        return refusal;
     }
 
     let mut conflicts = Vec::new();
@@ -603,14 +575,6 @@ fn merge_supported(base: &Document, ours: &Document, theirs: &Document) -> Merge
         },
         unmaterialized_fields,
     })
-}
-
-fn has_field_constraints(document: &Document) -> bool {
-    document
-        .schemas
-        .values()
-        .flat_map(|schema| schema.fields.values())
-        .any(|field| !field.constraint.is_none())
 }
 
 fn merge_schemas(
