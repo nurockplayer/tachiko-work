@@ -21,6 +21,7 @@ use crate::{
 
 mod candidate_domain;
 mod projection;
+mod selection;
 
 /// Current finite explicit-EntityId narrowing profile.
 pub const MAX_ANALYSIS_NARROWING_IDS: usize = 64;
@@ -818,7 +819,7 @@ fn evaluate_authorized(
     ) {
         return (AnalysisOutcome::Failure(failure), formula_calculation_used);
     }
-    let selected = match select_entities(
+    let selected = match selection::select_entities(
         document,
         definition,
         candidates,
@@ -951,60 +952,6 @@ fn predicate_is_typed(field_type: FieldType, predicate: &AnalysisPredicate) -> b
         ))
 }
 
-fn select_entities(
-    document: &Document,
-    definition: &NormalizedAnalysisDefinition,
-    candidates: &[EntityId],
-    calculation: Option<&CalculationOutcome>,
-    requested_failure: Option<&(FieldRef, CalculationFailure)>,
-) -> Result<Vec<EntityId>, AnalysisFailure> {
-    let schema = &document.schemas[&definition.schema];
-    let mut selected = Vec::new();
-    for entity_id in candidates {
-        let entity = &document.entities[entity_id];
-        let mut matched = true;
-        for predicate in &definition.predicates {
-            let Some(value) = entity.fields.get(&predicate.field) else {
-                matched = false;
-                break;
-            };
-            if let (FieldType::Reference { schema }, Value::Reference(reference)) =
-                (&schema.fields[&predicate.field].field_type, value)
-            {
-                if !reference_value_is_typed(document, schema, reference) {
-                    return Err(AnalysisFailure::InvalidPredicateValue {
-                        entity: entity_id.clone(),
-                        field: predicate.field.clone(),
-                        actual: AnalysisValueKind::Reference,
-                    });
-                }
-            }
-            let effective = effective_predicate_value(
-                entity_id,
-                &predicate.field,
-                value,
-                calculation,
-                requested_failure,
-            )?;
-            if !operand_kinds_match(&effective, &predicate.operand) {
-                return Err(AnalysisFailure::InvalidPredicateValue {
-                    entity: entity_id.clone(),
-                    field: predicate.field.clone(),
-                    actual: value_kind(value),
-                });
-            }
-            if !predicate_matches(&effective, predicate) {
-                matched = false;
-                break;
-            }
-        }
-        if matched {
-            selected.push(entity_id.clone());
-        }
-    }
-    Ok(selected)
-}
-
 fn validate_formula_predicates(
     document: &Document,
     definition: &NormalizedAnalysisDefinition,
@@ -1028,53 +975,6 @@ fn validate_formula_predicates(
         }
     }
     Ok(())
-}
-
-fn effective_predicate_value(
-    entity: &EntityId,
-    field: &FieldId,
-    value: &Value,
-    calculation: Option<&CalculationOutcome>,
-    requested_failure: Option<&(FieldRef, CalculationFailure)>,
-) -> Result<PredicateOperand, AnalysisFailure> {
-    match value {
-        Value::Number(value) => Ok(PredicateOperand::Number(*value)),
-        Value::Text(value) => Ok(PredicateOperand::Text(value.clone())),
-        Value::Boolean(value) => Ok(PredicateOperand::Boolean(*value)),
-        Value::Date(value) => Ok(PredicateOperand::Date(*value)),
-        Value::Reference(value) => Ok(PredicateOperand::Reference(value.clone())),
-        Value::Formula(_) => effective_formula_number(
-            &FieldRef::new(entity.clone(), field.clone()),
-            calculation,
-            requested_failure,
-        )
-        .map(PredicateOperand::Number),
-    }
-}
-
-const fn operand_kinds_match(left: &PredicateOperand, right: &PredicateOperand) -> bool {
-    matches!(
-        (left, right),
-        (PredicateOperand::Number(_), PredicateOperand::Number(_))
-            | (PredicateOperand::Text(_), PredicateOperand::Text(_))
-            | (PredicateOperand::Boolean(_), PredicateOperand::Boolean(_))
-            | (PredicateOperand::Date(_), PredicateOperand::Date(_))
-            | (
-                PredicateOperand::Reference(_),
-                PredicateOperand::Reference(_)
-            )
-    )
-}
-
-fn predicate_matches(effective: &PredicateOperand, predicate: &AnalysisPredicate) -> bool {
-    match predicate.operator {
-        AnalysisPredicateOperator::Equal => effective == &predicate.operand,
-        AnalysisPredicateOperator::NotEqual => effective != &predicate.operand,
-        AnalysisPredicateOperator::LessThan => effective < &predicate.operand,
-        AnalysisPredicateOperator::LessThanOrEqual => effective <= &predicate.operand,
-        AnalysisPredicateOperator::GreaterThan => effective > &predicate.operand,
-        AnalysisPredicateOperator::GreaterThanOrEqual => effective >= &predicate.operand,
-    }
 }
 
 fn group_entities(
