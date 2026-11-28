@@ -6,6 +6,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{Diagnostic, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity};
 
+use central_directory::read_central_directory;
+
 use super::PortablePackageError;
 use crate::{
     FormatError,
@@ -441,31 +443,7 @@ fn parse_container_at_end(
     }
     let central_offset = usize::try_from(end.central_offset)
         .map_err(|_| invalid_container_error("central offset does not fit this host"))?;
-    let central_size = usize::try_from(end.central_size)
-        .map_err(|_| invalid_container_error("central size does not fit this host"))?;
-    if central_offset.checked_add(central_size) != Some(end_offset) {
-        return invalid_container("central directory does not exactly precede the end record");
-    }
-
-    let mut central_records = Vec::with_capacity(usize::from(end.total_entries));
-    let mut record_offset = central_offset;
-    for _ in 0..end.total_entries {
-        let record = parse_central_record(source, record_offset)?;
-        if record.end > end_offset {
-            return invalid_container("central entry overlaps the end record");
-        }
-        record_offset = record.end;
-        central_records.push(record);
-    }
-    if record_offset != end_offset {
-        return invalid_container("central records do not consume the declared directory");
-    }
-    if central_records
-        .iter()
-        .any(|record| record.disk_number_start != 0)
-    {
-        return invalid_container("a central entry selects another start disk");
-    }
+    let central_records = read_central_directory(source, &end, central_offset, end_offset)?;
 
     let central_by_local_offset = index_central_offsets(&central_records, central_offset);
 
