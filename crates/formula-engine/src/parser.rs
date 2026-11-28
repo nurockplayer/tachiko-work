@@ -5,6 +5,8 @@ use tachiko_semantic_core::{
 };
 use thiserror::Error;
 
+mod comparison;
+
 pub(crate) const MAX_INPUT_BYTES: usize = 4_096;
 
 /// The aggregation named by one conditional function spelling.
@@ -565,20 +567,7 @@ impl<'input> Parser<'input> {
         loop {
             self.skip_whitespace();
             let start = self.position;
-            let rest = &self.input[start..];
-            let operator = if rest.starts_with("<=") {
-                ComparisonOperator::LessOrEqual
-            } else if rest.starts_with(">=") {
-                ComparisonOperator::GreaterOrEqual
-            } else if rest.starts_with("<>") {
-                ComparisonOperator::NotEqual
-            } else if rest.starts_with('=') {
-                ComparisonOperator::Equal
-            } else if rest.starts_with('<') {
-                ComparisonOperator::Less
-            } else if rest.starts_with('>') {
-                ComparisonOperator::Greater
-            } else {
+            let Some(operator) = comparison::parse_prefix(&self.input[start..]) else {
                 return Ok(expression);
             };
             self.position += operator.as_str().len();

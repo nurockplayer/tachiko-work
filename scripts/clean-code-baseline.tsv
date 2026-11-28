@@ -324,14 +324,12 @@ branches	crates/formula-engine/src/lib.rs	depth_first_finish_order	15
 branches	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	49
 branches	crates/formula-engine/src/lib.rs	pregraph_failures	50
 branches	crates/formula-engine/src/lib.rs	render_bound	30
-branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_comparison	28
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_conditional_arguments	17
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	32
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	27
 branches	crates/formula-engine/src/parser.rs	format_unbound_expression	32
 branches	crates/formula-engine/src/partitioned.rs	compare_entries	14
 branches	crates/merge-engine/src/conflict_v2.rs	add_field_order_conflicts	17
-branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_constraints	35
 branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_field_orders	15
 branches	crates/merge-engine/src/conflict_v2.rs	merge_v2	15
 branches	crates/merge-engine/src/conflict_v2.rs	upgrade_fact	22
@@ -548,8 +546,6 @@ depth	crates/formula-engine/src/lib.rs	cyclic_components	4
 depth	crates/formula-engine/src/lib.rs	depth_first_finish_order	4
 depth	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	7
 depth	crates/formula-engine/src/lib.rs	pregraph_failures	5
-depth	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_comparison	7
-depth	crates/merge-engine/src/conflict_v2.rs	apply_selected_constraints	5
 depth	crates/merge-engine/src/conflict_v2.rs	apply_selected_field_orders	4
 depth	crates/merge-engine/src/lib.rs	merge_entity_fields	4
 depth	crates/semantic-core/src/model.rs	<Expression>::reference_uses	4
@@ -628,8 +624,8 @@ file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1300
 file	crates/formula-engine/src/lib.rs		3172
-file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		889
+file	crates/formula-engine/src/parser.rs		1287
+file	crates/merge-engine/src/conflict_v2.rs		868
 file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872
