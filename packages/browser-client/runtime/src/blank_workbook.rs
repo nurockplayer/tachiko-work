@@ -76,17 +76,7 @@ impl DesignerRuntime {
         }
         let last_row = row.saturating_add(rows.len() - 1);
         let last_column = column.saturating_add(rows[0].len() - 1);
-        let limits = crate::capacity::limits_for_profile(self.profile);
-        for (limit, maximum, observed) in [
-            (crate::CapacityLimit::TableRows, limits.table_rows, last_row),
-            (
-                crate::CapacityLimit::TableFields,
-                limits.table_fields,
-                last_column,
-            ),
-        ] {
-            crate::capacity::check_limit(limit, maximum, observed, Some(collection))?;
-        }
+        check_dimensions(self.profile, collection, last_row, last_column)?;
         if self.row_serial > usize::MAX - self.row_identity_reserve() {
             return Err(table_error("row identity allocation is exhausted"));
         }
@@ -185,8 +175,11 @@ impl DesignerRuntime {
         }
         for field in &added {
             let values = added_values.remove(&field.id).unwrap_or_default();
-            let (append, remove) =
-                column_commands(&schema_id, std::slice::from_ref(field), &field.id, &values);
+            let (append, remove) = column_commands(
+                &schema_id,
+                std::slice::from_ref(field),
+                Some((&field.id, &values)),
+            );
             column_forward.extend(append);
             column_inverse.extend(remove);
         }
@@ -278,7 +271,7 @@ impl DesignerRuntime {
             BTreeMap::new()
         };
         let (mut forward, mut inverse) =
-            column_commands(&schema_id, &added, &field_id, &added_values);
+            column_commands(&schema_id, &added, Some((&field_id, &added_values)));
         let mut row_ids = RowIds::new(&self.row_namespace, self.row_serial, "native_table_row");
         let entity_id = if row > spec.entities.len() {
             let mut allocated = BTreeSet::new();
@@ -366,7 +359,7 @@ fn positional_formula_commands(
         .collect()
 }
 
-fn added_columns(
+pub(super) fn added_columns(
     schema: &crate::Schema,
     existing: usize,
     column: usize,
@@ -434,6 +427,15 @@ fn check_position(
     {
         return Err(crate::PatchLifecycleError::NoChange.into());
     }
+    check_dimensions(profile, collection, row, column)
+}
+
+pub(super) fn check_dimensions(
+    profile: crate::SessionProfile,
+    collection: &str,
+    row: usize,
+    column: usize,
+) -> Result<(), DesignerError> {
     let limits = crate::capacity::limits_for_profile(profile);
     crate::capacity::check_limit(
         crate::CapacityLimit::TableRows,
@@ -450,20 +452,17 @@ fn check_position(
     Ok(())
 }
 
-fn column_commands(
+pub(super) fn column_commands(
     schema_id: &SchemaId,
     added: &[FieldDefinition],
-    field_id: &crate::FieldId,
-    added_values: &BTreeMap<crate::EntityId, crate::Value>,
+    initializer: Option<(&crate::FieldId, &BTreeMap<crate::EntityId, crate::Value>)>,
 ) -> (Vec<SemanticCommand>, Vec<SemanticCommand>) {
     let mut forward = Vec::new();
     let mut inverse = Vec::new();
     for field in added {
-        let values = if field.id == *field_id {
-            added_values.clone()
-        } else {
-            BTreeMap::new()
-        };
+        let values = initializer
+            .filter(|(id, _)| **id == field.id)
+            .map_or_else(BTreeMap::new, |(_, values)| values.clone());
         forward.push(SemanticCommand::AppendSchemaField {
             schema: schema_id.clone(),
             field: field.clone(),

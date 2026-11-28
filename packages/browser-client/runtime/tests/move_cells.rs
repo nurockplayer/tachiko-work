@@ -9,8 +9,8 @@ use tachiko_designer_runtime::interop_adapter::{
 use tachiko_designer_runtime::{
     CalculationProjection, CellMove, CellStyleChange, DesignerRequest, DesignerResponse,
     DesignerRuntime, DesignerWireReply, FieldProjection, FieldTarget, ImportFieldType,
-    ImportSelection, PublicationProjection, StoredValueProjection, TableProjection,
-    import_workbook, open_imported_project, open_project, process_wire_request,
+    ImportSelection, PositionalCellMove, PublicationProjection, StoredValueProjection,
+    TableProjection, import_workbook, open_imported_project, open_project, process_wire_request,
 };
 use tachiko_workspace_engine::{
     ColumnRef, Date, Document, Entity, EntityId, EntityKey, Expression, FieldConstraint,
@@ -1137,4 +1137,146 @@ fn json_wire_round_trip_preserves_request_name_and_fields() {
         }
     ));
     assert_number(&mut runtime, 1, "r1.n", Some(1.0));
+}
+
+fn styled_positional_move_fixture() -> Session {
+    let mut doc = document(2);
+    set(
+        &mut doc,
+        "r0.dep",
+        Some(Value::Formula(Expression::SameRowReference("n".into()))),
+    );
+    set(
+        &mut doc,
+        "r1.dep",
+        Some(Value::Formula(Expression::Reference(FieldRef::new(
+            "r0", "dep",
+        )))),
+    );
+    let mut runtime = fixture(doc);
+    publish(
+        &mut runtime,
+        DesignerRequest::SetCellStyle {
+            expected_revision: "resident/0".into(),
+            collection: "rows".into(),
+            entities: vec!["r0".into()],
+            fields: vec!["n".into()],
+            changes: vec![CellStyleChange::Bold { value: true }],
+        },
+    );
+    runtime
+}
+
+#[test]
+fn positional_move_extends_either_axis_and_undo_and_reopen_preserve_contents() {
+    for extend_rows in [false, true] {
+        let mut runtime = styled_positional_move_fixture();
+        let before = table(&mut runtime, "rows");
+        let original = saved(&runtime, "resident/1");
+        let position = |field| {
+            before
+                .columns
+                .iter()
+                .position(|column| column.id == field)
+                .unwrap()
+                + 1
+        };
+        let next_column = before.columns.len() + 1;
+        let (number_pos, formula_pos) = if extend_rows {
+            ((3, position("n")), (3, position("dep")))
+        } else {
+            ((1, next_column), (2, next_column))
+        };
+        let moves = [("r0.n", number_pos), ("r0.dep", formula_pos)].map(|(from, (row, column))| {
+            PositionalCellMove {
+                from: from.into(),
+                row,
+                column,
+            }
+        });
+        let publication = publish(
+            &mut runtime,
+            DesignerRequest::MoveCellsAt {
+                expected_revision: "resident/1".into(),
+                collection: "rows".into(),
+                moves: moves.into(),
+            },
+        );
+        assert_eq!(publication.resulting_revision, "resident/2");
+        let after = table(&mut runtime, "rows");
+        assert_eq!(
+            after.rows.len(),
+            before.rows.len() + usize::from(extend_rows)
+        );
+        assert_eq!(
+            after.columns.len(),
+            before.columns.len() + usize::from(!extend_rows)
+        );
+        let target = |(row, column): (usize, usize)| {
+            format!(
+                "{}.{}",
+                after.rows[row - 1].id,
+                after.columns[column - 1].id
+            )
+        };
+        assert_number(&mut runtime, 2, "r0.n", None);
+        assert_number(&mut runtime, 2, "r0.dep", None);
+        assert_number(&mut runtime, 2, &target(number_pos), Some(1.0));
+        for target in [target(formula_pos), "r1.dep".into()] {
+            let projection = field(&mut runtime, 2, &target);
+            assert!(projection.formula.is_some());
+            assert_eq!(
+                projection
+                    .calculated
+                    .as_ref()
+                    .and_then(CalculationProjection::number),
+                Some(1.0)
+            );
+        }
+        assert_eq!(
+            after.rows[0]
+                .styles
+                .get(position("n") - 1)
+                .cloned()
+                .unwrap_or_default(),
+            CellStyle::default(),
+        );
+        assert_eq!(
+            after.rows[number_pos.0 - 1].styles.get(number_pos.1 - 1),
+            before.rows[0].styles.get(position("n") - 1),
+        );
+        let bytes = saved(&runtime, "resident/2");
+        history(&mut runtime, 2, false);
+        assert_eq!(saved(&runtime, "resident/3"), original);
+        history(&mut runtime, 3, true);
+        assert_eq!(saved(&runtime, "resident/4"), bytes);
+        let mut reopened = None;
+        open_project(
+            &mut reopened,
+            &bytes,
+            "00000000-0000-4000-8000-000000000814",
+        )
+        .unwrap();
+        let reopened_table = table(&mut reopened, "rows");
+        assert_eq!(reopened_table.columns, after.columns);
+        assert_eq!(reopened_table.rows, after.rows);
+    }
+}
+
+#[test]
+fn refused_positional_move_leaves_no_rows_or_columns_allocated() {
+    let mut runtime = fixture(document(2));
+    refused(
+        &mut runtime,
+        DesignerRequest::MoveCellsAt {
+            expected_revision: "resident/0".into(),
+            collection: "rows".into(),
+            moves: vec![PositionalCellMove {
+                from: "r0.req".into(),
+                row: 3,
+                column: 7,
+            }],
+        },
+        "invalid_table_operation",
+    );
 }

@@ -25,6 +25,7 @@ import type {
   SelectionStatisticsRange,
   DuplicateCollectionProjection,
   PasteCellInput,
+  PositionalCellMove,
   CapacityProjection,
   ProjectInspectionProjection,
 } from "./runtime/protocol.ts";
@@ -47,6 +48,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   translateA1Formula(input: TranslateA1FormulaInput): Promise<A1Translation>;
   renderA1Formula(input: RenderA1FormulaInput): Promise<A1Translation>;
   pasteCellsAt(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection>;
+  moveCellsAt(expectedRevision: string, collection: string, moves: PositionalCellMove[]): Promise<PublicationProjection>;
   rangeToTable(expectedRevision: string, range: SelectionStatisticsRange, name: string, hasHeader: boolean): Promise<DuplicateCollectionProjection>;
   queryCapacity(expectedRevision?: string): Promise<CapacityProjection>;
   /** Classify raw input in one Auto scalar cell. */
@@ -213,6 +215,7 @@ export type {
   SelectionStatisticsRange,
   DuplicateCollectionProjection,
   PasteCellInput,
+  PositionalCellMove,
   AutoDateOrder,
   ScalarEditInput,
   TrackerCommand,
