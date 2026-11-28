@@ -690,7 +690,6 @@ inline-test	packages/browser-client/runtime/src/capacity.rs	iferror_tests[cfg(te
 inline-test	packages/browser-client/runtime/src/display_text.rs	tests[cfg(test)]	166
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	capacity_proof_tests[cfg(test)]	309
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	column_number_format_inference_tests[cfg(test)]	47
-inline-test	packages/browser-client/runtime/src/interop_adapter.rs	date_guard_inventory_tests[cfg(test)]	23
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	future_ooxml_tests[cfg(test)]	43
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	ledger_cap_tests[cfg(test)]	263
 inline-test	packages/browser-client/runtime/src/interop_adapter.rs	native_tables_output_tests[cfg(test)]	988
