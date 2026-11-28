@@ -127,7 +127,8 @@ impl DesignerRuntime {
                             style.number_format = Some(format.clone());
                         }
                         CellStyleChange::Border { target, value } => {
-                            let borders = effective_borders(&candidate, &schema, entity, field);
+                            let borders =
+                                self.effective_borders(&candidate, &schema, entity, field);
                             style.borders = Some(edit_borders(
                                 &borders,
                                 *target,
@@ -371,6 +372,59 @@ impl DesignerRuntime {
             styles
         }
     }
+    fn effective_borders(
+        &self,
+        store: &PresentationStore,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Vec<BorderSide> {
+        cell_override(store, entity, field)
+            .borders
+            .or_else(|| {
+                store
+                    .tables
+                    .get(schema)
+                    .and_then(|table| table.column_styles.get(field))
+                    .and_then(|id| store.styles.get(id))
+                    .and_then(|style| style.borders.clone())
+            })
+            .unwrap_or_else(|| self.source_borders(schema, entity, field))
+    }
+
+    fn source_borders(
+        &self,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Vec<BorderSide> {
+        let style = self.imported.as_ref().and_then(|state| {
+            let sheet = state
+                .metadata
+                .sheets
+                .iter()
+                .find(|sheet| sheet.schema_id == schema.as_str())?;
+            let column = sheet
+                .columns
+                .iter()
+                .position(|column| column.field_id == field.as_str())?;
+            let row = sheet
+                .rows
+                .iter()
+                .find(|row| row.entity_id == entity.as_str())?;
+            Some(&row.styles[column])
+        });
+        match style {
+            Some(style) if style.border && style.border_sides.is_empty() => vec![
+                BorderSide::Top,
+                BorderSide::Right,
+                BorderSide::Bottom,
+                BorderSide::Left,
+            ],
+            Some(style) => style.border_sides.clone(),
+            None => Vec::new(),
+        }
+    }
 }
 
 fn history_action(store: PresentationStore) -> Result<HistoryAction, DesignerError> {
@@ -459,24 +513,6 @@ fn compact_palette(store: &mut PresentationStore) {
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     store.styles.retain(|id, _| used.contains(id));
-}
-
-fn effective_borders(
-    store: &PresentationStore,
-    schema: &SchemaId,
-    entity: &EntityId,
-    field: &FieldId,
-) -> Vec<BorderSide> {
-    let cell = cell_override(store, entity, field);
-    cell.borders.unwrap_or_else(|| {
-        store
-            .tables
-            .get(schema)
-            .and_then(|table| table.column_styles.get(field))
-            .and_then(|id| store.styles.get(id))
-            .and_then(|style| style.borders.clone())
-            .unwrap_or_default()
-    })
 }
 
 fn edit_borders(
