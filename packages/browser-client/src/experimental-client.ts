@@ -82,6 +82,7 @@ export interface ExperimentalDesignerClient extends DesignerClient {
   importSpreadsheetWorkingSize(bytes: ArrayBuffer, format: SpreadsheetFormat, csvOptions: ImportOptions, selection: ImportSelection, validate?: (candidate: ImportedWindowProjection) => void): Promise<ImportedWindowProjection>;
   inspectImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   openImportedProjectWorkingSize(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
+  reopenImportedXlsxWorkingSize(expected: OccurrenceProjection): Promise<OpenedWindowProjection>;
   inspectProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openProjectWorkingSize(bytes: ArrayBuffer): Promise<OpenedWindowProjection>;
   openCanonicalTree(files: readonly CanonicalProjectFile[]): Promise<OpenedProjection>;

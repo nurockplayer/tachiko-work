@@ -14349,14 +14349,10 @@ mod tests {
             .document()
             .keyed_grouped_sum_definitions
             .clone();
-        assert_eq!(
-            runtime
-                .query_keyed_grouped_sum(&"orders-summary".into())
-                .unwrap()
-                .groups[0]
-                .value,
-            6.0
-        );
+        let grouped = runtime
+            .query_keyed_grouped_sum(&"orders-summary".into())
+            .unwrap();
+        assert_eq!(grouped.groups[0].value.to_bits(), 6.0_f64.to_bits());
         // Add the only stored name to an unbound column, then remove that column.
         // Both transitions retain the saved definition. Reopen the named state
         // to exercise its retained v2 lifecycle through removal of the last name.
@@ -14410,32 +14406,20 @@ mod tests {
                 &ScalarEditInput::Number { input: "4".into() },
             )
             .unwrap();
-        assert_eq!(
-            runtime
-                .query_keyed_grouped_sum(&"orders-summary".into())
-                .unwrap()
-                .groups[0]
-                .value,
-            12.0
-        );
+        let grouped = runtime
+            .query_keyed_grouped_sum(&"orders-summary".into())
+            .unwrap();
+        assert_eq!(grouped.groups[0].value.to_bits(), 12.0_f64.to_bits());
         native_history(&mut runtime, false);
-        assert_eq!(
-            runtime
-                .query_keyed_grouped_sum(&"orders-summary".into())
-                .unwrap()
-                .groups[0]
-                .value,
-            6.0
-        );
+        let grouped = runtime
+            .query_keyed_grouped_sum(&"orders-summary".into())
+            .unwrap();
+        assert_eq!(grouped.groups[0].value.to_bits(), 6.0_f64.to_bits());
         native_history(&mut runtime, true);
-        assert_eq!(
-            runtime
-                .query_keyed_grouped_sum(&"orders-summary".into())
-                .unwrap()
-                .groups[0]
-                .value,
-            12.0
-        );
+        let grouped = runtime
+            .query_keyed_grouped_sum(&"orders-summary".into())
+            .unwrap();
+        assert_eq!(grouped.groups[0].value.to_bits(), 12.0_f64.to_bits());
         assert_eq!(
             runtime
                 .session
@@ -14620,14 +14604,10 @@ mod tests {
         );
         native_history(&mut runtime, true);
         assert_eq!(runtime.session.export_snapshot().document(), &created);
-        assert_eq!(
-            runtime
-                .query_keyed_grouped_sum(&"orders-summary".into())
-                .unwrap()
-                .groups[0]
-                .value,
-            12.0
-        );
+        let grouped = runtime
+            .query_keyed_grouped_sum(&"orders-summary".into())
+            .unwrap();
+        assert_eq!(grouped.groups[0].value.to_bits(), 12.0_f64.to_bits());
         native_history(&mut runtime, false);
         native_history(&mut runtime, false);
         assert_eq!(

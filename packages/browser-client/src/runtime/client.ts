@@ -54,6 +54,8 @@ export interface DesignerClient {
   inspectImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
   openImportedProject?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedProjection>;
   openImportedProjectWorkingSize?(bytes: ArrayBuffer, metadata: InteropMetadata): Promise<OpenedWindowProjection>;
+  /** Reopen the live, unedited XLSX import with working-size limits and its overwrite proof. */
+  reopenImportedXlsxWorkingSize?(expected: OccurrenceProjection): Promise<OpenedWindowProjection>;
   exportSpreadsheet?(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport>;
   /** Refuses with displayable diagnostics unless overwriting this opened XLSX is proven safe. */
   exportSpreadsheetOverwrite?(expected: OccurrenceProjection): Promise<SpreadsheetExport>;
