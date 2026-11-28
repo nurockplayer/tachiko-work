@@ -6,6 +6,7 @@
 mod column_conditional;
 mod fill;
 mod table;
+mod validation;
 
 pub use fill::CellFill;
 
@@ -652,50 +653,11 @@ fn column_exists(document: &Document, column: &crate::ColumnRef) -> bool {
 /// form a rule condition may not use, an out-of-bounds store, a title, rank or
 /// number format outside its declared grammar, or a color or border list with
 /// no canonical spelling.
-#[allow(clippy::too_many_lines)] // One ordered refusal pass keeps the error precedence visible.
 pub fn validate_presentation(
     store: &PresentationStore,
     document: &Document,
 ) -> Result<(), PresentationError> {
-    if store.styles.len() > MAX_STYLES {
-        return Err(PresentationError::TooManyStyles {
-            found: store.styles.len(),
-            limit: MAX_STYLES,
-        });
-    }
-
-    let mut rules_per_schema = BTreeMap::<&SchemaId, usize>::new();
-    for (rule_id, rule) in &store.rules {
-        if !document.schemas.contains_key(&rule.schema) {
-            return Err(PresentationError::MissingSchema {
-                schema: rule.schema.clone(),
-            });
-        }
-        *rules_per_schema.entry(&rule.schema).or_default() += 1;
-        if rule.fields.is_empty() {
-            return Err(PresentationError::EmptyRuleFields {
-                rule: rule_id.clone(),
-            });
-        }
-        let mut seen = BTreeSet::new();
-        for field in &rule.fields {
-            if !seen.insert(field) {
-                return Err(PresentationError::DuplicateRuleField {
-                    rule: rule_id.clone(),
-                    field: field.clone(),
-                });
-            }
-        }
-    }
-    for (schema, found) in &rules_per_schema {
-        if *found > MAX_RULES_PER_TABLE {
-            return Err(PresentationError::TooManyRules {
-                schema: (**schema).clone(),
-                found: *found,
-                limit: MAX_RULES_PER_TABLE,
-            });
-        }
-    }
+    validation::validate_rule_inventory(store, document)?;
 
     for (style_id, style) in &store.styles {
         validate_style_spelling(style_id, style)?;
@@ -714,82 +676,9 @@ pub fn validate_presentation(
     }
 
     for (rule_id, rule) in &store.rules {
-        let schema =
-            document
-                .schemas
-                .get(&rule.schema)
-                .ok_or_else(|| PresentationError::MissingSchema {
-                    schema: rule.schema.clone(),
-                })?;
-        if !rule_rank_is_valid(&rule.rank) {
-            return Err(PresentationError::InvalidRank {
-                rule: rule_id.clone(),
-                rank: rule.rank.clone(),
-            });
-        }
-        for field in &rule.fields {
-            if !schema.fields.contains_key(field) {
-                return Err(PresentationError::MissingField {
-                    schema: rule.schema.clone(),
-                    field: field.clone(),
-                });
-            }
-        }
-        if !store.styles.contains_key(&rule.style) {
-            return Err(PresentationError::MissingStyle {
-                style: rule.style.clone(),
-            });
-        }
-        validate_rule_condition(rule_id, schema, &rule.condition, document)?;
+        validation::validate_rule(rule_id, rule, store, document)?;
     }
 
-    for ((entity_id, field), style) in &store.cells {
-        let entity =
-            document
-                .entities
-                .get(entity_id)
-                .ok_or_else(|| PresentationError::MissingEntity {
-                    entity: entity_id.clone(),
-                })?;
-        let Some(schema) = document.schemas.get(&entity.schema) else {
-            return Err(PresentationError::MissingSchema {
-                schema: entity.schema.clone(),
-            });
-        };
-        if !schema.fields.contains_key(field) {
-            return Err(PresentationError::CellFieldNotOnEntitySchema {
-                entity: entity_id.clone(),
-                field: field.clone(),
-            });
-        }
-        if !store.styles.contains_key(style) {
-            return Err(PresentationError::MissingStyle {
-                style: style.clone(),
-            });
-        }
-    }
-
-    let mut used = BTreeSet::new();
-    for style in store
-        .tables
-        .values()
-        .flat_map(|table| table.column_styles.values())
-    {
-        used.insert(style.clone());
-    }
-    for style in store.rules.values().map(|rule| &rule.style) {
-        used.insert(style.clone());
-    }
-    for style in store.cells.values() {
-        used.insert(style.clone());
-    }
-    for style in store.styles.keys() {
-        if !used.contains(style) {
-            return Err(PresentationError::UnusedStyle {
-                style: style.clone(),
-            });
-        }
-    }
-
-    Ok(())
+    validation::validate_cell_references(store, document)?;
+    validation::validate_style_usage(store)
 }

@@ -136,7 +136,6 @@ body	crates/merge-engine/src/lib.rs	merge_supported	88
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	77
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
-body	crates/semantic-core/src/presentation.rs	validate_presentation	130
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	97
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
@@ -343,7 +342,6 @@ branches	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_au
 branches	crates/semantic-core/src/model.rs	<Expression>::reference_uses	20
 branches	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	22
 branches	crates/semantic-core/src/presentation.rs	rule_survives_prune	29
-branches	crates/semantic-core/src/presentation.rs	validate_presentation	41
 branches	crates/semantic-core/src/presentation.rs	validate_rule_condition	16
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	23
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	15
@@ -713,7 +711,6 @@ reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clipp
 reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
 reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
-reason	crates/semantic-core/src/presentation.rs	validate_presentation allow(clippy::too_many_lines)	1
 reason	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value allow(clippy::too_many_arguments)	1
 reason	crates/semantic-core/src/validation.rs	validate_value allow(clippy::too_many_arguments)	1
 reason	crates/semantic-core/tests/diagnostic_contract.rs	duplicate_keys_identify_distinct_store_entries_when_declared_ids_match allow(clippy::too_many_lines)	1
