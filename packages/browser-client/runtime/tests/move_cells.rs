@@ -1139,33 +1139,38 @@ fn json_wire_round_trip_preserves_request_name_and_fields() {
     assert_number(&mut runtime, 1, "r1.n", Some(1.0));
 }
 
+fn styled_positional_move_fixture() -> Session {
+    let mut doc = document(2);
+    set(
+        &mut doc,
+        "r0.dep",
+        Some(Value::Formula(Expression::SameRowReference("n".into()))),
+    );
+    set(
+        &mut doc,
+        "r1.dep",
+        Some(Value::Formula(Expression::Reference(FieldRef::new(
+            "r0", "dep",
+        )))),
+    );
+    let mut runtime = fixture(doc);
+    publish(
+        &mut runtime,
+        DesignerRequest::SetCellStyle {
+            expected_revision: "resident/0".into(),
+            collection: "rows".into(),
+            entities: vec!["r0".into()],
+            fields: vec!["n".into()],
+            changes: vec![CellStyleChange::Bold { value: true }],
+        },
+    );
+    runtime
+}
+
 #[test]
 fn positional_move_extends_either_axis_and_undo_and_reopen_preserve_contents() {
     for extend_rows in [false, true] {
-        let mut doc = document(2);
-        set(
-            &mut doc,
-            "r0.dep",
-            Some(Value::Formula(Expression::SameRowReference("n".into()))),
-        );
-        set(
-            &mut doc,
-            "r1.dep",
-            Some(Value::Formula(Expression::Reference(FieldRef::new(
-                "r0", "dep",
-            )))),
-        );
-        let mut runtime = fixture(doc);
-        publish(
-            &mut runtime,
-            DesignerRequest::SetCellStyle {
-                expected_revision: "resident/0".into(),
-                collection: "rows".into(),
-                entities: vec!["r0".into()],
-                fields: vec!["n".into()],
-                changes: vec![CellStyleChange::Bold { value: true }],
-            },
-        );
+        let mut runtime = styled_positional_move_fixture();
         let before = table(&mut runtime, "rows");
         let original = saved(&runtime, "resident/1");
         let position = |field| {
