@@ -18,8 +18,9 @@ use crate::patch_lifecycle::{
 };
 use crate::resident_session::ResidentSnapshot;
 use crate::{
-    Document, DocumentId, FieldRef, FieldType, SemanticValueKind, Value, WorkspaceError,
-    field_definition, field_value_input_rule, formula_update_target_rule, semantic_value_kind,
+    Document, DocumentId, FieldDefinition, FieldRef, FieldType, SemanticValueKind, Value,
+    WorkspaceError, field_definition, field_value_input_rule, formula_update_target_rule,
+    semantic_value_kind,
 };
 
 /// Whether a discovered family is read-only or can describe a semantic edit.
@@ -153,34 +154,7 @@ pub(crate) fn describe_field_capabilities(
     let declared_type = definition.field_type.clone();
     let current_value_kind = existing.map(semantic_value_kind);
 
-    let mut capabilities = Vec::with_capacity(8);
-    for input_kind in [
-        SemanticValueKind::Number,
-        SemanticValueKind::Text,
-        SemanticValueKind::Boolean,
-        SemanticValueKind::Date,
-        SemanticValueKind::Reference,
-    ] {
-        capabilities.push(FieldCapability {
-            family: OperationFamily::SetFieldValue,
-            kind: FieldCapabilityKind::Edit,
-            input: FieldCapabilityInput::TypedValue { kind: input_kind },
-            applicability: field_value_applicability(
-                field,
-                existing,
-                input_kind,
-                &declared_type,
-                definition.required,
-            )?,
-        });
-    }
-
-    capabilities.push(FieldCapability {
-        family: OperationFamily::FormulaUpdate,
-        kind: FieldCapabilityKind::Edit,
-        input: FieldCapabilityInput::Formula,
-        applicability: formula_update_applicability(document, field)?,
-    });
+    let mut capabilities = field_edit_capabilities(document, field, existing, definition)?;
     capabilities.push(FieldCapability {
         family: OperationFamily::FormulaReasoning,
         kind: FieldCapabilityKind::Query,
@@ -219,6 +193,43 @@ pub(crate) fn describe_field_capabilities(
         current_value_kind,
         capabilities,
     })
+}
+
+fn field_edit_capabilities(
+    document: &Document,
+    field: &FieldRef,
+    existing: Option<&Value>,
+    definition: &FieldDefinition,
+) -> Result<Vec<FieldCapability>, WorkspaceError> {
+    let mut capabilities = Vec::with_capacity(8);
+    for input_kind in [
+        SemanticValueKind::Number,
+        SemanticValueKind::Text,
+        SemanticValueKind::Boolean,
+        SemanticValueKind::Date,
+        SemanticValueKind::Reference,
+    ] {
+        capabilities.push(FieldCapability {
+            family: OperationFamily::SetFieldValue,
+            kind: FieldCapabilityKind::Edit,
+            input: FieldCapabilityInput::TypedValue { kind: input_kind },
+            applicability: field_value_applicability(
+                field,
+                existing,
+                input_kind,
+                &definition.field_type,
+                definition.required,
+            )?,
+        });
+    }
+
+    capabilities.push(FieldCapability {
+        family: OperationFamily::FormulaUpdate,
+        kind: FieldCapabilityKind::Edit,
+        input: FieldCapabilityInput::Formula,
+        applicability: formula_update_applicability(document, field)?,
+    });
+    Ok(capabilities)
 }
 
 fn field_value_applicability(

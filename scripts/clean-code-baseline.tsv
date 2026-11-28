@@ -161,7 +161,6 @@ body	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	110
 body	crates/storage/src/roproj/v3.rs	write_definition	65
 body	crates/storage/src/roproj/v3.rs	write_expression	215
 body	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	76
-body	crates/workspace-engine/src/capability_discovery.rs	describe_field_capabilities	82
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	71
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_formula_reasoning	91
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::query_number_override_scenario	98
