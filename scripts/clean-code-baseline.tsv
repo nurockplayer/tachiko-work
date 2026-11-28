@@ -110,7 +110,6 @@ args	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	6
 args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::aggregate	6
 args	packages/browser-client/runtime/src/translate_a1.rs	<GridGeometry<'_> as A1Geometry>::column	6
 body	crates/cli/src/commands.rs	analysis_failure_output	62
-body	crates/cli/src/commands.rs	parse_analysis_predicate	69
 body	crates/cli/src/commands.rs	schema_change_output	65
 body	crates/cli/src/main.rs	execute	121
 body	crates/diff-engine/src/canonical_delta.rs	<CanonicalDirectFact>::ordering_key	71
@@ -295,7 +294,6 @@ body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	78
 body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	77
 body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	75
 branches	crates/cli/src/commands.rs	analysis_failure_output	14
-branches	crates/cli/src/commands.rs	parse_analysis_predicate	19
 branches	crates/cli/src/main.rs	execute	34
 branches	crates/diff-engine/src/canonical_delta.rs	<CanonicalDirectFact>::ordering_key	27
 branches	crates/diff-engine/src/canonical_delta.rs	compare_entity	13
@@ -625,7 +623,7 @@ depth	packages/browser-client/runtime/src/lib.rs	process_wire_request	4
 depth	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	5
 depth	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	4
 depth	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	4
-file	crates/cli/src/commands.rs		1559
+file	crates/cli/src/commands.rs		1506
 file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1300

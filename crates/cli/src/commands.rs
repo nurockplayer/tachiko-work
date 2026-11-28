@@ -21,7 +21,7 @@ use tachiko_workspace_engine::analysis_operations::{
     AnalysisResultValue, MetricIncompleteReason, NumericAggregateOutcome, PredicateOperand,
 };
 use tachiko_workspace_engine::{
-    CalculationFailure, ColumnFailure, Date, Document, EditPreview, ExpressionComplexityError,
+    CalculationFailure, ColumnFailure, Document, EditPreview, ExpressionComplexityError,
     FieldAddress, FieldKind, FieldRef, IdGenerator, MergeConflict, ReferenceFailure,
     SemanticChange, SemanticIdKind, StarterTemplate, ValidationReport, WorkspaceError,
     WorkspaceMergeOutcome, analyze_changes as analyze_semantic_changes,
@@ -46,6 +46,8 @@ use tachiko_workspace_engine::{
 };
 use thiserror::Error;
 use uuid::Uuid;
+
+mod analysis_predicate;
 
 struct UuidV7Generator {
     document_override: Option<String>,
@@ -1062,63 +1064,8 @@ fn parse_analysis_predicate(value: &str) -> Result<AnalysisPredicate, CommandErr
         });
     }
     let field = tachiko_workspace_engine::FieldId::from(parts[0]);
-    let operator = match parts[1] {
-        "=" | "==" | "eq" => AnalysisPredicateOperator::Equal,
-        "!=" | "ne" => AnalysisPredicateOperator::NotEqual,
-        "<" | "lt" => AnalysisPredicateOperator::LessThan,
-        "<=" | "lte" => AnalysisPredicateOperator::LessThanOrEqual,
-        ">" | "gt" => AnalysisPredicateOperator::GreaterThan,
-        ">=" | "gte" => AnalysisPredicateOperator::GreaterThanOrEqual,
-        _ => {
-            return Err(CommandError::InvalidAnalysisSyntax {
-                kind: "predicate",
-                value: value.to_owned(),
-                expected: "field:operator:type:value (operator: =, !=, <, <=, >, >=)",
-            });
-        }
-    };
-    let operand = match parts[2] {
-        "number" => parts[3]
-            .parse::<f64>()
-            .ok()
-            .and_then(|n| tachiko_workspace_engine::Number::new(n).ok())
-            .map(PredicateOperand::Number)
-            .ok_or_else(|| CommandError::InvalidAnalysisSyntax {
-                kind: "predicate",
-                value: value.to_owned(),
-                expected: "a finite number operand",
-            })?,
-        "text" => PredicateOperand::Text(parts[3].to_owned()),
-        "boolean" => match parts[3] {
-            "true" => PredicateOperand::Boolean(true),
-            "false" => PredicateOperand::Boolean(false),
-            _ => {
-                return Err(CommandError::InvalidAnalysisSyntax {
-                    kind: "predicate",
-                    value: value.to_owned(),
-                    expected: "boolean value true or false",
-                });
-            }
-        },
-        "date" => parts[3]
-            .parse::<Date>()
-            .map(PredicateOperand::Date)
-            .map_err(|_| CommandError::InvalidAnalysisSyntax {
-                kind: "predicate",
-                value: value.to_owned(),
-                expected: "a canonical Gregorian date operand (YYYY-MM-DD)",
-            })?,
-        "reference" => {
-            PredicateOperand::Reference(tachiko_workspace_engine::EntityId::from(parts[3]))
-        }
-        _ => {
-            return Err(CommandError::InvalidAnalysisSyntax {
-                kind: "predicate",
-                value: value.to_owned(),
-                expected: "type number, text, boolean, date, or reference",
-            });
-        }
-    };
+    let operator = analysis_predicate::parse_operator(value, parts[1])?;
+    let operand = analysis_predicate::parse_operand(value, parts[2], parts[3])?;
     Ok(AnalysisPredicate::new(field, operator, operand))
 }
 
