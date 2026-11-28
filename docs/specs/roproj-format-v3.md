@@ -35,6 +35,12 @@ version and Accepted authority. ADR-0043 selects no v4 or down-conversion.
 that exception to a closed list of constructs until #579 freezes v3. None of them
 is part of this contract until its own Accepted ADR amends this text.
 
+Under that window and before [#579](https://github.com/nurockplayer/tachiko-work/issues/579),
+the [ADR-0049 cell-style amendment](../decisions/ADR-0049-stored-presentation.md#2-cell-styles)
+allows `"fill":false` for a cell-bound palette style in `presentation.jsonl`.
+The [v3 layout](roproj-layout-v3.md#presentation-member--adr-0049) specifies
+the binding and canonical byte rules. Older v3 readers reject this value.
+
 V3's DTO changes include manifest version `3` and optional `collection_order`; FieldDefinition's five
 required members plus optional `display_name` and `number_format`; optional Schema `display_name`;
 the added `date` FieldType; the added `date` Value; and the constraint union

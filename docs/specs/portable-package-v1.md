@@ -38,6 +38,13 @@ payload root gains `leaf_20` as its last leaf, with the same path-and-bytes form
 same domain. A package without the entry keeps its exact twenty entries, its
 nineteen-leaf root and its hashes. A reader accepts exactly these two forms.
 
+The [ADR-0049 cell-style amendment](../decisions/ADR-0049-stored-presentation.md#2-cell-styles)
+uses the [ADR-0046 pre-freeze window](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md)
+before [#579](https://github.com/nurockplayer/tachiko-work/issues/579). The package
+carries the v3 member bytes as written, including the new cell-only `"fill":false`
+value. Entry order, hash domains and bytes of existing packages stay the same.
+Older readers reject a payload using the new value.
+
 ### Pre-1.0 revision window — ADR-0046
 
 [ADR-0046](../decisions/ADR-0046-pre-1-0-roproj-v3-revision-window.md) lets a
