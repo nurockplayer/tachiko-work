@@ -19,8 +19,6 @@ mod selected_constraints;
 
 use display_name::add_name_conflicts;
 
-use display_name::add_name_conflicts;
-
 /// The explicitly selected constraint-aware semantic conflict contract.
 pub const SEMANTIC_CONFLICT_V2: &str = "tachiko.semantic-conflict/v2";
 
