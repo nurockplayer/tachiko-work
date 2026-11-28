@@ -719,7 +719,6 @@ reason	crates/formula-engine/src/parser.rs	format_unbound_expression allow(clipp
 reason	crates/formula-engine/tests/conditional_aggregate.rs	a_criterion_can_read_another_cell allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/tests/conditional_aggregate.rs	update allow(clippy::needless_pass_by_value)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
 reason	crates/semantic-core/src/criterion.rs	<CriterionTest>::matches_equal allow(clippy::float_cmp)	1
 reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
