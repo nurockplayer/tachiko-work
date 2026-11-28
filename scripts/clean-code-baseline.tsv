@@ -13,8 +13,6 @@ args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
 args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
 args	crates/merge-engine/src/lib.rs	merge_field_definition	7
-args	crates/merge-engine/src/lib.rs	merge_optional	6
-args	crates/merge-engine/src/lib.rs	merge_scalar	6
 args	crates/merge-engine/src/lib.rs	merge_schema	6
 args	crates/merge-engine/src/lib.rs	merge_schema_fields	6
 args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	6
@@ -138,7 +136,7 @@ body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
 body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
-body	crates/merge-engine/src/lib.rs	merge_supported	90
+body	crates/merge-engine/src/lib.rs	merge_supported	88
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
@@ -652,7 +650,7 @@ file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		968
-file	crates/merge-engine/src/lib.rs		1112
+file	crates/merge-engine/src/lib.rs		1107
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1881
 file	crates/storage/src/direct_ro/v2.rs		1457
