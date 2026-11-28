@@ -156,12 +156,58 @@ fn package_error(error: impl std::fmt::Display) -> DesignerError {
     imported_export_error("workbook", &error.to_string())
 }
 
-pub(super) fn export(
+pub(super) fn reopen_working_size(
+    runtime: Option<&DesignerRuntime>,
+    expected: &OccurrenceProjection,
+    occurrence_id: &str,
+) -> Result<(DesignerRuntime, DesignerResponse), DesignerError> {
+    let runtime = runtime.ok_or_else(source_unavailable)?;
+    check_expected(runtime, expected)?;
+    let proof = runtime
+        .xlsx_overwrite
+        .as_ref()
+        .ok_or_else(source_unavailable)?;
+    if expected.revision != "resident/0" {
+        return Err(DesignerError::InvalidProjectTransfer {
+            message: "Reopen the XLSX at working size before editing.".into(),
+        });
+    }
+    if occurrence_id == runtime.row_namespace {
+        return Err(DesignerError::InvalidOccurrenceIdentity);
+    }
+
+    // Both the snapshot and its mapping come from the proof's live occurrence.
+    let snapshot = runtime.export_project_v3(&expected.revision)?;
+    let metadata = snapshot
+        .import_metadata
+        .expect("XLSX has resident metadata");
+    let (mut candidate, opened) =
+        crate::admit_imported_project_working_size(&snapshot.bytes, occurrence_id, &metadata)?;
+    candidate.xlsx_overwrite = Some(match proof {
+        Ok(_) => {
+            // The untouched export already matched the source. Verify the
+            // reopened representation against it before carrying the proof.
+            let (verified, _) = encode(runtime, &expected.revision)?;
+            prove(&candidate, &verified, &[])
+        }
+        Err(_) => proof.clone(),
+    });
+    Ok((candidate, DesignerResponse::OpenedWindow(Box::new(opened))))
+}
+
+fn source_unavailable() -> DesignerError {
+    refusal(vec![finding(
+        "xlsx_source_unavailable",
+        "workbook",
+        "Open the original XLSX in this session to verify overwrite fidelity.",
+    )])
+}
+
+fn check_expected(
     runtime: &DesignerRuntime,
     expected: &OccurrenceProjection,
-) -> Result<(SpreadsheetExportProjection, Vec<u8>), DesignerError> {
-    let revision = &expected.revision;
-    runtime.check_revision(revision)?;
+) -> Result<(), DesignerError> {
+    runtime.check_revision(&expected.revision)?;
     if expected.scope != runtime.occurrence_scope() {
         return Err(refusal(vec![finding(
             "xlsx_source_occurrence_changed",
@@ -169,13 +215,19 @@ pub(super) fn export(
             "The opened workbook has changed. Overwrite is refused for the previous workbook.",
         )]));
     }
-    let Some(proof) = &runtime.xlsx_overwrite else {
-        return Err(refusal(vec![finding(
-            "xlsx_source_unavailable",
-            "workbook",
-            "Open the original XLSX in this session to verify overwrite fidelity.",
-        )]));
-    };
+    Ok(())
+}
+
+pub(super) fn export(
+    runtime: &DesignerRuntime,
+    expected: &OccurrenceProjection,
+) -> Result<(SpreadsheetExportProjection, Vec<u8>), DesignerError> {
+    check_expected(runtime, expected)?;
+    let revision = &expected.revision;
+    let proof = runtime
+        .xlsx_overwrite
+        .as_ref()
+        .ok_or_else(source_unavailable)?;
     let original = proof
         .as_ref()
         .map_err(|findings| refusal(findings.clone()))?;

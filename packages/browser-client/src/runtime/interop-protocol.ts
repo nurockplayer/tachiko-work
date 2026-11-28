@@ -36,6 +36,7 @@ export type SpreadsheetOperation =
   | {type: "import"; format: SpreadsheetFormat; csv_options: ImportOptions; selection: ImportSelection; occurrence_id: string; install: boolean; profile?: "working_size"}
   | {type: "inspect_project"; metadata: InteropMetadata; profile?: "working_size"}
   | {type: "open_project"; occurrence_id: string; metadata: InteropMetadata; profile?: "working_size"}
+  | {type: "reopen_imported_xlsx_working_size"; expected: OccurrenceProjection; occurrence_id: string}
   | {type: "export"; expected_revision: string; metadata: InteropMetadata; format: SpreadsheetFormat; collection: string}
   | {type: "export_xlsx_overwrite"; expected: OccurrenceProjection}
   | {type: "export_native_tables"; expected_revision: string; collection: string; format: SpreadsheetFormat}

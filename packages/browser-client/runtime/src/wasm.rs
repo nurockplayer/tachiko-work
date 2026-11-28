@@ -55,6 +55,14 @@ struct SpreadsheetResult {
 }
 
 impl SpreadsheetResult {
+    fn opened((candidate, response): (DesignerRuntime, DesignerResponse)) -> Self {
+        Self {
+            profile: candidate.profile,
+            candidate: Some(candidate),
+            ..Self::read_only(response)
+        }
+    }
+
     fn exported(
         profile: SessionProfile,
         receipt: SpreadsheetExportProjection,
@@ -416,22 +424,7 @@ fn spreadsheet_operation(
             profile,
         } => {
             *retained = None;
-            let working = profile.is_some();
-            let (source, size) = import_source(project, format, &csv_options, working)?;
-            let profile = if working {
-                SessionProfile::WorkingSize
-            } else if validate_text_capacity_inspection(&source).is_ok() {
-                SessionProfile::TextCapacity
-            } else {
-                SessionProfile::Ordinary
-            };
-            let mut reply = SpreadsheetResult::read_only(ImportPreview(Box::new(source)));
-            reply.profile = profile;
-            if matches!(format, SpreadsheetFormat::Xlsx) {
-                reply.inspected_source =
-                    Some((SourceIdentity::new(project, csv_options, working), size));
-            }
-            Ok(reply)
+            inspect_spreadsheet(project, format, csv_options, profile.is_some())
         }
         SpreadsheetOperation::Import(request) => import_spreadsheet(&request, project, retained),
         SpreadsheetOperation::InspectProject { metadata, profile } => {
@@ -441,7 +434,18 @@ fn spreadsheet_operation(
             occurrence_id,
             metadata,
             profile,
-        } => open_imported_project_spreadsheet(project, &occurrence_id, &metadata, profile),
+        } => crate::spreadsheet_request::admit_saved_import(
+            project,
+            &occurrence_id,
+            &metadata,
+            profile,
+        )
+        .map(SpreadsheetResult::opened),
+        SpreadsheetOperation::ReopenImportedXlsxWorkingSize {
+            expected,
+            occurrence_id,
+        } => crate::spreadsheet_overwrite::reopen_working_size(runtime, &expected, &occurrence_id)
+            .map(SpreadsheetResult::opened),
         SpreadsheetOperation::Export {
             expected_revision,
             metadata,
@@ -488,6 +492,28 @@ fn spreadsheet_operation(
             format,
         ),
     }
+}
+
+fn inspect_spreadsheet(
+    project: &[u8],
+    format: SpreadsheetFormat,
+    csv_options: ImportOptions,
+    working: bool,
+) -> Result<SpreadsheetResult, DesignerError> {
+    let (source, size) = import_source(project, format, &csv_options, working)?;
+    let profile = if working {
+        SessionProfile::WorkingSize
+    } else if validate_text_capacity_inspection(&source).is_ok() {
+        SessionProfile::TextCapacity
+    } else {
+        SessionProfile::Ordinary
+    };
+    let mut reply = SpreadsheetResult::read_only(ImportPreview(Box::new(source)));
+    reply.profile = profile;
+    if matches!(format, SpreadsheetFormat::Xlsx) {
+        reply.inspected_source = Some((SourceIdentity::new(project, csv_options, working), size));
+    }
+    Ok(reply)
 }
 
 fn import_spreadsheet(
@@ -554,38 +580,6 @@ fn inspect_imported_project_spreadsheet(
                 SpreadsheetResult::read_only(DesignerResponse::OpenedWindow(Box::new(opened)));
             result.profile = profile;
             Ok(result)
-        }
-    }
-}
-
-fn open_imported_project_spreadsheet(
-    project: &[u8],
-    occurrence_id: &str,
-    metadata: &InteropMetadata,
-    profile: Option<DesignerProfile>,
-) -> Result<SpreadsheetResult, DesignerError> {
-    match profile {
-        None => {
-            let (candidate, opened) =
-                crate::admit_imported_project(project, occurrence_id, metadata)?;
-            Ok(SpreadsheetResult {
-                inspected_source: None,
-                profile: candidate.profile,
-                response: DesignerResponse::Opened(Box::new(opened)),
-                candidate: Some(candidate),
-                export: None,
-            })
-        }
-        Some(DesignerProfile::WorkingSize) => {
-            let (candidate, opened) =
-                crate::admit_imported_project_working_size(project, occurrence_id, metadata)?;
-            Ok(SpreadsheetResult {
-                inspected_source: None,
-                profile: candidate.profile,
-                response: DesignerResponse::OpenedWindow(Box::new(opened)),
-                candidate: Some(candidate),
-                export: None,
-            })
         }
     }
 }
