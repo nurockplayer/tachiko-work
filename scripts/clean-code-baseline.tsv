@@ -152,7 +152,7 @@ body	crates/semantic-core/src/validation.rs	validate_value	66
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	93
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	92
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	99
-body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	85
+body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	84
 body	crates/storage/src/direct_ro/v2.rs	write_expression	140
 body	crates/storage/src/portable_package/v1.rs	parse_container_at_end	83
 body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
@@ -651,7 +651,7 @@ file	crates/merge-engine/src/conflict_v2.rs		968
 file	crates/merge-engine/src/lib.rs		1112
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1881
-file	crates/storage/src/direct_ro/v2.rs		1456
+file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1184
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1692

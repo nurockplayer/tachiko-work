@@ -10,6 +10,8 @@ use tachiko_semantic_core::{
 };
 
 pub(crate) const FORMAT_VERSION: u32 = 2;
+const UNSUPPORTED_FORMULA: &str =
+    "lookups, deleted references and conditional aggregates are not representable in direct .ro/v2";
 
 #[derive(Debug)]
 pub(crate) enum CodecError {
@@ -854,9 +856,8 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                 then_value,
                 else_value,
             } => {
-                stack.extend(
-                    [else_value, then_value, condition].map(|child| (child.as_ref(), depth + 1)),
-                );
+                let children = [else_value, then_value, condition];
+                stack.extend(children.map(|child| (child.as_ref(), depth + 1)));
             }
             Expression::And(expressions) | Expression::Or(expressions) => {
                 stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
@@ -892,7 +893,7 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::Lookup { .. }
             | Expression::ColumnConditional { .. }
             | Expression::DeletedReference {} => {
-                return invalid("formula expression requires .roproj/v3".to_owned());
+                return invalid(UNSUPPORTED_FORMULA.to_owned());
             }
             Expression::Number(_)
             | Expression::Reference(_)
