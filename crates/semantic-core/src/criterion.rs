@@ -310,7 +310,10 @@ impl CriterionTest {
         Some(vec![CriterionKey::Text(lowercase_text(&self.text))])
     }
 
-    #[allow(clippy::float_cmp)] // equality of finite values is the comparison
+    #[allow(
+        clippy::float_cmp,
+        reason = "Numeric criteria require exact equality of finite numbers and parsed numeric text"
+    )]
     fn matches_equal(&self, cell: Option<CriterionCell<'_>>) -> bool {
         match cell {
             None => self.text.is_empty() && matches!(&self.operand, Operand::Text),

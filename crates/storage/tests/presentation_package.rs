@@ -8,10 +8,10 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ComparisonOperator, ConditionalRule, DateFormat,
-    Document, Entity, EntityId, Expression, FieldConstraint, FieldDefinition, FieldId, FieldType,
-    FooterAggregate, Number, NumberFormat, NumberFormatKind, PresentationStore, RuleId, Schema,
-    SchemaId, StyleId, TablePresentation,
+    BorderSide, CellAlignment, CellFill, CellStyle, ComparisonOperator, ConditionalRule,
+    DateFormat, Document, Entity, EntityId, Expression, FieldConstraint, FieldDefinition, FieldId,
+    FieldType, FooterAggregate, Number, NumberFormat, NumberFormatKind, PresentationStore, RuleId,
+    Schema, SchemaId, StyleId, TablePresentation,
 };
 use tachiko_storage::{
     CanonicalRoProjectV3, FormatError, PortablePackageError, ROPROJ_V3_PRESENTATION_PATH,
@@ -96,7 +96,7 @@ fn full_style() -> CellStyle {
     CellStyle {
         bold: Some(true),
         italic: Some(false),
-        fill: Some("#FFEE00".into()),
+        fill: Some(CellFill::Solid("#FFEE00".into())),
         text_color: Some("#112233".into()),
         alignment: Some(CellAlignment::Center),
         wrap: Some(true),

@@ -1,7 +1,8 @@
 //! Identity-bound cell presentation commands; semantic values never change.
 use serde::{Deserialize, Serialize};
 use tachiko_workspace_engine::{
-    BorderSide, CellStyle, EntityId, FieldId, FieldType, NumberFormat, PresentationStore, SchemaId,
+    BorderSide, CellFill, CellStyle, EntityId, FieldId, FieldType, NumberFormat, PresentationStore,
+    SchemaId,
 };
 
 use crate::{
@@ -115,19 +116,21 @@ impl DesignerRuntime {
         let mut candidate = self.presentation.clone();
         for change in changes {
             let change = resolve_toggle(&candidate, &schema, &entities, &fields, change);
-            self.preserve_inherited_fills(&mut candidate, &schema, &fields, &change)?;
             for (row, entity) in entities.iter().enumerate() {
                 for (column, field) in fields.iter().enumerate() {
                     let mut style = cell_override(&candidate, entity, field);
                     match &change {
                         CellStyleChange::Bold { value } => style.bold = Some(*value),
                         CellStyleChange::Italic { value } => style.italic = Some(*value),
-                        CellStyleChange::Fill { color } => style.fill.clone_from(color),
+                        CellStyleChange::Fill { color } => {
+                            style.fill = fill_change(&candidate, &schema, field, color.as_deref());
+                        }
                         CellStyleChange::NumberFormat { format } => {
                             style.number_format = Some(format.clone());
                         }
                         CellStyleChange::Border { target, value } => {
-                            let borders = effective_borders(&candidate, &schema, entity, field);
+                            let borders =
+                                self.effective_borders(&candidate, &schema, entity, field);
                             style.borders = Some(edit_borders(
                                 &borders,
                                 *target,
@@ -212,67 +215,6 @@ impl DesignerRuntime {
             }
         }
         Ok(schema)
-    }
-
-    // ADR-0049 has no explicit "no fill" sentinel. Move inherited fills to
-    // existing records before clearing selected cells, preserving their neighbours.
-    fn preserve_inherited_fills(
-        &self,
-        store: &mut PresentationStore,
-        schema: &SchemaId,
-        fields: &[FieldId],
-        change: &CellStyleChange,
-    ) -> Result<(), DesignerError> {
-        if matches!(change, CellStyleChange::Fill { color: None }) {
-            for field in fields {
-                self.expand_column_fill(store, schema, field)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn expand_column_fill(
-        &self,
-        store: &mut PresentationStore,
-        schema: &SchemaId,
-        field: &FieldId,
-    ) -> Result<(), DesignerError> {
-        let Some(id) = store
-            .tables
-            .get(schema)
-            .and_then(|table| table.column_styles.get(field))
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let mut column = store.styles[&id].clone();
-        let Some(fill) = column.fill.take() else {
-            return Ok(());
-        };
-        let table = store
-            .tables
-            .get_mut(schema)
-            .expect("column style has a table");
-        table.column_styles.remove(field);
-        if column != CellStyle::default() {
-            let id = tachiko_storage::style_id(&column)?;
-            store.styles.insert(id.clone(), column);
-            table.column_styles.insert(field.clone(), id);
-        }
-        for entity in self
-            .session
-            .document()
-            .entities
-            .values()
-            .filter(|entity| &entity.schema == schema)
-        {
-            let mut style = cell_override(store, &entity.id, field);
-            if style.fill.is_none() {
-                style.fill = Some(fill.clone());
-                put_cell(store, &entity.id, field, style)?;
-            }
-        }
-        Ok(())
     }
 
     fn validate_cell_presentation(&self, store: &PresentationStore) -> Result<(), DesignerError> {
@@ -371,11 +313,81 @@ impl DesignerRuntime {
             styles
         }
     }
+    fn effective_borders(
+        &self,
+        store: &PresentationStore,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Vec<BorderSide> {
+        cell_override(store, entity, field)
+            .borders
+            .or_else(|| {
+                store
+                    .tables
+                    .get(schema)
+                    .and_then(|table| table.column_styles.get(field))
+                    .and_then(|id| store.styles.get(id))
+                    .and_then(|style| style.borders.clone())
+            })
+            .unwrap_or_else(|| self.source_borders(schema, entity, field))
+    }
+
+    fn source_borders(
+        &self,
+        schema: &SchemaId,
+        entity: &EntityId,
+        field: &FieldId,
+    ) -> Vec<BorderSide> {
+        let style = self.imported.as_ref().and_then(|state| {
+            let sheet = state
+                .metadata
+                .sheets
+                .iter()
+                .find(|sheet| sheet.schema_id == schema.as_str())?;
+            let column = sheet
+                .columns
+                .iter()
+                .position(|column| column.field_id == field.as_str())?;
+            let row = sheet
+                .rows
+                .iter()
+                .find(|row| row.entity_id == entity.as_str())?;
+            Some(&row.styles[column])
+        });
+        match style {
+            Some(style) if style.border && style.border_sides.is_empty() => vec![
+                BorderSide::Top,
+                BorderSide::Right,
+                BorderSide::Bottom,
+                BorderSide::Left,
+            ],
+            Some(style) => style.border_sides.clone(),
+            None => Vec::new(),
+        }
+    }
 }
 
 fn history_action(store: PresentationStore) -> Result<HistoryAction, DesignerError> {
     let bytes = tachiko_storage::encode_presentation(&store)?.map_or(0, |bytes| bytes.len());
     Ok(HistoryAction::CellPresentation { store, bytes })
+}
+
+fn fill_change(
+    store: &PresentationStore,
+    schema: &SchemaId,
+    field: &FieldId,
+    color: Option<&str>,
+) -> Option<CellFill> {
+    if let Some(color) = color {
+        return Some(CellFill::Solid(color.to_owned()));
+    }
+    store
+        .tables
+        .get(schema)
+        .and_then(|table| table.column_styles.get(field))
+        .and_then(|id| store.styles[id].fill.as_ref())
+        .map(|_| CellFill::Clear)
 }
 
 fn cell_override(store: &PresentationStore, entity: &EntityId, field: &FieldId) -> CellStyle {
@@ -459,24 +471,6 @@ fn compact_palette(store: &mut PresentationStore) {
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     store.styles.retain(|id, _| used.contains(id));
-}
-
-fn effective_borders(
-    store: &PresentationStore,
-    schema: &SchemaId,
-    entity: &EntityId,
-    field: &FieldId,
-) -> Vec<BorderSide> {
-    let cell = cell_override(store, entity, field);
-    cell.borders.unwrap_or_else(|| {
-        store
-            .tables
-            .get(schema)
-            .and_then(|table| table.column_styles.get(field))
-            .and_then(|id| store.styles.get(id))
-            .and_then(|style| style.borders.clone())
-            .unwrap_or_default()
-    })
 }
 
 fn edit_borders(

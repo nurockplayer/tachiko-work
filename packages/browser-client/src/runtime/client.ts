@@ -5,6 +5,7 @@ import type {
   TrackerCommand,
   ScalarEditInput,
   PasteCellInput,
+  PositionalCellMove,
   BootstrapProjection,
   ProjectInspectionProjection,
   CapacityProjection,
@@ -76,6 +77,7 @@ export interface DesignerClient {
   newBlankWorkbook?(): Promise<OpenedWindowProjection>;
   writeCellAt?(expectedRevision: string, collection: string, row: number, column: number, input: ScalarEditInput): Promise<PublicationProjection>;
   pasteCellsAt?(expectedRevision: string, collection: string, row: number, column: number, rows: PasteCellInput[][]): Promise<PublicationProjection>;
+  moveCellsAt?(expectedRevision: string, collection: string, moves: PositionalCellMove[]): Promise<PublicationProjection>;
   newTable?(name: string, columns: NewTableColumnInput[]): Promise<OpenedProjection>;
   /** Create a table whose session profile is the working-size one. */
   newTableWorkingSize?(name: string, columns: NewTableColumnInput[]): Promise<OpenedWindowProjection>;

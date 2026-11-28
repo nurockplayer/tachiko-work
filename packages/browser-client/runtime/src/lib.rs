@@ -5,8 +5,10 @@
 
 mod insert_rows;
 mod move_cells;
+pub use move_cells::{CellMove, PositionalCellMove};
 #[cfg(test)]
 mod positional_insert_tests;
+mod row_removal;
 mod translate_a1;
 pub use translate_a1::{
     A1GeometryInput, A1RefusalCode, A1SheetGeometry, A1TokenSpan, A1Translation, A1TranslationNote,
@@ -487,6 +489,11 @@ pub enum DesignerRequest {
     MoveCells {
         expected_revision: String,
         moves: Vec<CellMove>,
+    },
+    MoveCellsAt {
+        expected_revision: String,
+        collection: String,
+        moves: Vec<PositionalCellMove>,
     },
     PasteCells {
         expected_revision: String,
@@ -1051,12 +1058,6 @@ fn wire_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64,
 pub struct CellEdit {
     pub target: FieldTarget,
     pub input: ScalarEditInput,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CellMove {
-    pub from: FieldTarget,
-    pub to: FieldTarget,
 }
 
 /// Private authoring input for the bounded native table creation path.
@@ -4223,12 +4224,9 @@ impl DesignerRuntime {
             } => Ok(DesignerResponse::Published(
                 self.edit_cells(&expected_revision, &edits)?,
             )),
-            DesignerRequest::MoveCells {
-                expected_revision,
-                moves,
-            } => Ok(DesignerResponse::Published(
-                self.move_cells(&expected_revision, &moves)?,
-            )),
+            DesignerRequest::MoveCells { .. } | DesignerRequest::MoveCellsAt { .. } => {
+                move_cells::dispatch(self, request)
+            }
             DesignerRequest::PasteCells {
                 expected_revision,
                 collection,
@@ -8597,16 +8595,6 @@ impl DesignerRuntime {
         Ok(publication)
     }
 
-    fn move_cells(
-        &mut self,
-        expected: &str,
-        moves: &[CellMove],
-    ) -> Result<PublicationProjection, DesignerError> {
-        self.check_revision(expected)?;
-        let movement = move_cells::plan(self, moves)?;
-        movement.publish(self, expected)
-    }
-
     fn edit_cells(
         &mut self,
         expected: &str,
@@ -8928,19 +8916,14 @@ impl DesignerRuntime {
             .iter()
             .map(|id| EntityId::from(id.as_str()))
             .collect::<BTreeSet<_>>();
-        let dependent_cells = dependent_formula_cells(
-            snapshot.document(),
-            |reference| removed.contains(&reference.entity),
-            |_| false,
-            |entity, _| removed.contains(entity),
-        );
-        if dependent_cells > 0 {
-            return Err(DesignerError::FormulaDependencyInUse {
-                dependent_cells,
-                subject: format!("removed rows in collection '{}'", spec.summary.display_name),
-            });
-        }
         inverse.reverse();
+        row_removal::rewrite_formulas(
+            snapshot.document(),
+            &spec,
+            &removed,
+            &mut forward,
+            &mut inverse,
+        )?;
         self.record_edit(expected, forward, inverse)
     }
 
@@ -11119,62 +11102,26 @@ fn map_copy_references(
         Expression::ColumnConditional { criteria, .. } => {
             for criterion in criteria {
                 if let Some(expression) = &mut criterion.value {
-                    match expression.as_mut() {
-                        Expression::Reference(reference) => visit(reference, false, false)?,
-                        Expression::AnchoredReference(reference) => visit(reference, false, true)?,
-                        Expression::SameRowReference(field) => visit_same_row(field, false)?,
-                        Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
-                        other => map_copy_references(other, visit, visit_same_row)?,
-                    }
+                    map_copy_operand(expression, visit, visit_same_row)?;
                 }
             }
             Ok(())
         }
         Expression::Reference(reference) => visit(reference, true, false),
         Expression::AnchoredReference(reference) => visit(reference, true, true),
-        Expression::DatePart {
-            operand: reference, ..
-        }
-        | Expression::Weekday {
-            operand: reference, ..
-        } => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false, false),
-            Expression::AnchoredReference(reference) => visit(reference, false, true),
-            Expression::SameRowReference(field) => visit_same_row(field, false),
-            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
-            _ => unreachable!("date function has a bound reference child"),
-        },
+        Expression::DatePart { operand, .. }
+        | Expression::Weekday { operand, .. }
+        | Expression::IsBlank(operand) => map_copy_operand(operand, visit, visit_same_row),
         Expression::Days { end, start } => {
-            for operand in [end, start] {
-                match operand.as_mut() {
-                    Expression::Reference(reference) => visit(reference, false, false)?,
-                    Expression::AnchoredReference(reference) => visit(reference, false, true)?,
-                    Expression::SameRowReference(field) => visit_same_row(field, false)?,
-                    Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
-                    _ => unreachable!("date function has a bound reference child"),
-                }
-            }
-            Ok(())
+            map_copy_operand(end, visit, visit_same_row)?;
+            map_copy_operand(start, visit, visit_same_row)
         }
-        Expression::IsBlank(reference) => match reference.as_mut() {
-            Expression::Reference(reference) => visit(reference, false, false),
-            Expression::AnchoredReference(reference) => visit(reference, false, true),
-            Expression::SameRowReference(field) => visit_same_row(field, false),
-            Expression::AnchoredSameRowReference(field) => visit_same_row(field, true),
-            _ => unreachable!("ISBLANK has a bound reference child"),
-        },
         // A bare key reference is compared by its own type, like a criterion;
         // the columns name schema columns and the fallback is a Number.
         Expression::Lookup {
             key, if_missing, ..
         } => {
-            match key.as_mut() {
-                Expression::Reference(reference) => visit(reference, false, false)?,
-                Expression::AnchoredReference(reference) => visit(reference, false, true)?,
-                Expression::SameRowReference(field) => visit_same_row(field, false)?,
-                Expression::AnchoredSameRowReference(field) => visit_same_row(field, true)?,
-                other => map_copy_references(other, visit, visit_same_row)?,
-            }
+            map_copy_operand(key, visit, visit_same_row)?;
             if let Some(fallback) = if_missing {
                 map_copy_references(fallback, visit, visit_same_row)?;
             }
@@ -11186,6 +11133,18 @@ fn map_copy_references(
             }
             Ok(())
         }
+    }
+}
+
+fn map_copy_operand(
+    expression: &mut Expression,
+    visit: &mut impl FnMut(&mut FieldRef, bool, bool) -> Result<(), DesignerError>,
+    visit_same_row: &mut impl FnMut(&mut FieldId, bool) -> Result<(), DesignerError>,
+) -> Result<(), DesignerError> {
+    match expression {
+        Expression::Reference(reference) => visit(reference, false, false),
+        Expression::AnchoredReference(reference) => visit(reference, false, true),
+        other => map_copy_references(other, visit, visit_same_row),
     }
 }
 
@@ -11469,17 +11428,7 @@ fn collection_specs(document: &Document) -> BTreeMap<String, CollectionSpec> {
                         }
                         fields.into_iter()
                     }
-                    .map(|field| ColumnSpec {
-                        id: field.id.clone(),
-                        key: field.key.to_string(),
-                        display_name: field.effective_name().to_owned(),
-                        display_name_explicit: explicit_column_display_name(field).is_some(),
-                        field_type: field.field_type.clone(),
-                        required: field.required,
-                        constraint: field.constraint.clone(),
-                        number_format: field.number_format.clone(),
-                        date_format: field.date_format,
-                    })
+                    .map(ColumnSpec::from)
                     .collect(),
                     canonical_entities,
                     entities,
@@ -12663,6 +12612,7 @@ fn calculation_failure_code(failure: &CalculationFailure) -> &'static str {
         CalculationFailure::Cycle { .. } => "cycle",
         CalculationFailure::FailedDependencies { .. } => "failed_dependencies",
         CalculationFailure::DivisionByZero => "division_by_zero",
+        CalculationFailure::DeletedReference => "reference",
         CalculationFailure::LookupMissingKey => "lookup_missing_key",
         CalculationFailure::EmptyAggregate => "aggregate_empty",
         CalculationFailure::NonFiniteResult => "non_finite_result",
@@ -12686,6 +12636,7 @@ fn calculation_failure_message(failure: &CalculationFailure) -> &'static str {
             "A formula dependency could not be calculated."
         }
         CalculationFailure::DivisionByZero => "The formula divides by zero.",
+        CalculationFailure::DeletedReference => "#REF!",
         CalculationFailure::LookupMissingKey => "The lookup key has no matching row.",
         CalculationFailure::EmptyAggregate => "The column has no values to aggregate.",
         CalculationFailure::NonFiniteResult => "The formula result is not a finite number.",

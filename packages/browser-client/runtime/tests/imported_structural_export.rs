@@ -1171,6 +1171,42 @@ fn imported_presentation_cases() -> Vec<(&'static str, Value, &'static str, &'st
     ]
 }
 
+#[test]
+fn legacy_imported_border_edits_preserve_unedited_sides() {
+    let mut j = Journey::default();
+    j.import("xlsx");
+    let rows = &mut j.metadata["sheets"][0]["rows"];
+    rows[0]["styles"][1]["border"] = json!(true);
+    rows[1]["styles"][1]["border"] = json!(true);
+    rows[1]["styles"][1]["border_sides"] = json!(["left"]);
+    j.reopen(false);
+
+    let table = j.table();
+    for (row, target, value) in [(0, "top", false), (1, "bottom", true)] {
+        j.mutate(json!({
+            "type":"set_cell_style", "collection":"sheet_1",
+            "entities":[table["rows"][row]["id"]], "fields":[table["columns"][1]["id"]],
+            "changes":[{"kind":"border", "target":target, "value":value}]
+        }));
+    }
+
+    let table = j.table();
+    let (reply, bytes) = j.current_export("xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let workbook = import_xlsx(&bytes.unwrap()).unwrap();
+    let actual: Vec<_> = (0..2)
+        .map(|row| {
+            (
+                table["rows"][row]["styles"][1]["border_sides"].clone(),
+                json!(workbook.sheets[0].rows[row][1].style.border_sides),
+            )
+        })
+        .collect();
+    let cleared = json!(["right", "bottom", "left"]);
+    let added = json!(["bottom", "left"]);
+    assert_eq!(actual, [(cleared.clone(), cleared), (added.clone(), added)]);
+}
+
 fn assert_supported_imported_presentation(j: &mut Journey) {
     // Attribute whitespace must survive XML normalization, alongside all
     // supported style members and a fractional width.

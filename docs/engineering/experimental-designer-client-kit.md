@@ -481,6 +481,14 @@ Send `{type: "move_cells", expected_revision, moves: [{from, to}]}` through
 is the same `PublicationProjection` as `edit_cells`. Cut remains pending in the
 client, including Esc cancellation: send nothing until Paste.
 
+Send `{type: "move_cells_at", expected_revision, collection, moves: [{from, row,
+column}]}` through `trackerCommand`, or call `moveCellsAt(expectedRevision,
+collection, moves)`, to target 1-based data positions in a native scalar table.
+Rows are counted from the first data row. Work extends the table through the
+furthest destination on each axis using the same allocation rules as
+`pasteCellsAt`. A failed move leaves the table as it was. One Undo restores
+the source and removes the rows and columns allocated by the move.
+
 The runtime resolves all targets and captures their original contents, assigns
 each destination its source's original contents, then clears only sources that
 are not destinations. The whole batch is one revision and one Undo/Redo entry;
@@ -494,16 +502,16 @@ Undo restores overwritten destinations as well as cleared sources.
 | Required source would become blank | Refuse; allowed when that source also receives another move. |
 | Blank source | Move absence; the destination must admit an `edit_cells` clear. |
 | Across collections in one document | Allowed when both sides pass normal admission. |
-| Formatting/style | Stay at their existing targets; destination formatting is preserved. |
-| All moves are self-moves, or all final contents already match | Existing `NoChange` refusal; no revision or history entry. |
+| Formatting/style | Cell styles move with their source contents. |
+| All final contents already match and no allocation is needed | Existing `NoChange` refusal; no revision or history entry. |
 | Empty moves or union of affected targets exceeds the session's batch limit | Refuse, as for `edit_cells`. |
 | Stale revision, unknown entity, undeclared field or profile refusal | Same `DesignerError` variants as `edit_cells`, with no partial effect. |
 
-Formulas move as formulas with their dependencies unchanged. Explicit and
-column references stay unchanged; a same-row reference in a formula moved to a
-different row becomes an explicit reference to its original source row. Other
-formulas keep their existing targets, with ordinary validation and calculation
-refusals applied to the final candidate.
+Formulas move as formulas, and column references stay unchanged. A same-row
+reference becomes explicit when the formula and its target end up on different
+rows. Direct cell references to moved cells follow those cells, including
+references from other formulas. Ordinary validation and calculation apply to
+the final candidate.
 
 Table columns (`ColumnProjection`, also exported by the public TS entry) expose
 `display_name_explicit?: true`: Rust emits `true` only when a stored display

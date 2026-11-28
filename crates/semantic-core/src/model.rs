@@ -836,6 +836,7 @@ pub struct ColumnCriterion {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum Expression {
+    DeletedReference {},
     Number(Number),
     Reference(FieldRef),
     // The formula owner's own field: the entity is resolved from the formula
@@ -934,7 +935,6 @@ pub enum Expression {
     },
     IsBlank(Box<Self>),
 }
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DatePartKind {
@@ -992,6 +992,7 @@ impl Expression {
     pub fn children(&self) -> Vec<&Self> {
         match self {
             Self::Number(_)
+            | Self::DeletedReference {}
             | Self::Reference(_)
             | Self::SameRowReference(_)
             | Self::AnchoredReference(_)
@@ -1000,11 +1001,9 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Lookup {
                 key, if_missing, ..
-            } => {
-                let mut children = vec![key.as_ref()];
-                children.extend(if_missing.as_deref());
-                children
-            }
+            } => std::iter::once(key.as_ref())
+                .chain(if_missing.as_deref())
+                .collect(),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter()
                 .filter_map(|criterion| criterion.value.as_deref())
@@ -1039,6 +1038,7 @@ impl Expression {
     pub fn children_mut(&mut self) -> Vec<&mut Self> {
         match self {
             Self::Number(_)
+            | Self::DeletedReference {}
             | Self::Reference(_)
             | Self::SameRowReference(_)
             | Self::AnchoredReference(_)
@@ -1047,11 +1047,9 @@ impl Expression {
             | Self::ColumnAggregate { .. } => Vec::new(),
             Self::Lookup {
                 key, if_missing, ..
-            } => {
-                let mut children = vec![key.as_mut()];
-                children.extend(if_missing.as_deref_mut());
-                children
-            }
+            } => std::iter::once(key.as_mut())
+                .chain(if_missing.as_deref_mut())
+                .collect(),
             Self::ColumnConditional { criteria, .. } => criteria
                 .iter_mut()
                 .filter_map(|criterion| criterion.value.as_deref_mut())
@@ -1081,6 +1079,16 @@ impl Expression {
             | Self::IsBlank(value) => vec![value],
         }
     }
+    const fn is_reference_operand(&self) -> bool {
+        matches!(
+            self,
+            Self::Reference(_)
+                | Self::SameRowReference(_)
+                | Self::AnchoredReference(_)
+                | Self::AnchoredSameRowReference(_)
+                | Self::DeletedReference {}
+        )
+    }
 
     /// Infer the non-value condition type after structural bounds are checked.
     #[must_use]
@@ -1092,15 +1100,6 @@ impl Expression {
     #[must_use]
     pub fn expression_type_with_auto(&self, auto: bool) -> Option<FormulaExpressionType> {
         use FormulaExpressionType::{Condition, Number};
-        let is_reference = |value: &Self| {
-            matches!(
-                value,
-                Self::Reference(_)
-                    | Self::SameRowReference(_)
-                    | Self::AnchoredReference(_)
-                    | Self::AnchoredSameRowReference(_)
-            )
-        };
         let valid = |operand: &Self, expected| {
             operand
                 .expression_type_with_auto(auto)
@@ -1108,6 +1107,7 @@ impl Expression {
         };
         match self {
             Self::Number(_)
+            | Self::DeletedReference {}
             | Self::Reference(_)
             | Self::SameRowReference(_)
             | Self::AnchoredReference(_)
@@ -1162,17 +1162,17 @@ impl Expression {
             | Self::RoundDown { value, digits } => {
                 (*digits <= 10 && valid(value, Number)).then_some(Number)
             }
-            Self::DatePart { operand, .. } => is_reference(operand.as_ref()).then_some(Number),
+            Self::DatePart { operand, .. } => operand.is_reference_operand().then_some(Number),
             Self::Weekday {
                 operand,
                 return_type,
             } => {
-                ((1..=3).contains(return_type) && is_reference(operand.as_ref())).then_some(Number)
+                ((1..=3).contains(return_type) && operand.is_reference_operand()).then_some(Number)
             }
             Self::Days { end, start } => {
-                (is_reference(end.as_ref()) && is_reference(start.as_ref())).then_some(Number)
+                (end.is_reference_operand() && start.is_reference_operand()).then_some(Number)
             }
-            Self::IsBlank(value) => is_reference(value.as_ref()).then_some(Condition),
+            Self::IsBlank(value) => value.is_reference_operand().then_some(Condition),
         }
     }
 

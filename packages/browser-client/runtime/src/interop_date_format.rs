@@ -1,6 +1,6 @@
 use tachiko_workspace_engine::{
-    CellAlignment, CellStyle as StoredCellStyle, DateFormat, EntityId, FieldDefinition, FieldId,
-    PresentationStore, SchemaId,
+    CellAlignment, CellFill, CellStyle as StoredCellStyle, DateFormat, EntityId, FieldDefinition,
+    FieldId, PresentationStore, SchemaId,
 };
 
 use crate::interop_adapter::{CellStyle, SourceValue};
@@ -97,7 +97,7 @@ fn apply_stored_style(style: &StoredCellStyle, value: &SourceValue, result: &mut
         result.italic = italic;
     }
     if let Some(fill) = &style.fill {
-        result.fill = Some(fill[1..].to_owned());
+        result.fill = projected_fill(fill);
     }
     if let Some(borders) = &style.borders {
         result.border = !borders.is_empty();
@@ -120,6 +120,13 @@ fn apply_stored_style(style: &StoredCellStyle, value: &SourceValue, result: &mut
     }
     if let Some(wrap) = style.wrap {
         result.wrap = wrap;
+    }
+}
+
+fn projected_fill(fill: &CellFill) -> Option<String> {
+    match fill {
+        CellFill::Solid(color) => Some(color[1..].to_owned()),
+        CellFill::Clear => None,
     }
 }
 

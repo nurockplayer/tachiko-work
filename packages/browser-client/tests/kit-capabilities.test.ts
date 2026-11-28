@@ -53,6 +53,7 @@ describe("kit manifest capabilities", () => {
     const capabilities = manifestCapabilities();
     expect(new Set(capabilities).size).toBe(capabilities.length);
     expect(capabilities).toContain("translateA1Formula");
+    expect(capabilities).toContain("moveCellsAt");
     expect(capabilities).toContain("queryCapacity");
     expect(capabilities).toContain("isCapacityFailure");
     expect([...capabilities].sort()).toEqual([...publicSurface(), ...projectionMarkers].sort());

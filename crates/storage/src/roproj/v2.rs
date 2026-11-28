@@ -1087,9 +1087,7 @@ impl ExpressionV2 {
     fn from_semantic(expression: &Expression) -> Result<Self, FormatError> {
         Ok(match expression {
             Expression::Number(number) => Self::Number(NumberV2(number.get())),
-            Expression::Reference(reference) => {
-                Self::Reference(FieldRefV2::from_semantic(reference))
-            }
+            Expression::Reference(target) => Self::Reference(FieldRefV2::from_semantic(target)),
             Expression::SameRowReference(_)
             | Expression::AnchoredReference(_)
             | Expression::AnchoredSameRowReference(_) => {
@@ -1115,9 +1113,11 @@ impl ExpressionV2 {
                     "conditional and rounding formula expressions are not representable in frozen .roproj/v2; use .roproj/v3 or direct-ro/v2".to_owned(),
                 );
             }
-            Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
+            Expression::Lookup { .. }
+            | Expression::ColumnConditional { .. }
+            | Expression::DeletedReference {} => {
                 return invalid_representation(
-                    "lookups and conditional aggregates are not representable in frozen .roproj/v2; use .roproj/v3".to_owned(),
+                    "lookups, conditional aggregates and deleted references are not representable in frozen .roproj/v2; use .roproj/v3".to_owned(),
                 );
             }
             Expression::ColumnTotal(_) | Expression::ColumnAggregate { .. } => {
@@ -1586,8 +1586,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                     | Expression::Divide { left, right }
                     | Expression::Minimum { left, right }
                     | Expression::Maximum { left, right } => {
-                        stack.push((right, depth + 1));
-                        stack.push((left, depth + 1));
+                        stack.extend([right, left].map(|child| (child.as_ref(), depth + 1)));
                     }
                     Expression::Compare { .. }
                     | Expression::If { .. }
@@ -1606,6 +1605,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         return invalid_representation("conditional and rounding formula expressions are not representable in frozen .roproj/v2".to_owned());
                     }
                     Expression::Number(_)
+                    | Expression::DeletedReference {}
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
                     | Expression::AnchoredReference(_)

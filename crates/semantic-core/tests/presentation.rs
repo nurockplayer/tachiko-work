@@ -53,7 +53,7 @@ fn full_style() -> CellStyle {
     CellStyle {
         bold: Some(true),
         italic: Some(false),
-        fill: Some("#FFEE00".into()),
+        fill: Some(CellFill::Solid("#FFEE00".into())),
         text_color: Some("#112233".into()),
         alignment: Some(CellAlignment::Center),
         wrap: Some(true),
@@ -397,7 +397,7 @@ fn a_color_without_canonical_spelling_is_refused() {
     store.styles.insert(
         "s1".into(),
         CellStyle {
-            fill: Some("#aabbcc".into()),
+            fill: Some(CellFill::Solid("#aabbcc".into())),
             ..full_style()
         },
     );
@@ -534,7 +534,7 @@ fn bounded_store(count: usize) -> (Document, PresentationStore) {
         store.styles.insert(
             style_id.clone(),
             CellStyle {
-                fill: Some(format!("#{index:06X}")),
+                fill: Some(CellFill::Solid(format!("#{index:06X}"))),
                 ..CellStyle::default()
             },
         );

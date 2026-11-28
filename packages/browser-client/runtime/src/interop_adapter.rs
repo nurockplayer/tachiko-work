@@ -901,15 +901,15 @@ fn compatible_formula(
             remaining = strip_quoted_formula_reference(remaining, location, &refuse)?;
         } else if remaining.starts_with('"') {
             remaining = strip_criterion_literal(remaining, &refuse)?;
-        } else if let Some(arguments) = concat!(
+        } else if let Some(suffix) = concat!(
             "SUM( AVERAGE( COUNT( SUMIF( SUMIFS( AVERAGEIF( AVERAGEIFS( COUNTIF( COUNTIFS( ",
             "MIN( MAX( IF( AND( OR( NOT( ROUND( ISBLANK( ",
-            "INDEX( MATCH( IFNA( SUBSTITUTE("
+            "INDEX( MATCH( IFNA( SUBSTITUTE( #REF!"
         )
         .split_ascii_whitespace()
         .find_map(|prefix| remaining.strip_prefix(prefix))
         {
-            remaining = arguments;
+            remaining = suffix;
         } else if remaining.starts_with('$')
             || remaining
                 .as_bytes()
