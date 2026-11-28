@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use tachiko_workspace_engine::{
-    CellAlignment, CellStyle as StoredStyle, Date, DateFormat, Document, Entity, EntityId,
-    EntityKey, FieldConstraint, FieldDefinition, FieldType, PresentationStore, Schema, SchemaId,
-    SchemaKey, TablePresentation, Value,
+    CellAlignment, CellFill, CellStyle as StoredStyle, Date, DateFormat, Document, Entity,
+    EntityId, EntityKey, FieldConstraint, FieldDefinition, FieldType, PresentationStore, Schema,
+    SchemaId, SchemaKey, TablePresentation, Value,
 };
 
 use crate::interop_adapter::{
@@ -926,7 +926,7 @@ fn stage5_promotion_export_reopen_and_working_size() {
     let table = &runtime.presentation.tables[&schema];
     let column = &runtime.presentation.styles[&table.column_styles[&fields[0]]];
     assert_eq!(column.bold, Some(true));
-    assert_eq!(column.fill.as_deref(), Some("#FFFF00"));
+    assert_eq!(column.fill, Some(CellFill::Solid("#FFFF00".into())));
     assert_eq!(
         column.borders,
         Some(vec![
@@ -947,7 +947,7 @@ fn stage5_promotion_export_reopen_and_working_size() {
         )]]
     };
     assert_eq!(style_at(0, 1).bold, Some(true));
-    assert_eq!(style_at(1, 1).fill.as_deref(), Some("#00B050"));
+    assert_eq!(style_at(1, 1).fill, Some(CellFill::Solid("#00B050".into())));
     assert_eq!(
         style_at(1, 2).number_format,
         crate::interop_number_format::from_excel("0%")
@@ -1112,7 +1112,7 @@ fn stage5_palette_bound_drops_cell_and_validates() {
             (id.into(), "text".into()),
             StoredStyle {
                 // The last record reuses the first record's admitted style.
-                fill: Some(format!("#{:06X}", index % 4097)),
+                fill: Some(CellFill::Solid(format!("#{:06X}", index % 4097))),
                 ..Default::default()
             },
         );

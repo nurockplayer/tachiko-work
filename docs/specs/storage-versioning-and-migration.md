@@ -353,6 +353,12 @@ exception below to a closed list of constructs until #579 freezes v3 and
 package/v1. After the freeze, a new stored construct needs a new representation
 version and migration. No v4 or migration edge is selected before then.
 
+The [ADR-0049 cell-style amendment](../decisions/ADR-0049-stored-presentation.md#2-cell-styles)
+adds the cell-only `"fill":false` value to v3 and package/v1 in that window before
+[#579](https://github.com/nurockplayer/tachiko-work/issues/579). Older strict
+readers reject the new value. Existing project bytes and pinned seed hashes
+stay the same. No migration or down-conversion is added.
+
 ### Native display-name pre-release exception — ADR-0043
 
 [ADR-0043](../decisions/ADR-0043-native-display-names-separate-from-keys.md)

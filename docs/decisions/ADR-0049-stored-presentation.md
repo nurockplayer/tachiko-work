@@ -64,6 +64,18 @@ Absent means no opinion. Colours are `#RRGGBB`. Alignment is `left`, `center` or
 `right`. `borders` names any of the four sides, each a thin line in the default
 colour. Excel's other line styles map to this and get a ledger finding.
 
+Under the [ADR-0046 pre-freeze window](ADR-0046-pre-1-0-roproj-v3-revision-window.md)
+and before [#579](https://github.com/nurockplayer/tachiko-work/issues/579), #898 adds
+canonical `"fill":false` for an explicit no-fill override. A style using this
+value must have a cell binding and cannot be referenced by a column or a
+conditional rule. Omitted `fill` inherits and a `"#RRGGBB"` fill is solid.
+`true` and `null` are invalid. The override clears the cell's static fill
+after imported source and column styles have been applied. The column default
+continues to apply to other cells, including later rows. Conditional rules
+retain their existing layering. The fill member position and style-ID hash
+rule stay the same. Existing project and package bytes stay valid and
+byte-identical. Older readers reject a file using the new value.
+
 A style's ID is the first 32 hexadecimal digits of the SHA-256 of its canonical JSON.
 So the same style has the same ID on every branch, two people's new styles can't
 collide, and a merge takes the union and drops what nothing uses.

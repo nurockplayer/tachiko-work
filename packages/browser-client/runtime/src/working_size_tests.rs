@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tachiko_formula_engine::test_instrumentation::FULL_CALCULATION_RUNS;
 use tachiko_storage::{encode_roproj_v3, encode_roproj_v3_with_presentation, style_id};
 use tachiko_workspace_engine::{
-    CellStyle, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
+    CellFill, CellStyle, ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator,
     ConditionalAggregate, Date, DateFormat, Expression, FieldConstraint, FooterAggregate,
     KeyedGroupedSumDefinition, KeyedGroupedSumDefinitionId, KeyedGroupedSumOrdersBinding,
     KeyedGroupedSumProductsBinding, Number, NumberFormat, NumberFormatKind, PresentationStore,
@@ -3664,7 +3664,7 @@ fn formats_fixture() -> (Document, PresentationStore) {
     let style = CellStyle {
         bold: Some(true),
         italic: None,
-        fill: Some("#FFEEAA".to_owned()),
+        fill: Some(CellFill::Solid("#FFEEAA".to_owned())),
         text_color: None,
         alignment: None,
         wrap: None,

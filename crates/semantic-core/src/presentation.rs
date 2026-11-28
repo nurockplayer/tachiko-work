@@ -4,7 +4,10 @@
 //! and a change to it is never a semantic change.
 
 mod column_conditional;
+mod fill;
 mod table;
+
+pub use fill::CellFill;
 
 use column_conditional::validate_column_conditional;
 pub use table::TablePresentation;
@@ -73,7 +76,7 @@ presentation_id!(RuleId);
 pub struct CellStyle {
     pub bold: Option<bool>,
     pub italic: Option<bool>,
-    pub fill: Option<String>,
+    pub fill: Option<CellFill>,
     pub text_color: Option<String>,
     pub alignment: Option<CellAlignment>,
     pub wrap: Option<bool>,
@@ -375,13 +378,14 @@ fn is_canonical_color(value: &str) -> bool {
 }
 
 fn validate_style_spelling(style_id: &StyleId, style: &CellStyle) -> Result<(), PresentationError> {
-    for (member, color) in [("fill", &style.fill), ("text_color", &style.text_color)] {
+    let fill = style.fill.as_ref().and_then(CellFill::solid_color);
+    for (member, color) in [("fill", fill), ("text_color", style.text_color.as_deref())] {
         let Some(value) = color else { continue };
         if !is_canonical_color(value) {
             return Err(PresentationError::InvalidColor {
                 style: style_id.clone(),
                 member,
-                value: value.clone(),
+                value: value.to_owned(),
             });
         }
     }

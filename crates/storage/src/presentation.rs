@@ -1,18 +1,20 @@
 //! Storage-owned `.roproj/v3` `presentation.jsonl` member codec (ADR-0049).
 
 mod decode;
+mod fill;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, EntityId, FieldId,
+    BorderSide, CellAlignment, CellFill, CellStyle, ConditionalRule, DateFormat, EntityId, FieldId,
     FooterAggregate, MAX_EXPRESSION_DEPTH, PresentationStore, RuleId, SchemaId, StyleId,
     TablePresentation,
 };
 
 use self::decode::{decode_cell, decode_rule, decode_style, decode_table};
+use self::fill::{FillV3, deserialize_fill, validate_clear_fill_bindings, write_fill};
 use crate::{
     FormatError,
     number_format::{NumberFormatDto, write_compact},
@@ -36,7 +38,7 @@ const PRESENTATION_PATH: &str = "presentation.jsonl";
 /// # Errors
 ///
 /// Returns [`FormatError::InvalidRoProjectRepresentation`] when the style has no
-/// canonical spelling: a `fill` or `text_color` that is not `#` and six
+/// canonical spelling: a solid `fill` or `text_color` that is not `#` and six
 /// uppercase hexadecimal digits, or the same border side listed twice.
 pub fn style_id(style: &CellStyle) -> Result<StyleId, FormatError> {
     let mut object = String::new();
@@ -170,6 +172,7 @@ fn parse_presentation(bytes: &[u8]) -> Result<PresentationStore, FormatError> {
     if store.is_empty() {
         return invalid_representation("presentation.jsonl decoded to an empty store".to_owned());
     }
+    validate_clear_fill_bindings(&store)?;
     Ok(store)
 }
 
@@ -209,8 +212,8 @@ struct StyleV3 {
     bold: Option<bool>,
     #[serde(default)]
     italic: Option<bool>,
-    #[serde(default)]
-    fill: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_fill")]
+    fill: Option<FillV3>,
     #[serde(default)]
     text_color: Option<String>,
     #[serde(default)]
@@ -267,10 +270,16 @@ struct CellRecordV3 {
 }
 
 fn style_into_semantic(style: StyleV3) -> Result<CellStyle, FormatError> {
-    let fill = style
-        .fill
-        .map(|fill| require_color("fill", fill))
-        .transpose()?;
+    let fill = match style.fill {
+        None => None,
+        Some(FillV3::Solid(fill)) => Some(CellFill::Solid(require_color("fill", fill)?)),
+        Some(FillV3::Clear(false)) => Some(CellFill::Clear),
+        Some(FillV3::Clear(true)) => {
+            return invalid_representation(
+                "fill must be false or an uppercase RGB colour".to_owned(),
+            );
+        }
+    };
     let text_color = style
         .text_color
         .map(|color| require_color("text_color", color))
@@ -562,8 +571,7 @@ fn write_style_object(output: &mut String, style: &CellStyle) -> Result<(), Form
     }
     if let Some(fill) = &style.fill {
         member_head(output, &mut first, "fill")?;
-        require_color("fill", fill.clone())?;
-        write_json_string(output, fill)?;
+        write_fill(output, fill)?;
     }
     if let Some(text_color) = &style.text_color {
         member_head(output, &mut first, "text_color")?;

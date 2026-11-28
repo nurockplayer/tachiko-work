@@ -1362,8 +1362,8 @@ fn promote_import_presentation(
     occurrence_id: &str,
 ) -> Result<DesignerRuntime, DesignerError> {
     use tachiko_workspace_engine::{
-        BorderSide, CellAlignment, CellStyle as StoredStyle, DateFormat, PresentationStore,
-        TablePresentation,
+        BorderSide, CellAlignment, CellFill, CellStyle as StoredStyle, DateFormat,
+        PresentationStore, TablePresentation,
     };
     let profile = runtime.profile;
     let document = runtime.session.document();
@@ -1550,7 +1550,7 @@ fn promote_import_presentation(
             let column_style = StoredStyle {
                 bold: common_bold.then_some(true),
                 italic: common_italic.then_some(true),
-                fill: common_fill.clone(),
+                fill: common_fill.clone().map(CellFill::Solid),
                 borders: common_border.clone(),
                 alignment: common_alignment,
                 wrap: common_wrap.then_some(true),
@@ -1568,7 +1568,7 @@ fn promote_import_presentation(
                     fill: if common_fill.is_some() {
                         None
                     } else {
-                        fills[row_index].clone()
+                        fills[row_index].clone().map(CellFill::Solid)
                     },
                     borders: (!borders[row_index].is_empty() && common_border.is_none())
                         .then(|| borders[row_index].clone()),
