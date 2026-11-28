@@ -749,9 +749,12 @@ fn row_roots(document: &Document, entity: &str) -> BTreeSet<FieldRef> {
         .collect()
 }
 
-#[allow(clippy::needless_pass_by_value)] // callers build the set inline
-fn update(retained: &mut RetainedCalculationState, document: &Document, roots: BTreeSet<FieldRef>) {
-    let _ = retained.update(document, &roots);
+fn update(
+    retained: &mut RetainedCalculationState,
+    document: &Document,
+    roots: &BTreeSet<FieldRef>,
+) {
+    let _ = retained.update(document, roots);
     assert_eq!(
         retained.outcome(),
         calculate_complete(document),
@@ -786,7 +789,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_text")]),
+        &BTreeSet::from([owner("summary", "criterion_text")]),
     );
     let _ = &document;
 
@@ -800,7 +803,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_bool")]),
+        &BTreeSet::from([owner("summary", "criterion_bool")]),
     );
 
     // Edit the Date criterion cell.
@@ -813,7 +816,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_date")]),
+        &BTreeSet::from([owner("summary", "criterion_date")]),
     );
 
     // Unset a criterion cell so it is blank, then set it back.
@@ -826,7 +829,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_date")]),
+        &BTreeSet::from([owner("summary", "criterion_date")]),
     );
     document
         .entities
@@ -837,7 +840,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_date")]),
+        &BTreeSet::from([owner("summary", "criterion_date")]),
     );
     document
         .entities
@@ -848,7 +851,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("summary", "criterion_bool")]),
+        &BTreeSet::from([owner("summary", "criterion_bool")]),
     );
 
     // Edit a matching Number value.
@@ -861,7 +864,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("ads", "reserve")]),
+        &BTreeSet::from([owner("ads", "reserve")]),
     );
 
     // Edit the cell the criterion reads.
@@ -874,7 +877,7 @@ fn incremental_calculation_equals_full() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([owner("ads", "due")]),
+        &BTreeSet::from([owner("ads", "due")]),
     );
 
     // Append a matching row.
@@ -892,12 +895,12 @@ fn incremental_calculation_equals_full() {
             ],
         ),
     );
-    update(&mut retained, &document, row_roots(&document, "food"));
+    update(&mut retained, &document, &row_roots(&document, "food"));
 
     // Remove it again.
     let roots = row_roots(&document, "food");
     document.entities.remove("food");
-    update(&mut retained, &document, roots);
+    update(&mut retained, &document, &roots);
 
     // The final full calculation is the truth the incremental one matched.
     assert_eq!(retained.outcome(), calculate_complete(&document));
@@ -943,7 +946,7 @@ fn a_column_read_inside_a_criterion_renders_and_is_a_dependency() {
     update(
         &mut retained,
         &document,
-        BTreeSet::from([
+        &BTreeSet::from([
             owner("rent", "reserve"),
             owner("ads", "reserve"),
             owner("blank", "reserve"),

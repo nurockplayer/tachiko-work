@@ -180,6 +180,7 @@ fn expression_json(expression: &Expression) -> serde_json::Value {
         Expression::AnchoredReference(_) | Expression::AnchoredSameRowReference(_) => {
             panic!("anchored references are not representable in the frozen formats")
         }
+        Expression::DeletedReference {} => panic!("v3-only formula in frozen format"),
         Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
             panic!("conditional aggregates are not representable in the frozen formats")
         }

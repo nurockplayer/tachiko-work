@@ -19,6 +19,9 @@ use crate::{
     SchemaId, Value,
 };
 
+mod candidate_domain;
+mod projection;
+
 /// Current finite explicit-EntityId narrowing profile.
 pub const MAX_ANALYSIS_NARROWING_IDS: usize = 64;
 /// Current finite AND-predicate profile.
@@ -608,35 +611,23 @@ fn resolve_candidate_domain(
     document_requirement: &DisclosureRequirement,
     requirements: &mut BTreeSet<DisclosureRequirement>,
 ) -> (Vec<EntityId>, Option<AnalysisFailure>) {
-    if !document.schemas.contains_key(&definition.schema) {
+    let schema = &definition.schema;
+    if !document.schemas.contains_key(schema) {
         requirements.insert(document_requirement.clone());
         return (
             Vec::new(),
             Some(AnalysisFailure::UnresolvedSchema {
-                schema: definition.schema.clone(),
+                schema: schema.clone(),
             }),
         );
     }
     let Some(narrowing) = &definition.narrowing else {
-        let mut candidates = Vec::new();
-        let mut deferred_failure = None;
-        for (key, entity) in &document.entities {
-            if entity.schema != definition.schema {
-                continue;
-            }
-            if key == &entity.id {
-                candidates.push(key.clone());
-            } else {
-                requirements.insert(document_requirement.clone());
-                deferred_failure.get_or_insert_with(|| {
-                    AnalysisFailure::IncoherentCandidateIdentity {
-                        key: key.clone(),
-                        entity: entity.id.clone(),
-                    }
-                });
-            }
-        }
-        return (candidates, deferred_failure);
+        return candidate_domain::resolve_default_domain(
+            document,
+            schema,
+            document_requirement,
+            requirements,
+        );
     };
 
     let mut candidates = Vec::new();
@@ -663,7 +654,7 @@ fn resolve_candidate_domain(
             &entity.id,
             &entity.schema,
         ));
-        if entity.schema == definition.schema {
+        if &entity.schema == schema {
             candidates.push(entity.id.clone());
         } else {
             // Exposing the wrong-domain distinction reveals that the requested
@@ -672,11 +663,11 @@ fn resolve_candidate_domain(
             requirements.insert(analysis_schema_requirement(
                 document_scope,
                 document,
-                &definition.schema,
+                schema,
             ));
             deferred_failure.get_or_insert_with(|| AnalysisFailure::WrongDomainNarrowingEntity {
                 entity: entity.id.clone(),
-                expected: definition.schema.clone(),
+                expected: schema.clone(),
                 actual: entity.schema.clone(),
             });
         }
@@ -854,19 +845,7 @@ fn evaluate_authorized(
     if let Some(failure) = collection_limit_failure(definition, &selected, &groups) {
         return (AnalysisOutcome::Failure(failure), formula_calculation_used);
     }
-    let projection = if definition.group_by.is_some() {
-        AnalysisProjection::Grouped(
-            groups
-                .into_iter()
-                .map(|(key, members)| AnalysisGroup {
-                    key,
-                    bucket: build_bucket(definition, &members, &metrics),
-                })
-                .collect(),
-        )
-    } else {
-        AnalysisProjection::Ungrouped(build_bucket(definition, &selected, &metrics))
-    };
+    let projection = projection::assemble_projection(definition, &selected, groups, &metrics);
     (
         AnalysisOutcome::Complete(projection),
         formula_calculation_used,
