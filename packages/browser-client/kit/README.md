@@ -309,6 +309,12 @@ imports a workbook or inspects and opens a saved import, through
 created and cannot be switched afterwards. Not asking changes nothing: every
 ordinary method keeps today's request bytes and reply shape.
 
+Before editing a live XLSX import, call
+`reopenImportedXlsxWorkingSize(await client.observeOccurrence())` to open its
+exact snapshot as a fresh working-size occurrence. Keep the import metadata
+and obtain the new scope with `observeOccurrence()` for overwrite exports.
+Formatting and typed overwrite refusals carry over.
+
 A working-size import reply (`imported_window`) carries the same metadata and
 fidelity ledger as an ordinary import plus one bounded window instead of the
 whole table. Imports still have today's geometry and do not move to the text

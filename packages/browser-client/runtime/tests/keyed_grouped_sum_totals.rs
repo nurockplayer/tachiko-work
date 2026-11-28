@@ -188,8 +188,8 @@ fn j4_fixture_reports_pen_and_note_groups_with_a_matching_total() {
     create(&mut runtime);
     let result = query(&mut runtime);
     assert_eq!(result.revision, runtime.observe_occurrence().revision);
-    assert_eq!(group(&result, "Paper"), 1000.0);
-    assert_eq!(group(&result, "Stationery"), 800.0);
+    assert_eq!(group(&result, "Paper").to_bits(), 1000.0_f64.to_bits());
+    assert_eq!(group(&result, "Stationery").to_bits(), 800.0_f64.to_bits());
     assert_eq!(result.total, Some(1800.0));
     assert_eq!(result.diagnostics.len(), 0);
 }
@@ -202,8 +202,8 @@ fn j5_price_change_updates_groups_and_the_total_in_one_revision() {
     let result = query(&mut runtime);
     // The total comes from the same evaluated groups, never a cached 1800.
     assert_eq!(result.revision, runtime.observe_occurrence().revision);
-    assert_eq!(group(&result, "Paper"), 1000.0);
-    assert_eq!(group(&result, "Stationery"), 1000.0);
+    assert_eq!(group(&result, "Paper").to_bits(), 1000.0_f64.to_bits());
+    assert_eq!(group(&result, "Stationery").to_bits(), 1000.0_f64.to_bits());
     assert_eq!(result.total, Some(2000.0));
 }
 

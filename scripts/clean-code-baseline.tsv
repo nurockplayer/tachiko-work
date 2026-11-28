@@ -12,8 +12,6 @@ args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
 args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
 args	crates/merge-engine/src/lib.rs	merge_field_definition	7
-args	crates/merge-engine/src/lib.rs	merge_optional	6
-args	crates/merge-engine/src/lib.rs	merge_scalar	6
 args	crates/merge-engine/src/lib.rs	merge_schema	6
 args	crates/merge-engine/src/lib.rs	merge_schema_fields	6
 args	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	6
@@ -137,7 +135,7 @@ body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
 body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
-body	crates/merge-engine/src/lib.rs	merge_supported	90
+body	crates/merge-engine/src/lib.rs	merge_supported	88
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
@@ -213,7 +211,7 @@ body	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsh
 body	packages/browser-client/runtime/src/host_bridge.rs	export_native_budget_spreadsheet	68
 body	packages/browser-client/runtime/src/host_bridge.rs	export_native_tracker_spreadsheet	61
 body	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	78
-body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	81
+body	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	77
 body	packages/browser-client/runtime/src/interop_adapter.rs	capacity_plain_values	68
 body	packages/browser-client/runtime/src/interop_adapter.rs	compatible_formula	77
 body	packages/browser-client/runtime/src/interop_adapter.rs	conditional_admission	67
@@ -304,7 +302,7 @@ body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadshee
 body	packages/browser-client/runtime/src/wasm.rs	export_native_tracker_spreadsheet	61
 body	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	64
 body	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	78
-body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	81
+body	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	77
 body	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	75
 branches	crates/cli/src/commands.rs	analysis_failure_output	14
 branches	crates/cli/src/commands.rs	parse_analysis_predicate	19
@@ -439,7 +437,6 @@ branches	packages/browser-client/runtime/src/display_text.rs	natural_folded_cmp	
 branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::open_candidate	16
 branches	packages/browser-client/runtime/src/host_bridge.rs	<DesignerHost>::spreadsheet	21
 branches	packages/browser-client/runtime/src/host_bridge.rs	export_spreadsheet	24
-branches	packages/browser-client/runtime/src/host_bridge.rs	spreadsheet_operation	16
 branches	packages/browser-client/runtime/src/interop_adapter.rs	archive	17
 branches	packages/browser-client/runtime/src/interop_adapter.rs	builtin_format	29
 branches	packages/browser-client/runtime/src/interop_adapter.rs	c_unknown	25
@@ -556,7 +553,6 @@ branches	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	13
 branches	packages/browser-client/runtime/src/wasm.rs	export_spreadsheet	24
 branches	packages/browser-client/runtime/src/wasm.rs	process_portable_ro_candidate	17
 branches	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	24
-branches	packages/browser-client/runtime/src/wasm.rs	spreadsheet_operation	16
 branches	packages/browser-client/runtime/src/wasm.rs	tachiko_designer_spreadsheet_run	14
 depth	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	4
 depth	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	5
@@ -650,7 +646,7 @@ file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		943
-file	crates/merge-engine/src/lib.rs		1112
+file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1881
 file	crates/storage/src/direct_ro/v2.rs		1457
@@ -663,12 +659,12 @@ file	crates/workspace-engine/src/formula_operations.rs		1225
 file	crates/workspace-engine/src/lib.rs		4007
 file	crates/workspace-engine/src/patch_lifecycle.rs		6778
 file	crates/workspace-engine/src/resident_session.rs		1811
-file	packages/browser-client/runtime/src/host_bridge.rs		1085
+file	packages/browser-client/runtime/src/host_bridge.rs		1080
 file	packages/browser-client/runtime/src/interop_adapter.rs		6474
 file	packages/browser-client/runtime/src/interop_document.rs		5619
 file	packages/browser-client/runtime/src/lib.rs		13246
 file	packages/browser-client/runtime/src/save_size.rs		922
-file	packages/browser-client/runtime/src/wasm.rs		1228
+file	packages/browser-client/runtime/src/wasm.rs		1222
 inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
 inline-test	crates/formula-engine/src/lib.rs	causal_visits[cfg(test)]	16
 inline-test	crates/formula-engine/src/lib.rs	column_walk_counter[cfg(test)]	17
@@ -698,7 +694,7 @@ inline-test	packages/browser-client/runtime/src/interop_document.rs	import_depen
 inline-test	packages/browser-client/runtime/src/interop_document.rs	import_id_tests[cfg(test)]	31
 inline-test	packages/browser-client/runtime/src/interop_number_format.rs	tests[cfg(test)]	278
 inline-test	packages/browser-client/runtime/src/lib.rs	admission_counters[cfg(test)]	25
-inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2788
+inline-test	packages/browser-client/runtime/src/lib.rs	tests[cfg(test)]	2768
 inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg(test)]	27
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
