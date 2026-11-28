@@ -715,12 +715,10 @@ reason	crates/formula-engine/src/lib.rs	bind_node allow(clippy::too_many_lines)	
 reason	crates/formula-engine/src/lib.rs	bind_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
 reason	crates/formula-engine/src/lib.rs	pregraph_failures allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/lib.rs	render_bound allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/src/parser.rs	format_unbound_expression allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	a_criterion_can_read_another_cell allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
-reason	crates/semantic-core/src/criterion.rs	<CriterionTest>::matches_equal allow(clippy::float_cmp)	1
 reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
 reason	crates/semantic-core/src/presentation.rs	validate_presentation allow(clippy::too_many_lines)	1
 reason	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value allow(clippy::too_many_arguments)	1
@@ -754,7 +752,6 @@ reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::i
 reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::insert_command_disclosures allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/formula_operations.rs	FormulaReasoningOutcome allow(clippy::large_enum_variant)	1
 reason	crates/workspace-engine/src/incremental_preparation_tests.rs	prepared_evaluation_matches_full_validation_for_every_candidate_kind allow(clippy::too_many_lines)	1
-reason	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	formula_diagnostics allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	serialize_optional_calculated_value allow(clippy::ref_option)	1
 reason	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures allow(clippy::too_many_lines)	1
