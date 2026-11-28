@@ -2405,3 +2405,41 @@ fn xlsx_blank_cells_keep_exact_positions_beside_present_zero_and_false() {
         "{sheet}"
     );
 }
+
+#[test]
+fn native_xlsx_exports_deleted_reference_with_cached_ref_error() {
+    let mut document = Document::empty("deleted-reference", "Deleted reference");
+    add_table(
+        &mut document,
+        "errors",
+        "errors",
+        "Errors",
+        vec![field("a", FieldType::Auto, false)],
+        vec![
+            vec![Some(Value::Number(Number::new(2.0).unwrap()))],
+            vec![Some(Value::Formula(Expression::Reference(FieldRef::new(
+                "errors-r000",
+                "a",
+            ))))],
+        ],
+    );
+    document.schemas.get_mut("errors").unwrap().headerless = true;
+    let mut host = host_for(document);
+    let deleted = host.request(
+        &json!({
+            "type": "remove_table_rows", "expected_revision": "resident/0",
+            "collection": "errors", "entities": ["errors-r000"],
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let deleted: Json = serde_json::from_slice(&deleted).unwrap();
+    assert_eq!(deleted["status"], "ok", "{deleted}");
+    let (reply, bytes) = export(&mut host, "resident/1", "errors", "xlsx");
+    assert_eq!(reply["status"], "ok", "{reply}");
+    let sheet = xml(&bytes.unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains(r#"<c r="A1" s="0" t="e"><f>#REF!</f><v>#REF!</v></c>"#),
+        "{sheet}"
+    );
+}

@@ -824,21 +824,20 @@ fn render_bound(
 ) -> String {
     match expression {
         Expression::Number(number) => parser::format_number(*number),
-        Expression::Reference(reference) => {
-            let address = &addresses[reference];
-            format!("[{}.{}]", address.entity, address.field)
+        Expression::DeletedReference {} => "#REF!".to_owned(),
+        Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
+            render_bound_reference(
+                &addresses[reference],
+                matches!(expression, Expression::AnchoredReference(_)),
+                false,
+            )
         }
-        Expression::SameRowReference(field) => {
-            let reference = FieldRef::new(owner.entity.clone(), field.clone());
-            format!("[.{}]", addresses[&reference].field)
-        }
-        Expression::AnchoredReference(reference) => {
-            let address = &addresses[reference];
-            format!("[{}.${}]", address.entity, address.field)
-        }
-        Expression::AnchoredSameRowReference(field) => {
-            let reference = FieldRef::new(owner.entity.clone(), field.clone());
-            format!("[.${}]", addresses[&reference].field)
+        Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
+            render_bound_reference(
+                &addresses[&FieldRef::new(owner.entity.clone(), field.clone())],
+                matches!(expression, Expression::AnchoredSameRowReference(_)),
+                true,
+            )
         }
         Expression::ColumnTotal(column) => {
             let address = &columns[column];
@@ -972,6 +971,16 @@ fn render_bound(
             render_bound(value, owner, addresses, columns)
         ),
     }
+}
+
+fn render_bound_reference(address: &FieldAddress, anchored: bool, same_row: bool) -> String {
+    let entity = if same_row {
+        ""
+    } else {
+        address.entity.as_str()
+    };
+    let anchor = if anchored { "$" } else { "" };
+    format!("[{entity}.{anchor}{}]", address.field)
 }
 
 fn render_bound_function(
@@ -1801,25 +1810,12 @@ impl CalculationFailures {
                     field = dependency;
                     failure = dependency_failure;
                 }
-                CalculationFailure::LookupMissingKey => {
-                    return CalculationError::LookupMissingKey {
-                        formula: field.clone(),
-                    };
-                }
-                CalculationFailure::EmptyAggregate => {
-                    return CalculationError::EmptyAggregate {
-                        formula: field.clone(),
-                    };
-                }
-                CalculationFailure::DivisionByZero => {
-                    return CalculationError::DivisionByZero {
-                        formula: field.clone(),
-                    };
-                }
-                CalculationFailure::NonFiniteResult => {
-                    return CalculationError::NonFiniteResult {
-                        field: field.clone(),
-                    };
+                CalculationFailure::DeletedReference
+                | CalculationFailure::LookupMissingKey
+                | CalculationFailure::EmptyAggregate
+                | CalculationFailure::DivisionByZero
+                | CalculationFailure::NonFiniteResult => {
+                    return cell_failure::compatibility_error(failure, field.clone());
                 }
                 CalculationFailure::InvalidColumn { columns } => {
                     let (column, column_failure) = columns
@@ -1916,6 +1912,7 @@ pub enum CalculationFailure {
     },
     DivisionByZero,
     EmptyAggregate,
+    DeletedReference,
     LookupMissingKey,
     NonFiniteResult,
     InvalidColumn {
@@ -2038,6 +2035,8 @@ pub enum CalculationError {
     DivisionByZero { formula: FieldRef },
     #[error("formula '{formula}' reads an empty aggregate")]
     EmptyAggregate { formula: FieldRef },
+    #[error("formula '{formula}' reads a deleted reference")]
+    DeletedReference { formula: FieldRef },
     #[error("lookup key has no matching row for formula '{formula}'")]
     LookupMissingKey { formula: FieldRef },
     #[error("formula dependency cycle: {path:?}")]

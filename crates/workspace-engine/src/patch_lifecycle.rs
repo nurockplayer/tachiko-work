@@ -702,27 +702,7 @@ fn expression_node_approx_bytes(node: &Expression) -> usize {
                     })
                     .sum::<usize>()
         }
-        Expression::Number(_)
-        | Expression::Add { .. }
-        | Expression::Subtract { .. }
-        | Expression::Multiply { .. }
-        | Expression::Divide { .. }
-        | Expression::Minimum { .. }
-        | Expression::Maximum { .. }
-        | Expression::Compare { .. }
-        | Expression::IfError { .. }
-        | Expression::If { .. }
-        | Expression::And(_)
-        | Expression::Or(_)
-        | Expression::Not(_)
-        | Expression::Abs(_)
-        | Expression::Round { .. }
-        | Expression::RoundUp { .. }
-        | Expression::RoundDown { .. }
-        | Expression::DatePart { .. }
-        | Expression::Weekday { .. }
-        | Expression::Days { .. }
-        | Expression::IsBlank(_) => 0,
+        _ => 0,
     }
 }
 

@@ -525,23 +525,17 @@ impl ExpressionV2 {
             Expression::AnchoredSameRowReference(field) => {
                 Self::AnchoredSameRowReference(field.to_string())
             }
-            Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV2 {
-                schema: column.schema.to_string(),
-                field: column.field.to_string(),
-            }),
+            Expression::ColumnTotal(column) => Self::ColumnTotal(wire_column(column)),
             Expression::ColumnAggregate { function, column } => {
                 Self::ColumnAggregate(ColumnAggregateArgsV2 {
                     function: *function,
-                    column: ColumnRefV2 {
-                        schema: column.schema.to_string(),
-                        field: column.field.to_string(),
-                    },
+                    column: wire_column(column),
                 })
             }
-            // `validate_semantic_expressions` refuses conditional aggregates
-            // before any expression reaches this encoder.
-            Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
-                unreachable!("conditional aggregates are refused before encoding")
+            Expression::Lookup { .. }
+            | Expression::ColumnConditional { .. }
+            | Expression::DeletedReference {} => {
+                unreachable!("unsupported expressions are refused before encoding")
             }
             Expression::Add { left, right } => Self::Add(BinaryArgsV2::from_semantic(left, right)),
             Expression::Subtract { left, right } => {
@@ -808,6 +802,13 @@ impl ExpressionV2 {
     }
 }
 
+fn wire_column(column: &ColumnRef) -> ColumnRefV2 {
+    ColumnRefV2 {
+        schema: column.schema.to_string(),
+        field: column.field.to_string(),
+    }
+}
+
 fn validate_semantic_expressions(document: &Document) -> Result<(), CodecError> {
     for entity in document.entities.values() {
         for value in entity.fields.values() {
@@ -846,17 +847,16 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
                 value: left,
                 fallback: right,
             } => {
-                stack.push((right, depth + 1));
-                stack.push((left, depth + 1));
+                stack.extend([(right.as_ref(), depth + 1), (left.as_ref(), depth + 1)]);
             }
             Expression::If {
                 condition,
                 then_value,
                 else_value,
             } => {
-                stack.push((else_value, depth + 1));
-                stack.push((then_value, depth + 1));
-                stack.push((condition, depth + 1));
+                stack.extend(
+                    [else_value, then_value, condition].map(|child| (child.as_ref(), depth + 1)),
+                );
             }
             Expression::And(expressions) | Expression::Or(expressions) => {
                 stack.extend(expressions.iter().map(|expression| (expression, depth + 1)));
@@ -889,11 +889,10 @@ fn validate_semantic_expression(expression: &Expression) -> Result<(), CodecErro
             Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
                 return invalid("date functions are not representable in direct .ro/v2".to_owned());
             }
-            Expression::Lookup { .. } | Expression::ColumnConditional { .. } => {
-                return invalid(
-                    "lookups and conditional aggregates are not representable in direct .ro/v2"
-                        .to_owned(),
-                );
+            Expression::Lookup { .. }
+            | Expression::ColumnConditional { .. }
+            | Expression::DeletedReference {} => {
+                return invalid("formula expression requires .roproj/v3".to_owned());
             }
             Expression::Number(_)
             | Expression::Reference(_)

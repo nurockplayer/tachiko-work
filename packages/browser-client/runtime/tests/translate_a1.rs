@@ -1338,3 +1338,132 @@ fn translate_a1_blank_guarded_lookup_key_keeps_failure_outside_ifna() {
         &["range_tracks_collection"],
     );
 }
+
+#[test]
+fn deleted_row_references_persist_propagate_and_undo() {
+    let mut document = auto_total_document();
+    document.entities.get_mut("r2").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::Add {
+            left: Box::new(Expression::Reference(FieldRef::new("r1", "qty"))),
+            right: Box::new(Expression::AnchoredReference(FieldRef::new("r1", "price"))),
+        }),
+    );
+    document.entities.get_mut("r3").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::Reference(FieldRef::new("r2", "total"))),
+    );
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let before = lookup_results(&mut runtime, "resident/0");
+    let original = runtime
+        .as_ref()
+        .unwrap()
+        .export_project_v3("resident/0")
+        .unwrap()
+        .bytes;
+    delete_item_row(&mut runtime, "r1");
+    let after = lookup_results(&mut runtime, "resident/1");
+    assert_eq!(after[0]["formula"]["source"], "(#REF! + #REF!)");
+    for field in after.as_array().unwrap() {
+        assert_eq!(
+            field["calculated"],
+            json!({
+                "status": "failure", "code": "reference", "message": "#REF!"
+            })
+        );
+    }
+    let saved = runtime
+        .as_ref()
+        .unwrap()
+        .export_project_v3("resident/1")
+        .unwrap();
+    let mut reopened = None;
+    let opened = tachiko_designer_runtime::open_project(
+        &mut reopened,
+        &saved.bytes,
+        "00000000-0000-4000-8000-000000000980",
+    )
+    .unwrap();
+    assert_eq!(
+        lookup_results(&mut reopened, &opened.bootstrap.revision),
+        after
+    );
+
+    let undone = call(
+        &mut runtime,
+        &json!({"type": "undo", "expected_revision": "resident/1"}),
+    );
+    assert_eq!(undone["status"], "ok", "{undone}");
+    assert_eq!(lookup_results(&mut runtime, "resident/2"), before);
+    assert_eq!(
+        runtime
+            .as_ref()
+            .unwrap()
+            .export_project_v3("resident/2")
+            .unwrap()
+            .bytes,
+        original
+    );
+}
+
+#[test]
+fn deleting_an_interior_row_shrinks_a_whole_column_sum() {
+    let mut document = auto_total_document();
+    document.entities.get_mut("r3").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::ColumnTotal(
+            tachiko_workspace_engine::ColumnRef::new("Items", "qty"),
+        )),
+    );
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    assert_eq!(
+        lookup_results(&mut runtime, "resident/0")[1]["calculated"]["value"].as_f64(),
+        Some(6.0)
+    );
+    delete_item_row(&mut runtime, "r2");
+    let result = call(
+        &mut runtime,
+        &json!({
+            "type": "query_fields", "expected_revision": "resident/1",
+            "fields": [{"entity": "r3", "field": "total"}],
+        }),
+    );
+    assert_eq!(
+        result["response"]["payload"]["fields"][0]["calculated"]["value"].as_f64(),
+        Some(4.0),
+        "{result}"
+    );
+}
+
+fn delete_item_row(runtime: &mut Option<DesignerRuntime>, row: &str) {
+    let removed = call(
+        runtime,
+        &json!({
+            "type": "remove_table_rows", "expected_revision": "resident/0",
+            "collection": "Items", "entities": [row],
+        }),
+    );
+    assert_eq!(removed["status"], "ok", "{removed}");
+    assert_eq!(
+        removed["response"]["payload"]["resulting_revision"],
+        "resident/1"
+    );
+}
+
+fn auto_total_document() -> Document {
+    let mut document = fixture_document();
+    let total = document
+        .schemas
+        .get_mut("Items")
+        .unwrap()
+        .fields
+        .get_mut("total")
+        .unwrap();
+    total.field_type = FieldType::Auto;
+    total.required = false;
+    document
+}
