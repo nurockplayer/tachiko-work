@@ -45,8 +45,8 @@ use tachiko_semantic_core::{
     validate_formula_value_constraint, validate_keyed_grouped_sum_definitions,
 };
 pub use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate, RuleId,
-    StyleId, TablePresentation,
+    BorderSide, CellAlignment, CellFill, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
+    RuleId, StyleId, TablePresentation,
 };
 pub use tachiko_semantic_core::{
     ColumnAggregateFunction, ColumnCriterion, ColumnRef, ComparisonOperator, ConditionalAggregate,

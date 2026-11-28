@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use tachiko_semantic_core::{
-    BorderSide, CellAlignment, CellStyle, ColumnCriterion, ColumnRef, ComparisonOperator,
+    BorderSide, CellAlignment, CellFill, CellStyle, ColumnCriterion, ColumnRef, ComparisonOperator,
     ConditionalAggregate, ConditionalRule, DateFormat, EntityId, Expression, FieldId,
     FooterAggregate, MAX_EXPRESSION_DEPTH, Number, NumberFormat, NumberFormatKind,
     PresentationStore, RuleId, SchemaId, StyleId, TablePresentation,
@@ -16,7 +16,7 @@ fn full_style() -> CellStyle {
     CellStyle {
         bold: Some(true),
         italic: Some(false),
-        fill: Some("#FFEE00".into()),
+        fill: Some(CellFill::Solid("#FFEE00".into())),
         text_color: Some("#112233".into()),
         alignment: Some(CellAlignment::Center),
         wrap: Some(true),
@@ -161,9 +161,43 @@ fn style_ids_are_stable_and_false_differs_from_absent() {
 }
 
 #[test]
+fn clear_fill_is_canonical_only_for_cell_bindings() {
+    const ID: &str = "300b2cdc5c2c07ac870aad501600250d9b";
+    let style = format!("{{\"kind\":\"style\",\"id\":\"{ID}\",\"style\":{{\"fill\":false}}}}\n");
+    let cell =
+        format!("{{\"kind\":\"cell\",\"entity\":\"e1\",\"field\":\"f1\",\"style\":\"{ID}\"}}\n");
+    let vector = format!("{style}{cell}");
+    let store = decode_presentation(vector.as_bytes()).unwrap();
+    assert_eq!(store.styles[&StyleId::from(ID)].fill, Some(CellFill::Clear));
+    assert_eq!(
+        encode_presentation(&store).unwrap().unwrap(),
+        vector.as_bytes()
+    );
+
+    let column = format!(
+        "{{\"kind\":\"table\",\"schema\":\"orders\",\"column_styles\":{{\"f1\":\"{ID}\"}}}}\n"
+    );
+    let rule = format!(
+        "{{\"kind\":\"rule\",\"id\":\"r1\",\"schema\":\"orders\",\"rank\":\"a1\",\"fields\":[\"f1\"],\"condition\":{{\"op\":\"compare\",\"args\":{{\"operator\":\"<\",\"left\":{{\"op\":\"same_row_reference\",\"args\":\"f1\"}},\"right\":{{\"op\":\"number\",\"args\":0}}}}}},\"style\":\"{ID}\"}}\n"
+    );
+    for invalid in [
+        vector.replace("false", "true"),
+        vector.replace("false", "null"),
+        format!("{style}{column}{cell}"),
+        format!("{style}{rule}{cell}"),
+        style,
+    ] {
+        assert!(matches!(
+            decode_presentation(invalid.as_bytes()),
+            Err(FormatError::InvalidRoProjectRepresentation { .. })
+        ));
+    }
+}
+
+#[test]
 fn style_id_refuses_unspellable_styles_without_panicking() {
     let lowercase = CellStyle {
-        fill: Some("#aabbcc".into()),
+        fill: Some(CellFill::Solid("#aabbcc".into())),
         ..CellStyle::default()
     };
     assert!(matches!(

@@ -18,7 +18,7 @@ use tachiko_storage::{
     encode_roproj_v3_with_presentation, style_id,
 };
 use tachiko_workspace_engine::{
-    CellStyle, ConditionalRule, Date, Document, Entity, EntityId, EntityKey, Expression,
+    CellFill, CellStyle, ConditionalRule, Date, Document, Entity, EntityId, EntityKey, Expression,
     FieldConstraint, FieldDefinition, FieldId, FieldKey, FieldType, FooterAggregate, Number,
     PresentationStore, RuleId, Schema, SchemaId, SchemaKey, StyleId, TablePresentation, Value,
 };
@@ -135,7 +135,7 @@ fn bold_style() -> CellStyle {
 
 fn fill_style() -> CellStyle {
     CellStyle {
-        fill: Some("#FFEE00".into()),
+        fill: Some(CellFill::Solid("#FFEE00".into())),
         ..CellStyle::default()
     }
 }

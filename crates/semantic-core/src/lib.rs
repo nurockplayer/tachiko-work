@@ -39,7 +39,7 @@ pub use model::{
     NumberFormatKind, RowRank, Schema, SchemaId, SchemaKey, Value, compare_row_order,
 };
 pub use presentation::{
-    BorderSide, CellAlignment, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
+    BorderSide, CellAlignment, CellFill, CellStyle, ConditionalRule, DateFormat, FooterAggregate,
     MAX_RULES_PER_TABLE, MAX_STYLES, PresentationError, PresentationStore, RuleId, StyleId,
     TablePresentation, prune_presentation, validate_presentation,
 };
