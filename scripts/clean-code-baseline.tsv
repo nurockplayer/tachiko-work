@@ -133,7 +133,6 @@ body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
 body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
 body	crates/merge-engine/src/lib.rs	merge_supported	88
-body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
 body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	77
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
@@ -336,7 +335,6 @@ branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_constraints	35
 branches	crates/merge-engine/src/conflict_v2.rs	apply_selected_field_orders	15
 branches	crates/merge-engine/src/conflict_v2.rs	merge_v2	15
 branches	crates/merge-engine/src/conflict_v2.rs	upgrade_fact	22
-branches	crates/semantic-core/src/address.rs	<AddressIndex>::build	16
 branches	crates/semantic-core/src/input_classification.rs	parse_currency	13
 branches	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	26
 branches	crates/semantic-core/src/model.rs	<Expression>::reference_uses	20
