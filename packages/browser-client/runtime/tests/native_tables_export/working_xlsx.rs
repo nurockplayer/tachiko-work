@@ -1,8 +1,6 @@
 use std::io::Write;
 
-use super::{
-    Cursor, DesignerHost, HostReply, Json, NEXT, OCCURRENCE, export_xlsx, import_xlsx, json,
-};
+use super::{Cursor, DesignerHost, HostReply, Json, NEXT, OCCURRENCE, export_xlsx, import_xlsx};
 use tachiko_designer_runtime::interop_adapter::{
     CellStyle, SourceCell, SourceColumn, SourceLayout, SourceSheet, SourceValue, SourceWorkbook,
 };
@@ -63,7 +61,7 @@ fn ok(reply: &[u8]) -> Json {
 fn import(host: &mut DesignerHost, bytes: &[u8]) -> Json {
     ok(&send(
         host,
-        &json!({
+        &serde_json::json!({
             "type": "import", "format": "xlsx", "install": true, "occurrence_id": OCCURRENCE,
             "csv_options": {"delimiter": ",", "header": true, "header_rows": [1]},
             "selection": {"column_types": [["date", "text"]], "extra_columns": [[]]},
@@ -77,7 +75,7 @@ fn reopen(host: &mut DesignerHost) {
     let expected = ok(&host.observe_occurrence())["payload"].clone();
     let reply = send(
         host,
-        &json!({
+        &serde_json::json!({
             "type": "reopen_imported_xlsx_working_size", "expected": expected, "occurrence_id": NEXT,
         }),
         &[],
@@ -93,7 +91,7 @@ fn overwrite(host: &mut DesignerHost) -> HostReply {
     let expected = ok(&host.observe_occurrence())["payload"].clone();
     send(
         host,
-        &json!({"type": "export_xlsx_overwrite", "expected": expected}),
+        &serde_json::json!({"type": "export_xlsx_overwrite", "expected": expected}),
         &[],
     )
 }
@@ -107,14 +105,14 @@ fn working_size_xlsx_overwrite_keeps_locale_date_after_70kb_edit_batch() {
     let edits: Vec<_> = rows
         .iter()
         .map(|row| {
-            json!({
+            serde_json::json!({
                 "target": {"entity": row["entity_id"], "field": sheet["columns"][1]["field_id"]},
                 "input": {"kind": "text", "value": ""},
             })
         })
         .collect();
     let mut request =
-        json!({"type": "edit_cells", "expected_revision": "resident/0", "edits": edits});
+        serde_json::json!({"type": "edit_cells", "expected_revision": "resident/0", "edits": edits});
     let padding = 70_000 - serde_json::to_vec(&request).unwrap().len();
     for (index, edit) in request["edits"]
         .as_array_mut()
@@ -123,7 +121,7 @@ fn working_size_xlsx_overwrite_keeps_locale_date_after_70kb_edit_batch() {
         .enumerate()
     {
         let text_bytes = padding / rows.len() + usize::from(index < padding % rows.len());
-        edit["input"]["value"] = json!("x".repeat(text_bytes));
+        edit["input"]["value"] = serde_json::json!("x".repeat(text_bytes));
     }
     let bytes = serde_json::to_vec(&request).unwrap();
     assert_eq!(bytes.len(), 70_000);
