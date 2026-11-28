@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use tachiko_semantic_core::{Diagnostic, DiagnosticCode, DiagnosticProvider, DiagnosticSeverity};
 
 use central_directory::read_central_directory;
+use local_header::{LocalDirectoryContext, select_ordinary_data_size};
 
 use super::PortablePackageError;
 use crate::{
@@ -450,21 +451,15 @@ fn parse_container_at_end(
     let mut local_records = Vec::with_capacity(usize::from(end.total_entries));
     let mut local_offset = 0;
     for _ in 0..end.total_entries {
-        let central_index = central_by_local_offset
-            .get(&local_offset)
-            .and_then(|matching| matching.record_index);
+        let matching = central_by_local_offset.get(&local_offset);
+        let central_index = matching.and_then(|matching| matching.record_index);
         let central = central_index.map(|index| &central_records[index]);
-        let expected_next_offset = central_by_local_offset
-            .get(&local_offset)
-            .and_then(|matching| matching.next_offset);
-        let record = parse_local_record(
-            source,
-            local_offset,
-            central,
-            central_offset,
-            expected_next_offset,
-            &central_by_local_offset,
-        )?;
+        let directory = LocalDirectoryContext {
+            local_section_end: central_offset,
+            expected_next_offset: matching.and_then(|matching| matching.next_offset),
+            central_by_local_offset: &central_by_local_offset,
+        };
+        let record = parse_local_record(source, local_offset, central, directory)?;
         if record.end > central_offset {
             return invalid_container("local entry overlaps the central directory");
         }
@@ -522,9 +517,7 @@ fn parse_local_record<'a>(
     source: &'a [u8],
     offset: usize,
     central: Option<&CentralRecord<'_>>,
-    local_section_end: usize,
-    expected_next_offset: Option<usize>,
-    central_by_local_offset: &HashMap<usize, CentralOffsetIndex>,
+    directory: LocalDirectoryContext<'_>,
 ) -> Result<LocalRecord<'a>, PortablePackageError> {
     require_range(source, offset, 30, "local header")?;
     if read_u32(source, offset, "local signature")? != ZIP_LOCAL_SIGNATURE {
@@ -545,9 +538,7 @@ fn parse_local_record<'a>(
             data_start,
             compressed_size,
             central.map(|record| record.compressed_size),
-            local_section_end,
-            expected_next_offset,
-            central_by_local_offset,
+            directory,
         )
     } else {
         central.map_or(compressed_size, |record| record.compressed_size)
@@ -601,52 +592,6 @@ fn parse_local_record<'a>(
     })
 }
 
-fn select_ordinary_data_size(
-    data_start: usize,
-    local_size: u32,
-    central_size: Option<u32>,
-    local_section_end: usize,
-    expected_next_offset: Option<usize>,
-    central_by_local_offset: &HashMap<usize, CentralOffsetIndex>,
-) -> u32 {
-    let Some(central_size) = central_size else {
-        return local_size;
-    };
-    if local_size == central_size {
-        return local_size;
-    }
-    let local_end = ordinary_data_end(data_start, local_size, local_section_end);
-    let central_end = ordinary_data_end(data_start, central_size, local_section_end);
-    // Stored data can contain local-header signature bytes. Resolve a size
-    // disagreement from the parsed central offset chain, never from a payload
-    // byte pattern that merely resembles the next record.
-    if let Some(expected_next_offset) = expected_next_offset {
-        if local_end == Some(expected_next_offset) && central_end != Some(expected_next_offset) {
-            return local_size;
-        }
-        if central_end == Some(expected_next_offset) && local_end != Some(expected_next_offset) {
-            return central_size;
-        }
-    }
-    let local_declared = local_end.is_some_and(|end| {
-        end == local_section_end
-            || central_by_local_offset
-                .get(&end)
-                .is_some_and(|matching| matching.record_index.is_some())
-    });
-    let central_declared = central_end.is_some_and(|end| {
-        end == local_section_end
-            || central_by_local_offset
-                .get(&end)
-                .is_some_and(|matching| matching.record_index.is_some())
-    });
-    if central_declared && !local_declared {
-        central_size
-    } else {
-        local_size
-    }
-}
-
 fn radix_sort_and_dedup(offsets: &mut Vec<u32>) {
     let mut scratch = vec![0_u32; offsets.len()];
     for byte_index in 0..4 {
@@ -668,12 +613,6 @@ fn radix_sort_and_dedup(offsets: &mut Vec<u32>) {
         offsets.copy_from_slice(&scratch);
     }
     offsets.dedup();
-}
-
-fn ordinary_data_end(data_start: usize, size: u32, local_section_end: usize) -> Option<usize> {
-    let size = usize::try_from(size).ok()?;
-    let end = data_start.checked_add(size)?;
-    (end <= local_section_end).then_some(end)
 }
 
 fn parse_data_descriptor_end(

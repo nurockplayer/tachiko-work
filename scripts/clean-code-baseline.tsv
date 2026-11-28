@@ -19,8 +19,6 @@ args	crates/semantic-core/src/validation.rs	validate_column_conditional	6
 args	crates/semantic-core/src/validation.rs	validate_formula_reference	6
 args	crates/semantic-core/src/validation.rs	validate_present_entity_field	7
 args	crates/semantic-core/src/validation.rs	validate_value	8
-args	crates/storage/src/portable_package/v1.rs	parse_local_record	6
-args	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	6
 args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::evaluate_analysis	7
 args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::query_analysis	7
 args	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::query_analysis_pair	12
@@ -148,7 +146,7 @@ body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	92
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	99
 body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	84
 body	crates/storage/src/direct_ro/v2.rs	write_expression	140
-body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
+body	crates/storage/src/portable_package/v1.rs	parse_local_record	73
 body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
 body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
@@ -356,7 +354,6 @@ branches	crates/storage/src/direct_ro/v2.rs	write_expression	33
 branches	crates/storage/src/lib.rs	enforce_v2_number_token_limit	27
 branches	crates/storage/src/lib.rs	normalize_v2_number_tokens	16
 branches	crates/storage/src/portable_package/v1.rs	parse_manifest	15
-branches	crates/storage/src/portable_package/v1.rs	select_ordinary_data_size	13
 branches	crates/storage/src/portable_package/v1.rs	validate_canonical_profile	26
 branches	crates/storage/src/presentation.rs	parse_presentation	16
 branches	crates/storage/src/presentation.rs	write_style_object	22
@@ -636,7 +633,7 @@ file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872
 file	crates/storage/src/direct_ro/v2.rs		1457
-file	crates/storage/src/portable_package/v1.rs		1153
+file	crates/storage/src/portable_package/v1.rs		1092
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1692
 file	crates/storage/src/roproj/v3.rs		2903
