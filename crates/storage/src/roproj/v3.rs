@@ -425,6 +425,7 @@ enum ValueV3 {
     deny_unknown_fields
 )]
 pub(crate) enum ExpressionV3 {
+    DeletedReference {},
     Number(NumberV3),
     Reference(FieldRefV3),
     SameRowReference(String),
@@ -1242,15 +1243,16 @@ impl NumberV3 {
     }
 }
 
-fn require_date_operand(operand: &ExpressionV3) -> Result<(), FormatError> {
+fn require_wire_operand(operand: &ExpressionV3, function: &str) -> Result<(), FormatError> {
     if !matches!(
         operand,
         ExpressionV3::Reference(_)
+            | ExpressionV3::DeletedReference {}
             | ExpressionV3::SameRowReference(_)
             | ExpressionV3::AnchoredReference(_)
             | ExpressionV3::AnchoredSameRowReference(_)
     ) {
-        return invalid_representation("date function requires a field reference".to_owned());
+        return invalid_representation(format!("{function} requires a field reference"));
     }
     Ok(())
 }
@@ -1304,8 +1306,10 @@ impl ExpressionV3 {
                 | Self::Divide(arguments)
                 | Self::Minimum(arguments)
                 | Self::Maximum(arguments) => {
-                    stack.push((&arguments.right, depth + 1));
-                    stack.push((&arguments.left, depth + 1));
+                    stack.extend(
+                        [&arguments.right, &arguments.left]
+                            .map(|child| (child.as_ref(), depth + 1)),
+                    );
                 }
                 Self::Compare(arguments) => {
                     comparison_operator(&arguments.operator)?;
@@ -1337,37 +1341,27 @@ impl ExpressionV3 {
                     stack.push((&arguments.value, depth + 1));
                 }
                 Self::DatePart(args) => {
-                    require_date_operand(&args.operand)?;
+                    require_wire_operand(&args.operand, "date function")?;
                     stack.push((&args.operand, depth + 1));
                 }
                 Self::Weekday(args) => {
-                    require_date_operand(&args.operand)?;
+                    require_wire_operand(&args.operand, "date function")?;
                     if !(1..=3).contains(&args.return_type) {
                         return invalid_representation("invalid WEEKDAY return_type".to_owned());
                     }
                     stack.push((&args.operand, depth + 1));
                 }
                 Self::Days(args) => {
-                    require_date_operand(&args.end)?;
-                    require_date_operand(&args.start)?;
+                    require_wire_operand(&args.end, "date function")?;
+                    require_wire_operand(&args.start, "date function")?;
                     stack.push((&args.start, depth + 1));
                     stack.push((&args.end, depth + 1));
                 }
                 Self::IsBlank(expression) => {
-                    if !matches!(
-                        expression.as_ref(),
-                        Self::Reference(_)
-                            | Self::SameRowReference(_)
-                            | Self::AnchoredReference(_)
-                            | Self::AnchoredSameRowReference(_)
-                    ) {
-                        return invalid_representation(
-                            "ISBLANK requires a field reference".to_owned(),
-                        );
-                    }
+                    require_wire_operand(expression, "ISBLANK")?;
                     stack.push((expression, depth + 1));
                 }
-                Self::Number(_) => {}
+                Self::Number(_) | Self::DeletedReference {} => {}
             }
         }
         Ok(())
@@ -1376,6 +1370,7 @@ impl ExpressionV3 {
     pub(crate) fn into_semantic(self) -> Result<Expression, FormatError> {
         Ok(match self {
             Self::Number(number) => Expression::Number(number.into_semantic()?),
+            Self::DeletedReference {} => Expression::DeletedReference {},
             Self::Reference(reference) => {
                 Expression::Reference(FieldRef::new(reference.entity, reference.field))
             }
@@ -1431,18 +1426,7 @@ impl ExpressionV3 {
                 value: Box::new(args.value.into_semantic()?),
                 fallback: Box::new(args.fallback.into_semantic()?),
             },
-            Self::And(expressions) => Expression::And(
-                expressions
-                    .into_iter()
-                    .map(ExpressionV3::into_semantic)
-                    .collect::<Result<_, _>>()?,
-            ),
-            Self::Or(expressions) => Expression::Or(
-                expressions
-                    .into_iter()
-                    .map(ExpressionV3::into_semantic)
-                    .collect::<Result<_, _>>()?,
-            ),
+            expression @ (Self::And(_) | Self::Or(_)) => expression.logical_into_semantic()?,
             Self::Not(expression) => Expression::Not(Box::new(expression.into_semantic()?)),
             Self::Abs(expression) => Expression::Abs(Box::new(expression.into_semantic()?)),
             Self::Round(arguments) => Expression::Round {
@@ -1470,6 +1454,24 @@ impl ExpressionV3 {
                 start: Box::new(args.start.into_semantic()?),
             },
             Self::IsBlank(expression) => Expression::IsBlank(Box::new(expression.into_semantic()?)),
+        })
+    }
+}
+
+impl ExpressionV3 {
+    fn logical_into_semantic(self) -> Result<Expression, FormatError> {
+        let conjunction = matches!(self, Self::And(_));
+        let (Self::And(expressions) | Self::Or(expressions)) = self else {
+            unreachable!("only logical lists reach this conversion");
+        };
+        let expressions = expressions
+            .into_iter()
+            .map(Self::into_semantic)
+            .collect::<Result<_, _>>()?;
+        Ok(if conjunction {
+            Expression::And(expressions)
+        } else {
+            Expression::Or(expressions)
         })
     }
 }
@@ -1717,6 +1719,7 @@ impl ExpressionV3 {
     pub(crate) fn from_semantic(expression: &Expression) -> Self {
         match expression {
             Expression::Number(number) => Self::Number(NumberV3(number.get())),
+            Expression::DeletedReference {} => Self::DeletedReference {},
             Expression::Reference(reference) => {
                 Self::Reference(FieldRefV3::from_semantic(reference))
             }
@@ -1727,44 +1730,17 @@ impl ExpressionV3 {
             Expression::AnchoredSameRowReference(field) => {
                 Self::AnchoredSameRowReference(field.to_string())
             }
-            Expression::ColumnTotal(column) => Self::ColumnTotal(ColumnRefV3 {
-                schema: column.schema.to_string(),
-                field: column.field.to_string(),
-            }),
+            Expression::ColumnTotal(column) => Self::ColumnTotal(wire_column(column)),
             Expression::ColumnAggregate { function, column } => {
                 Self::ColumnAggregate(ColumnAggregateArgsV3 {
                     function: *function,
-                    column: ColumnRefV3 {
-                        schema: column.schema.to_string(),
-                        field: column.field.to_string(),
-                    },
+                    column: wire_column(column),
                 })
             }
             Expression::ColumnConditional {
                 aggregate,
                 criteria,
-            } => {
-                let (aggregate, values) = match aggregate.as_ref() {
-                    ConditionalAggregate::Sum(column) => ("sum", Some(wire_column(column))),
-                    ConditionalAggregate::Average(column) => ("average", Some(wire_column(column))),
-                    ConditionalAggregate::Count => ("count", None),
-                };
-                Self::ColumnConditional(ColumnConditionalArgsV3 {
-                    aggregate: aggregate.to_owned(),
-                    values,
-                    criteria: criteria
-                        .iter()
-                        .map(|criterion| ColumnCriterionV3 {
-                            column: wire_column(&criterion.column),
-                            operator: criterion.operator.as_str().to_owned(),
-                            value: criterion
-                                .value
-                                .as_ref()
-                                .map(|expression| Box::new(Self::from_semantic(expression))),
-                        })
-                        .collect(),
-                })
-            }
+            } => wire_conditional(aggregate, criteria),
             Expression::Lookup {
                 key,
                 key_column,
@@ -2274,32 +2250,25 @@ pub(crate) fn write_expression(
 ) -> Result<(), FormatError> {
     output.push('{');
     match expression {
+        ExpressionV3::DeletedReference {} => {
+            output.push_str(r#""op":"deleted_reference","args":{}"#);
+        }
         ExpressionV3::Number(number) => {
             compact_member_string(output, "op", "number", true)?;
             compact_member_number(output, "args", *number, false)?;
         }
-        ExpressionV3::Reference(reference) => {
-            compact_member_string(output, "op", "reference", true)?;
-            compact_member_prefix(output, "args")?;
-            output.push('{');
-            compact_member_string(output, "entity", &reference.entity, true)?;
-            compact_member_string(output, "field", &reference.field, false)?;
-            output.push('}');
+        ExpressionV3::Reference(reference) | ExpressionV3::AnchoredReference(reference) => {
+            write_reference(
+                output,
+                reference,
+                matches!(expression, ExpressionV3::AnchoredReference(_)),
+            )?;
         }
-        ExpressionV3::SameRowReference(field) => {
-            compact_member_string(output, "op", "same_row_reference", true)?;
-            compact_member_string(output, "args", field, false)?;
-        }
-        ExpressionV3::AnchoredReference(reference) => {
-            compact_member_string(output, "op", "anchored_reference", true)?;
-            compact_member_prefix(output, "args")?;
-            output.push('{');
-            compact_member_string(output, "entity", &reference.entity, true)?;
-            compact_member_string(output, "field", &reference.field, false)?;
-            output.push('}');
-        }
-        ExpressionV3::AnchoredSameRowReference(field) => {
-            compact_member_string(output, "op", "anchored_same_row_reference", true)?;
+        ExpressionV3::SameRowReference(field) | ExpressionV3::AnchoredSameRowReference(field) => {
+            write_same_row_reference_tag(
+                output,
+                matches!(expression, ExpressionV3::AnchoredSameRowReference(_)),
+            )?;
             compact_member_string(output, "args", field, false)?;
         }
         ExpressionV3::ColumnTotal(column) => {
@@ -2486,36 +2455,9 @@ pub(crate) fn write_expression(
             compact_member_prefix(output, "args")?;
             write_expression(output, expression)?;
         }
-        ExpressionV3::Round(args) => {
-            compact_member_string(output, "op", "round", true)?;
-            compact_member_prefix(output, "args")?;
-            output.push('{');
-            compact_member_prefix(output, "value")?;
-            write_expression(output, &args.value)?;
-            output.push(',');
-            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
-            output.push('}');
-        }
-        ExpressionV3::RoundUp(args) => {
-            compact_member_string(output, "op", "round_up", true)?;
-            compact_member_prefix(output, "args")?;
-            output.push('{');
-            compact_member_prefix(output, "value")?;
-            write_expression(output, &args.value)?;
-            output.push(',');
-            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
-            output.push('}');
-        }
-        ExpressionV3::RoundDown(args) => {
-            compact_member_string(output, "op", "round_down", true)?;
-            compact_member_prefix(output, "args")?;
-            output.push('{');
-            compact_member_prefix(output, "value")?;
-            write_expression(output, &args.value)?;
-            output.push(',');
-            compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
-            output.push('}');
-        }
+        ExpressionV3::Round(args) => write_round(output, "round", args)?,
+        ExpressionV3::RoundUp(args) => write_round(output, "round_up", args)?,
+        ExpressionV3::RoundDown(args) => write_round(output, "round_down", args)?,
     }
     output.push('}');
     Ok(())
@@ -2525,6 +2467,46 @@ fn write_compact_column(output: &mut String, column: &ColumnRefV3) -> Result<(),
     output.push('{');
     compact_member_string(output, "schema", &column.schema, true)?;
     compact_member_string(output, "field", &column.field, false)?;
+    output.push('}');
+    Ok(())
+}
+
+fn write_round(output: &mut String, op: &str, args: &RoundArgumentsV3) -> Result<(), FormatError> {
+    compact_member_string(output, "op", op, true)?;
+    compact_member_prefix(output, "args")?;
+    output.push('{');
+    compact_member_prefix(output, "value")?;
+    write_expression(output, &args.value)?;
+    output.push(',');
+    compact_member_number(output, "digits", NumberV3(f64::from(args.digits)), false)?;
+    output.push('}');
+    Ok(())
+}
+
+fn write_same_row_reference_tag(output: &mut String, anchored: bool) -> Result<(), FormatError> {
+    let op = if anchored {
+        "anchored_same_row_reference"
+    } else {
+        "same_row_reference"
+    };
+    compact_member_string(output, "op", op, true)
+}
+
+fn write_reference(
+    output: &mut String,
+    reference: &FieldRefV3,
+    anchored: bool,
+) -> Result<(), FormatError> {
+    let op = if anchored {
+        "anchored_reference"
+    } else {
+        "reference"
+    };
+    compact_member_string(output, "op", op, true)?;
+    compact_member_prefix(output, "args")?;
+    output.push('{');
+    compact_member_string(output, "entity", &reference.entity, true)?;
+    compact_member_string(output, "field", &reference.field, false)?;
     output.push('}');
     Ok(())
 }
@@ -2715,17 +2697,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         stack.push((value, depth + 1));
                     }
                     Expression::DatePart { operand, .. } | Expression::Weekday { operand, .. } => {
-                        if !matches!(
-                            operand.as_ref(),
-                            Expression::Reference(_)
-                                | Expression::SameRowReference(_)
-                                | Expression::AnchoredReference(_)
-                                | Expression::AnchoredSameRowReference(_)
-                        ) {
-                            return invalid_representation(
-                                "date function requires a field reference".to_owned(),
-                            );
-                        }
+                        require_semantic_operand(operand, "date function")?;
                         if matches!(node, Expression::Weekday { return_type, .. } if !(1..=3).contains(return_type))
                         {
                             return invalid_representation(
@@ -2735,38 +2707,13 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         stack.push((operand, depth + 1));
                     }
                     Expression::Days { end, start } => {
-                        if !matches!(
-                            end.as_ref(),
-                            Expression::Reference(_)
-                                | Expression::SameRowReference(_)
-                                | Expression::AnchoredReference(_)
-                                | Expression::AnchoredSameRowReference(_)
-                        ) || !matches!(
-                            start.as_ref(),
-                            Expression::Reference(_)
-                                | Expression::SameRowReference(_)
-                                | Expression::AnchoredReference(_)
-                                | Expression::AnchoredSameRowReference(_)
-                        ) {
-                            return invalid_representation(
-                                "date function requires a field reference".to_owned(),
-                            );
-                        }
+                        require_semantic_operand(end, "date function")?;
+                        require_semantic_operand(start, "date function")?;
                         stack.push((start, depth + 1));
                         stack.push((end, depth + 1));
                     }
                     Expression::IsBlank(expression) => {
-                        if !matches!(
-                            expression.as_ref(),
-                            Expression::Reference(_)
-                                | Expression::SameRowReference(_)
-                                | Expression::AnchoredReference(_)
-                                | Expression::AnchoredSameRowReference(_)
-                        ) {
-                            return invalid_representation(
-                                "ISBLANK requires a field reference".to_owned(),
-                            );
-                        }
+                        require_semantic_operand(expression, "ISBLANK")?;
                         stack.push((expression, depth + 1));
                     }
                     Expression::Lookup {
@@ -2786,6 +2733,7 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                         );
                     }
                     Expression::Number(_)
+                    | Expression::DeletedReference {}
                     | Expression::Reference(_)
                     | Expression::SameRowReference(_)
                     | Expression::AnchoredReference(_)
@@ -2795,6 +2743,20 @@ fn validate_semantic_expression_limits(document: &Document) -> Result<(), Format
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn require_semantic_operand(expression: &Expression, function: &str) -> Result<(), FormatError> {
+    if !matches!(
+        expression,
+        Expression::Reference(_)
+            | Expression::SameRowReference(_)
+            | Expression::AnchoredReference(_)
+            | Expression::AnchoredSameRowReference(_)
+            | Expression::DeletedReference {}
+    ) {
+        return invalid_representation(format!("{function} requires a field reference"));
     }
     Ok(())
 }
@@ -2874,6 +2836,33 @@ pub(crate) fn invalid_representation<T>(message: String) -> Result<T, FormatErro
 
 fn column_ref(schema: String, field: String) -> ColumnRef {
     ColumnRef::new(SchemaId::from(schema), FieldId::from(field))
+}
+
+fn wire_conditional(
+    aggregate: &ConditionalAggregate,
+    criteria: &[ColumnCriterion],
+) -> ExpressionV3 {
+    let (aggregate, values) = match aggregate {
+        ConditionalAggregate::Sum(column) => ("sum", Some(wire_column(column))),
+        ConditionalAggregate::Average(column) => ("average", Some(wire_column(column))),
+        ConditionalAggregate::Count => ("count", None),
+    };
+    ExpressionV3::ColumnConditional(ColumnConditionalArgsV3 {
+        aggregate: aggregate.to_owned(),
+        values,
+        criteria: criteria
+            .iter()
+            .map(|criterion| ColumnCriterionV3 {
+                column: wire_column(&criterion.column),
+                operator: criterion.operator.as_str().to_owned(),
+                value: criterion
+                    .value
+                    .as_deref()
+                    .map(ExpressionV3::from_semantic)
+                    .map(Box::new),
+            })
+            .collect(),
+    })
 }
 
 fn wire_column(column: &ColumnRef) -> ColumnRefV3 {
