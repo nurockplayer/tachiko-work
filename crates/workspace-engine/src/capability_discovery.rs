@@ -294,39 +294,7 @@ impl PatchLifecycle {
         self.require_document(document_scope, document)?;
         self.require_active_principal(principal)?;
         let context = FieldCapabilityQueryContext::trusted(snapshot.revision().clone());
-        let requirements = match self.field_scope(document, target) {
-            Ok(entity_field_scope) => {
-                let schema_field_scope = match entity_field_scope.subject() {
-                    SemanticScope::EntityField { schema, field, .. } => ScopedSemanticSubject::new(
-                        entity_field_scope.document_scope().clone(),
-                        entity_field_scope.document().clone(),
-                        SemanticScope::SchemaField {
-                            schema: schema.clone(),
-                            field: field.clone(),
-                        },
-                    ),
-                    _ => unreachable!("field_scope must return an EntityField scope"),
-                };
-                BTreeSet::from([
-                    DisclosureRequirement {
-                        family: OperationFamily::FieldCapabilityDiscovery,
-                        scope: entity_field_scope,
-                    },
-                    DisclosureRequirement {
-                        family: OperationFamily::FieldCapabilityDiscovery,
-                        scope: schema_field_scope,
-                    },
-                ])
-            }
-            Err(_) => BTreeSet::from([DisclosureRequirement {
-                family: OperationFamily::FieldCapabilityDiscovery,
-                scope: ScopedSemanticSubject::new(
-                    document_scope.clone(),
-                    document.id.clone(),
-                    SemanticScope::Document,
-                ),
-            }]),
-        };
+        let requirements = self.field_capability_requirements(snapshot, target);
         self.authorize_query(principal, &requirements, now)
             .map_err(|error| match error {
                 PatchLifecycleError::InsufficientCapability { .. } => {
@@ -355,5 +323,46 @@ impl PatchLifecycle {
             context,
             outcome,
         })
+    }
+
+    fn field_capability_requirements(
+        &self,
+        snapshot: &ResidentSnapshot,
+        target: &FieldRef,
+    ) -> BTreeSet<DisclosureRequirement> {
+        let document = snapshot.document();
+        match self.field_scope(document, target) {
+            Ok(entity_field_scope) => {
+                let schema_field_scope = match entity_field_scope.subject() {
+                    SemanticScope::EntityField { schema, field, .. } => ScopedSemanticSubject::new(
+                        entity_field_scope.document_scope().clone(),
+                        entity_field_scope.document().clone(),
+                        SemanticScope::SchemaField {
+                            schema: schema.clone(),
+                            field: field.clone(),
+                        },
+                    ),
+                    _ => unreachable!("field_scope must return an EntityField scope"),
+                };
+                BTreeSet::from([
+                    DisclosureRequirement {
+                        family: OperationFamily::FieldCapabilityDiscovery,
+                        scope: entity_field_scope,
+                    },
+                    DisclosureRequirement {
+                        family: OperationFamily::FieldCapabilityDiscovery,
+                        scope: schema_field_scope,
+                    },
+                ])
+            }
+            Err(_) => BTreeSet::from([DisclosureRequirement {
+                family: OperationFamily::FieldCapabilityDiscovery,
+                scope: ScopedSemanticSubject::new(
+                    snapshot.document_scope().clone(),
+                    document.id.clone(),
+                    SemanticScope::Document,
+                ),
+            }]),
+        }
     }
 }
