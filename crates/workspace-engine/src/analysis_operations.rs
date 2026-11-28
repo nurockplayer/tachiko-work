@@ -610,35 +610,18 @@ fn resolve_candidate_domain(
     document_requirement: &DisclosureRequirement,
     requirements: &mut BTreeSet<DisclosureRequirement>,
 ) -> (Vec<EntityId>, Option<AnalysisFailure>) {
-    if !document.schemas.contains_key(&definition.schema) {
+    let schema = &definition.schema;
+    if !document.schemas.contains_key(schema) {
         requirements.insert(document_requirement.clone());
         return (
             Vec::new(),
             Some(AnalysisFailure::UnresolvedSchema {
-                schema: definition.schema.clone(),
+                schema: schema.clone(),
             }),
         );
     }
     let Some(narrowing) = &definition.narrowing else {
-        let mut candidates = Vec::new();
-        let mut deferred_failure = None;
-        for (key, entity) in &document.entities {
-            if entity.schema != definition.schema {
-                continue;
-            }
-            if key == &entity.id {
-                candidates.push(key.clone());
-            } else {
-                requirements.insert(document_requirement.clone());
-                deferred_failure.get_or_insert_with(|| {
-                    AnalysisFailure::IncoherentCandidateIdentity {
-                        key: key.clone(),
-                        entity: entity.id.clone(),
-                    }
-                });
-            }
-        }
-        return (candidates, deferred_failure);
+        return resolve_default_domain(document, schema, document_requirement, requirements);
     };
 
     let mut candidates = Vec::new();
@@ -665,7 +648,7 @@ fn resolve_candidate_domain(
             &entity.id,
             &entity.schema,
         ));
-        if entity.schema == definition.schema {
+        if &entity.schema == schema {
             candidates.push(entity.id.clone());
         } else {
             // Exposing the wrong-domain distinction reveals that the requested
@@ -674,12 +657,37 @@ fn resolve_candidate_domain(
             requirements.insert(analysis_schema_requirement(
                 document_scope,
                 document,
-                &definition.schema,
+                schema,
             ));
             deferred_failure.get_or_insert_with(|| AnalysisFailure::WrongDomainNarrowingEntity {
                 entity: entity.id.clone(),
-                expected: definition.schema.clone(),
+                expected: schema.clone(),
                 actual: entity.schema.clone(),
+            });
+        }
+    }
+    (candidates, deferred_failure)
+}
+
+fn resolve_default_domain(
+    document: &Document,
+    schema: &SchemaId,
+    document_requirement: &DisclosureRequirement,
+    requirements: &mut BTreeSet<DisclosureRequirement>,
+) -> (Vec<EntityId>, Option<AnalysisFailure>) {
+    let mut candidates = Vec::new();
+    let mut deferred_failure = None;
+    for (key, entity) in &document.entities {
+        if &entity.schema != schema {
+            continue;
+        }
+        if key == &entity.id {
+            candidates.push(key.clone());
+        } else {
+            requirements.insert(document_requirement.clone());
+            deferred_failure.get_or_insert_with(|| AnalysisFailure::IncoherentCandidateIdentity {
+                key: key.clone(),
+                entity: entity.id.clone(),
             });
         }
     }
