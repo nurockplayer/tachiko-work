@@ -1022,6 +1022,7 @@ impl<'document> ConflictCoordinate<'document> {
     }
 }
 
+#[derive(Clone, Copy)]
 struct ThreeWay<T> {
     base: T,
     ours: T,

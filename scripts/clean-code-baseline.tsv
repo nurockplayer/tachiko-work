@@ -649,7 +649,7 @@ file	crates/formula-engine/src/evaluation.rs		1305
 file	crates/formula-engine/src/lib.rs		3173
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		943
-file	crates/merge-engine/src/lib.rs		1107
+file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1881
 file	crates/storage/src/direct_ro/v2.rs		1457
