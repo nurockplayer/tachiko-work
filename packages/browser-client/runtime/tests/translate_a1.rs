@@ -1439,6 +1439,58 @@ fn deleting_an_interior_row_shrinks_a_whole_column_sum() {
     );
 }
 
+#[test]
+fn deleting_a_text_lookup_key_persists_reference_error_until_undo() {
+    let mut document = auto_total_document();
+    document.entities.get_mut("r2").unwrap().fields.insert(
+        "total".into(),
+        Value::Formula(Expression::Lookup {
+            key: Box::new(Expression::Reference(FieldRef::new("r1", "name"))),
+            key_column: tachiko_workspace_engine::ColumnRef::new("Items", "name"),
+            result_column: tachiko_workspace_engine::ColumnRef::new("Items", "price"),
+            if_missing: None,
+        }),
+    );
+    let mut runtime = Some(
+        DesignerRuntime::from_document(document, "00000000-0000-4000-8000-000000000979").unwrap(),
+    );
+    let before = lookup_results(&mut runtime, "resident/0")[0]["calculated"].clone();
+    assert_eq!(before["value"].as_f64(), Some(2.0));
+
+    delete_item_row(&mut runtime, "r1");
+    let expected = json!({"status": "failure", "code": "reference", "message": "#REF!"});
+    assert_eq!(
+        lookup_results(&mut runtime, "resident/1")[0]["calculated"],
+        expected
+    );
+    let saved = runtime
+        .as_ref()
+        .unwrap()
+        .export_project_v3("resident/1")
+        .unwrap();
+    let mut reopened = None;
+    let opened = tachiko_designer_runtime::open_project(
+        &mut reopened,
+        &saved.bytes,
+        "00000000-0000-4000-8000-000000000980",
+    )
+    .unwrap();
+    assert_eq!(
+        lookup_results(&mut reopened, &opened.bootstrap.revision)[0]["calculated"],
+        expected
+    );
+
+    let undone = call(
+        &mut runtime,
+        &json!({"type": "undo", "expected_revision": "resident/1"}),
+    );
+    assert_eq!(undone["status"], "ok", "{undone}");
+    assert_eq!(
+        lookup_results(&mut runtime, "resident/2")[0]["calculated"],
+        before
+    );
+}
+
 fn delete_item_row(runtime: &mut Option<DesignerRuntime>, row: &str) {
     let removed = call(
         runtime,
