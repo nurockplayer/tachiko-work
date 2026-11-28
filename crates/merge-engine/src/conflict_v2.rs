@@ -15,6 +15,7 @@ use crate::{
 mod collect;
 mod display_name;
 mod field_subject;
+mod selected_constraints;
 
 use display_name::add_name_conflicts;
 
@@ -605,37 +606,15 @@ fn apply_selected_constraints(
         );
         match schemas {
             (Some(base_schema), Some(left_schema), Some(right_schema)) => {
-                for (field_id, output_field) in &mut output_schema.fields {
-                    let fields = (
-                        base_schema.fields.get(field_id),
-                        left_schema.fields.get(field_id),
-                        right_schema.fields.get(field_id),
-                    );
-                    let selected = match fields {
-                        (Some(b), Some(l), Some(r)) => {
-                            choose(&b.constraint, &l.constraint, &r.constraint)
-                        }
-                        (b, l, r) => match choose_optional(b, l, r) {
-                            OptionalChoice::Chosen(Some(field)) => Some(field.constraint.clone()),
-                            OptionalChoice::Chosen(None) => None,
-                            OptionalChoice::Conflict => {
-                                unreachable!("conflicting optional field emitted a conflict")
-                            }
-                        },
-                    };
-                    if let Some(constraint) = selected {
-                        output_field.constraint = constraint;
-                    }
-                }
+                selected_constraints::apply_common_schema(
+                    base_schema,
+                    left_schema,
+                    right_schema,
+                    output_schema,
+                );
             }
             (b, l, r) => {
-                if let OptionalChoice::Chosen(Some(selected_schema)) = choose_optional(b, l, r) {
-                    for (field_id, output_field) in &mut output_schema.fields {
-                        if let Some(selected_field) = selected_schema.fields.get(field_id) {
-                            output_field.constraint = selected_field.constraint.clone();
-                        }
-                    }
-                }
+                selected_constraints::apply_optional_schema(b, l, r, output_schema);
             }
         }
     }
