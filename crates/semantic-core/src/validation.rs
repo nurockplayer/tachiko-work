@@ -1,5 +1,7 @@
 mod lookup;
+mod numeric_target;
 use lookup::validate_lookup;
+use numeric_target::numeric_target_mismatch;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1157,26 +1159,15 @@ fn validate_formula_reference(
         );
         return;
     };
+    let field_type = &definition.field_type;
     if numeric
         && !matches!(
-            definition.field_type,
+            field_type,
             FieldType::Auto | FieldType::Number | FieldType::Date
         )
     {
-        diagnostics.push(
-            core_diagnostic(
-                path,
-                DiagnosticCode::FORMULA_REFERENCE_TYPE_MISMATCH,
-                format!("formula reference '{reference}' does not target a numeric field"),
-                vec![SemanticSubject::EntityField(owner.clone())],
-            )
-            .with_related_subjects(vec![SemanticSubject::EntityField(reference.clone())])
-            .with_fact(DiagnosticFact::new("expected_kind", "number"))
-            .with_fact(DiagnosticFact::new(
-                "actual_kind",
-                field_type_name(&definition.field_type),
-            )),
-        );
+        let diagnostic = numeric_target_mismatch(path, owner, reference, field_type);
+        diagnostics.push(diagnostic);
     }
 }
 

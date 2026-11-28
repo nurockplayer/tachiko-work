@@ -19,6 +19,8 @@ use crate::{
     SchemaId, Value,
 };
 
+mod projection;
+
 /// Current finite explicit-EntityId narrowing profile.
 pub const MAX_ANALYSIS_NARROWING_IDS: usize = 64;
 /// Current finite AND-predicate profile.
@@ -854,19 +856,7 @@ fn evaluate_authorized(
     if let Some(failure) = collection_limit_failure(definition, &selected, &groups) {
         return (AnalysisOutcome::Failure(failure), formula_calculation_used);
     }
-    let projection = if definition.group_by.is_some() {
-        AnalysisProjection::Grouped(
-            groups
-                .into_iter()
-                .map(|(key, members)| AnalysisGroup {
-                    key,
-                    bucket: build_bucket(definition, &members, &metrics),
-                })
-                .collect(),
-        )
-    } else {
-        AnalysisProjection::Ungrouped(build_bucket(definition, &selected, &metrics))
-    };
+    let projection = projection::assemble_projection(definition, &selected, groups, &metrics);
     (
         AnalysisOutcome::Complete(projection),
         formula_calculation_used,
