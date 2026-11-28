@@ -645,6 +645,39 @@ fn clearing_inherited_fill_preserves_neighbours_and_undo_restores_column_style()
 }
 
 #[test]
+fn clearing_inherited_fill_preserves_fill_for_inserted_rows() {
+    let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
+    column_fill(&mut runtime);
+    edit(
+        &mut runtime,
+        &["r2"],
+        &["b"],
+        &json!([{"kind": "fill", "color": null}]),
+    )
+    .unwrap();
+
+    runtime
+        .handle(DesignerRequest::InsertRow {
+            count: None,
+            expected_revision: runtime.current_revision().to_owned(),
+            collection: "rows".into(),
+            position: None,
+            initializers: vec![],
+        })
+        .unwrap();
+
+    let shown = window(&mut runtime, &TableView::default());
+    let cleared = shown.rows.iter().find(|row| row.id == "r2").unwrap();
+    assert_eq!(cleared.styles[1].fill, None);
+    let inserted = shown
+        .rows
+        .iter()
+        .find(|row| !matches!(row.id.as_str(), "r1" | "r2" | "r3"))
+        .unwrap();
+    assert_eq!(inserted.styles[1].fill.as_deref(), Some("123ABC"));
+}
+
+#[test]
 fn stale_colour_unknown_ids_and_read_only_refuse_atomically() {
     let mut runtime = DesignerRuntime::from_document(fixture(), OCCURRENCE).unwrap();
     let revision = runtime.current_revision().to_owned();
