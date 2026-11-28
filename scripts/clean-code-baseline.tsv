@@ -705,7 +705,6 @@ inline-test	packages/browser-client/runtime/src/lib.rs	totals_cache_counters[cfg
 inline-test	packages/browser-client/runtime/src/lib.rs	view_index_counters[cfg(test)]	13
 inline-test	packages/browser-client/runtime/src/save_size.rs	iferror_tests[cfg(test)]	60
 inline-test	packages/browser-client/runtime/src/wasm.rs	native_tables_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	85
-inline-test	packages/browser-client/runtime/src/wasm.rs	ranked_import_ingress_tests[cfg(all(test,not(target_arch="wasm32")))]	46
 inline-test	packages/browser-client/runtime/src/wasm.rs	row_rank_parity_tests[cfg(all(test,not(target_arch="wasm32")))]	251
 pub	crates/ai-api/src/lib.rs		41
 pub	crates/ai-api/src/security_boundary.rs		43
