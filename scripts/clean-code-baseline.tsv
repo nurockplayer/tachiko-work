@@ -141,7 +141,6 @@ body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issu
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	97
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value	72
 body	crates/semantic-core/src/validation.rs	validate_column_conditional	80
-body	crates/semantic-core/src/validation.rs	validate_schemas	89
 body	crates/semantic-core/src/validation.rs	validate_value	66
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	93
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	92
@@ -347,7 +346,6 @@ branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="
 branches	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	15
 branches	crates/semantic-core/src/validation.rs	validate_column_conditional	20
 branches	crates/semantic-core/src/validation.rs	validate_field_constraint	16
-branches	crates/semantic-core/src/validation.rs	validate_schemas	15
 branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	26
 branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	24
 branches	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	33
@@ -558,7 +556,6 @@ depth	crates/semantic-core/src/model.rs	<Expression>::reference_uses	4
 depth	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_expression	4
 depth	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_schemas	4
 depth	crates/semantic-core/src/validation.rs	validate_column_conditional	4
-depth	crates/semantic-core/src/validation.rs	validate_schemas	4
 depth	crates/storage/src/lib.rs	enforce_v2_number_token_limit	5
 depth	crates/storage/src/roproj/host.rs	collect_entity_records	4
 depth	crates/storage/src/roproj/host.rs	require_exact_root_entries_inner	6
@@ -634,7 +631,7 @@ file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		889
 file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
-file	crates/semantic-core/src/validation.rs		1872
+file	crates/semantic-core/src/validation.rs		1821
 file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1153
 file	crates/storage/src/roproj/v1.rs		1484
