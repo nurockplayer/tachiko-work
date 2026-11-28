@@ -645,7 +645,7 @@ file	crates/cli/src/commands.rs		1559
 file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
 file	crates/formula-engine/src/evaluation.rs		1300
-file	crates/formula-engine/src/lib.rs		3168
+file	crates/formula-engine/src/lib.rs		3172
 file	crates/formula-engine/src/parser.rs		1298
 file	crates/merge-engine/src/conflict_v2.rs		968
 file	crates/merge-engine/src/lib.rs		1112
