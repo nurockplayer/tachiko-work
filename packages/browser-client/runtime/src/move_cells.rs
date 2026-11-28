@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     CollectionSpec, ColumnSpec, DesignerError, DesignerRequest, DesignerResponse, DesignerRuntime,
-    Entity, EntityId, Expression, FieldDefinition, FieldRef, FieldTarget, FieldType, HistoryAction,
-    HistoryEntry, PublicationProjection, RowIds, ScalarEditInput, SchemaId, SemanticCommand, Value,
+    Entity, EntityId, Expression, FieldDefinition, FieldId, FieldRef, FieldTarget, FieldType,
+    HistoryAction, HistoryEntry, PublicationProjection, RowIds, ScalarEditInput, SchemaId,
+    SemanticCommand, Value,
     auto_input::{CellDisplay, cell_style},
     blank_workbook::{added_columns, check_dimensions, column_commands},
     cell_edit_commands, cell_edit_value, explicit_column_display_name, field_target,
@@ -31,10 +32,12 @@ pub struct PositionalCellMove {
 struct OriginalCell<'a> {
     column: &'a ColumnSpec,
     native_table_rows: bool,
+    initialize_column: bool,
     value: Option<&'a Value>,
 }
 
 type CellMap = BTreeMap<FieldRef, FieldRef>;
+type ColumnValues = BTreeMap<FieldId, BTreeMap<EntityId, Value>>;
 
 impl From<&FieldDefinition> for ColumnSpec {
     fn from(field: &FieldDefinition) -> Self {
@@ -105,7 +108,7 @@ fn move_cells_at(
         .collect();
     let mut plan = plan(runtime, &moves, &originals)?;
     let serial = allocation.row_serial;
-    let (mut forward, inverse) = allocation.commands(runtime);
+    let (mut forward, inverse) = allocation.commands(runtime, &plan.column_values);
     forward.append(&mut plan.forward.commands);
     plan.forward.commands = forward;
     plan.inverse.commands.extend(inverse);
@@ -182,6 +185,7 @@ impl<'a> Allocation<'a> {
                 OriginalCell {
                     column: definition,
                     native_table_rows: true,
+                    initialize_column: new_row.is_none(),
                     value: new_row.and_then(|row| row.fields.get(&definition.id)),
                 },
             );
@@ -195,18 +199,28 @@ impl<'a> Allocation<'a> {
     fn commands(
         mut self,
         runtime: &DesignerRuntime,
+        column_values: &ColumnValues,
     ) -> (Vec<SemanticCommand>, Vec<SemanticCommand>) {
         let document = runtime.session.document();
         let schema = SchemaId::from(self.spec.summary.id.clone());
-        let (mut forward, mut inverse) = column_commands(&schema, &self.columns, None);
+        let mut forward = Vec::new();
+        let mut inverse = Vec::new();
         if !self.columns.is_empty() {
-            inverse.insert(
-                0,
-                SemanticCommand::SetSchemaFieldOrder {
-                    schema: schema.clone(),
-                    order: document.schemas[&schema].field_order.clone(),
-                },
+            inverse.push(SemanticCommand::SetSchemaFieldOrder {
+                schema: schema.clone(),
+                order: document.schemas[&schema].field_order.clone(),
+            });
+        }
+        for field in &self.columns {
+            let (append, remove) = column_commands(
+                &schema,
+                std::slice::from_ref(field),
+                column_values
+                    .get(&field.id)
+                    .map(|values| (&field.id, values)),
             );
+            forward.extend(append);
+            inverse.extend(remove);
         }
         if !self.rows.is_empty() {
             let (rank, restore) = tachiko_workspace_engine::row_order::plan_insertion(
@@ -249,9 +263,23 @@ impl From<Edit> for HistoryAction {
 struct MovePlan {
     forward: Edit,
     inverse: Edit,
+    column_values: ColumnValues,
 }
 
 impl MovePlan {
+    fn moved_value(&mut self, field: &FieldRef, original: &OriginalCell<'_>, value: Option<Value>) {
+        match value {
+            Some(value) if original.initialize_column && !matches!(value, Value::Formula(_)) => {
+                // A new column's scalar slots are initialized by its schema command.
+                self.column_values
+                    .entry(field.field.clone())
+                    .or_default()
+                    .insert(field.entity.clone(), value);
+            }
+            value => self.value(field, original.value, value.as_ref()),
+        }
+    }
+
     fn value(&mut self, field: &FieldRef, old: Option<&Value>, new: Option<&Value>) {
         if old != new {
             self.forward.commands.push(transition(field, old, new));
@@ -331,7 +359,7 @@ fn plan(
             _ => None,
         };
         admit_value(field, original, value.as_ref())?;
-        plan.value(field, original.value, value.as_ref());
+        plan.moved_value(field, original, value);
         plan.style(runtime, field, source);
     }
     plan_inbound(runtime, &by_source, &targets, &mut plan);
@@ -426,6 +454,7 @@ fn capture_originals<'a>(
                 OriginalCell {
                     column,
                     native_table_rows: spec.native_table_rows,
+                    initialize_column: false,
                     value,
                 },
             ))
