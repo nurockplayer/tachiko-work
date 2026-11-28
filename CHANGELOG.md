@@ -4,6 +4,9 @@ All notable changes to Tachiko Work are documented in this file.
 
 ## Unreleased
 
+- Reopen a live XLSX import at working size before editing while keeping its
+  formatting and overwrite proof (#1012).
+
 - Publish exact lookup misses as `#N/A` in Auto cells. Native XLSX export
   keeps worksheet formulas with their typed cached errors (#979).
 

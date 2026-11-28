@@ -799,6 +799,12 @@ overwrite proof belongs to the live XLSX occurrence. To regain it after
 closing that occurrence or opening a saved Work project, open the original
 XLSX. The client owns the file write.
 
+Before editing a live XLSX import, call
+`reopenImportedXlsxWorkingSize(await client.observeOccurrence())` to open its
+exact snapshot as a fresh working-size occurrence. Keep the metadata from the
+import and obtain the new scope with `observeOccurrence()` for overwrite
+exports. Formatting and typed overwrite refusals carry over.
+
 ## Working-size sessions
 
 A host can ask for the working-size session profile when the occurrence is

@@ -166,6 +166,14 @@ export class WorkerDesignerClient implements DesignerClient {
     return expectResponse("opened_window", reply.response);
   }
 
+  async reopenImportedXlsxWorkingSize(expected: OccurrenceProjection): Promise<OpenedWindowProjection> {
+    const reply = await this.#spreadsheet({
+      type: "reopen_imported_xlsx_working_size", expected, occurrence_id: freshOccurrenceId(),
+    });
+    if (reply.status !== "ok") throw new Error("Expected working-size XLSX reopen.");
+    return expectResponse("opened_window", reply.response);
+  }
+
   async exportSpreadsheet(expectedRevision: string, metadata: InteropMetadata, format: SpreadsheetFormat, collection: string): Promise<SpreadsheetExport> {
     const reply = await this.#spreadsheet({type: "export", expected_revision: expectedRevision, metadata, format, collection});
     if (reply.status !== "spreadsheet_exported") throw new Error("Expected spreadsheet export.");
