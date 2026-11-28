@@ -1,4 +1,4 @@
-use super::{CalculationFailure, CellFailures, FieldRef};
+use super::{CalculationError, CalculationFailure, CellFailures, FieldRef};
 
 /// A calculated error published in an Auto cell, with the cell where it began.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +61,7 @@ impl CellFailure {
                     origin: origin.clone(),
                 });
             }
+            CalculationFailure::DeletedReference => CellFailureCode::Reference,
             CalculationFailure::LookupMissingKey => CellFailureCode::NotAvailable,
             CalculationFailure::InvalidExpression { .. }
             | CalculationFailure::InvalidReferences { .. }
@@ -74,4 +75,31 @@ impl CellFailure {
             origin: owner.clone(),
         }
     }
+}
+
+pub(super) fn compatibility_error(
+    failure: &CalculationFailure,
+    formula: FieldRef,
+) -> CalculationError {
+    match failure {
+        CalculationFailure::DeletedReference => CalculationError::DeletedReference { formula },
+        CalculationFailure::LookupMissingKey => CalculationError::LookupMissingKey { formula },
+        CalculationFailure::EmptyAggregate => CalculationError::EmptyAggregate { formula },
+        CalculationFailure::DivisionByZero => CalculationError::DivisionByZero { formula },
+        CalculationFailure::NonFiniteResult => CalculationError::NonFiniteResult { field: formula },
+        _ => unreachable!("only local evaluation errors have this projection"),
+    }
+}
+
+pub(super) fn is_catchable(failure: &CalculationFailure) -> bool {
+    matches!(
+        failure,
+        CalculationFailure::DivisionByZero
+            | CalculationFailure::TypeMismatch
+            | CalculationFailure::NonFiniteResult
+            | CalculationFailure::EmptyAggregate
+            | CalculationFailure::LookupMissingKey
+            | CalculationFailure::DeletedReference
+            | CalculationFailure::FailedDependencies { .. }
+    )
 }

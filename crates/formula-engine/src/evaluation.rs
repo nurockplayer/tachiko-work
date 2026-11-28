@@ -254,17 +254,13 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 let condition = self.condition(condition)?;
                 self.calculated(if condition { then_value } else { else_value })
             }
-            Expression::IfError { value, fallback } => match self.calculated(value) {
-                Err(
-                    CalculationFailure::DivisionByZero
-                    | CalculationFailure::TypeMismatch
-                    | CalculationFailure::NonFiniteResult
-                    | CalculationFailure::EmptyAggregate
-                    | CalculationFailure::LookupMissingKey
-                    | CalculationFailure::FailedDependencies { .. },
-                ) => self.calculated(fallback),
-                result => result,
-            },
+            Expression::IfError { value, fallback } => self.calculated(value).or_else(|failure| {
+                if super::cell_failure::is_catchable(&failure) {
+                    self.calculated(fallback)
+                } else {
+                    Err(failure)
+                }
+            }),
             Expression::Compare { .. }
             | Expression::And(_)
             | Expression::Or(_)
@@ -415,15 +411,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 }
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
-                    if matches!(
-                        self.calculated(value),
-                        Err(CalculationFailure::DivisionByZero
-                            | CalculationFailure::TypeMismatch
-                            | CalculationFailure::NonFiniteResult
-                            | CalculationFailure::EmptyAggregate
-                            | CalculationFailure::LookupMissingKey
-                            | CalculationFailure::FailedDependencies { .. })
-                    ) {
+                    if self
+                        .calculated(value)
+                        .is_err_and(|failure| super::cell_failure::is_catchable(&failure))
+                    {
                         pending.push(fallback);
                     }
                 }
@@ -517,15 +508,10 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 }
                 Expression::IfError { value, fallback } => {
                     pending.push(value);
-                    if matches!(
-                        self.calculated(value),
-                        Err(CalculationFailure::DivisionByZero
-                            | CalculationFailure::TypeMismatch
-                            | CalculationFailure::NonFiniteResult
-                            | CalculationFailure::EmptyAggregate
-                            | CalculationFailure::LookupMissingKey
-                            | CalculationFailure::FailedDependencies { .. })
-                    ) {
+                    if self
+                        .calculated(value)
+                        .is_err_and(|failure| super::cell_failure::is_catchable(&failure))
+                    {
                         pending.push(fallback);
                     }
                 }
@@ -550,6 +536,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
     fn number_expression(&mut self, expression: &Expression) -> Result<Number, CalculationFailure> {
         match expression {
             Expression::Number(number) => Ok(*number),
+            Expression::DeletedReference {} => Err(CalculationFailure::DeletedReference),
             Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
                 self.reference(reference)
             }
@@ -564,17 +551,13 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 let condition = self.condition(condition)?;
                 self.number(if condition { then_value } else { else_value })
             }
-            Expression::IfError { value, fallback } => match self.number(value) {
-                Err(
-                    CalculationFailure::DivisionByZero
-                    | CalculationFailure::TypeMismatch
-                    | CalculationFailure::NonFiniteResult
-                    | CalculationFailure::EmptyAggregate
-                    | CalculationFailure::LookupMissingKey
-                    | CalculationFailure::FailedDependencies { .. },
-                ) => self.number(fallback),
-                result => result,
-            },
+            Expression::IfError { value, fallback } => self.number(value).or_else(|failure| {
+                if super::cell_failure::is_catchable(&failure) {
+                    self.number(fallback)
+                } else {
+                    Err(failure)
+                }
+            }),
             Expression::ColumnTotal(column) => {
                 // Blank cells are skipped, and the pass cache added the values
                 // in entity order, so the total is bit-identical to a walk.
@@ -614,30 +597,9 @@ impl<V: ValueStore> Evaluation<'_, V> {
                 aggregate,
                 criteria,
             } => self.conditional(aggregate, criteria),
-            Expression::DatePart { part, operand } => {
-                let date = self.date(operand)?;
-                number_result(f64::from(match part {
-                    DatePartKind::Year => date.year(),
-                    DatePartKind::Month => u16::from(date.month()),
-                    DatePartKind::Day => u16::from(date.day()),
-                }))
+            Expression::DatePart { .. } | Expression::Weekday { .. } | Expression::Days { .. } => {
+                self.date_number(expression)
             }
-            Expression::Weekday {
-                operand,
-                return_type,
-            } => {
-                let sunday = (days_from_civil(self.date(operand)?) + 4).rem_euclid(7);
-                let result = match return_type {
-                    1 => sunday + 1,
-                    2 => (sunday + 6) % 7 + 1,
-                    3 => (sunday + 6) % 7,
-                    _ => return Err(CalculationFailure::TypeMismatch),
-                };
-                number_result(f64::from(result))
-            }
-            Expression::Days { end, start } => number_result(f64::from(
-                days_from_civil(self.date(end)?) - days_from_civil(self.date(start)?),
-            )),
             Expression::Lookup {
                 key,
                 key_column,
@@ -921,16 +883,42 @@ impl<V: ValueStore> Evaluation<'_, V> {
         operation(left.get(), right.get())
     }
 
-    fn date(&self, operand: &Expression) -> Result<Date, CalculationFailure> {
-        let reference = match operand {
+    fn date_number(&self, expression: &Expression) -> Result<Number, CalculationFailure> {
+        match expression {
+            Expression::DatePart { part, operand } => {
+                let date = self.date(operand)?;
+                number_result(f64::from(match part {
+                    DatePartKind::Year => date.year(),
+                    DatePartKind::Month => u16::from(date.month()),
+                    DatePartKind::Day => u16::from(date.day()),
+                }))
+            }
+            Expression::Weekday {
+                operand,
+                return_type,
+            } => weekday_number(self.date(operand)?, *return_type),
+            Expression::Days { end, start } => number_result(f64::from(
+                days_from_civil(self.date(end)?) - days_from_civil(self.date(start)?),
+            )),
+            _ => unreachable!("only date functions reach date evaluation"),
+        }
+    }
+
+    fn reference_operand(&self, operand: &Expression) -> Result<FieldRef, CalculationFailure> {
+        match operand {
+            Expression::DeletedReference {} => Err(CalculationFailure::DeletedReference),
             Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-                reference.clone()
+                Ok(reference.clone())
             }
             Expression::SameRowReference(field) | Expression::AnchoredSameRowReference(field) => {
-                FieldRef::new(self.owner.entity.clone(), field.clone())
+                Ok(FieldRef::new(self.owner.entity.clone(), field.clone()))
             }
-            _ => return Err(CalculationFailure::TypeMismatch),
-        };
+            _ => Err(CalculationFailure::TypeMismatch),
+        }
+    }
+
+    fn date(&self, operand: &Expression) -> Result<Date, CalculationFailure> {
+        let reference = self.reference_operand(operand)?;
         if let Some(value) = self.values.calculated_value(&reference) {
             return match value {
                 CalculatedValue::Date(date) => Ok(date),
@@ -1017,16 +1005,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
             }
             Expression::Not(value) => self.condition(value).map(|value| !value),
             Expression::IsBlank(value) => {
-                let reference = match value.as_ref() {
-                    Expression::Reference(reference) | Expression::AnchoredReference(reference) => {
-                        reference.clone()
-                    }
-                    Expression::SameRowReference(field)
-                    | Expression::AnchoredSameRowReference(field) => {
-                        FieldRef::new(self.owner.entity.clone(), field.clone())
-                    }
-                    _ => return Err(CalculationFailure::TypeMismatch),
-                };
+                let reference = self.reference_operand(value)?;
                 Ok(self
                     .document
                     .entities
@@ -1066,6 +1045,17 @@ impl<V: ValueStore> Evaluation<'_, V> {
         }
         self.calculated(expression).map(Some)
     }
+}
+
+fn weekday_number(date: Date, return_type: u8) -> Result<Number, CalculationFailure> {
+    let sunday = (days_from_civil(date) + 4).rem_euclid(7);
+    let result = match return_type {
+        1 => sunday + 1,
+        2 => (sunday + 6) % 7 + 1,
+        3 => (sunday + 6) % 7,
+        _ => return Err(CalculationFailure::TypeMismatch),
+    };
+    number_result(f64::from(result))
 }
 
 fn arithmetic_operand(value: CalculatedValue) -> Result<CalculatedValue, CalculationFailure> {

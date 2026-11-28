@@ -7,6 +7,10 @@ All notable changes to Tachiko Work are documented in this file.
 - Reopen a live XLSX import at working size before editing while keeping its
   formatting and overwrite proof (#1012).
 
+- Deleting a row referenced by an Auto formula keeps the formula and shows
+  `#REF!`. Save and XLSX export preserve the error, and one Undo restores
+  the row and the original formula (#979).
+
 - Publish exact lookup misses as `#N/A` in Auto cells. Native XLSX export
   keeps worksheet formulas with their typed cached errors (#979).
 

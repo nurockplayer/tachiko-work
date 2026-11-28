@@ -7,7 +7,6 @@ args	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_row
 args	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	6
 args	crates/formula-engine/src/lib.rs	render_bound_binary	6
 args	crates/merge-engine/src/conflict_v2.rs	<MergeConflictV2>::new	6
-args	crates/merge-engine/src/conflict_v2.rs	name_conflict	6
 args	crates/merge-engine/src/lib.rs	merge_entities	6
 args	crates/merge-engine/src/lib.rs	merge_entity	7
 args	crates/merge-engine/src/lib.rs	merge_entity_fields	7
@@ -119,17 +118,15 @@ body	crates/diff-engine/src/canonical_delta.rs	compare_entity	72
 body	crates/diff-engine/src/canonical_delta.rs	compare_schema	109
 body	crates/diff-engine/src/lib.rs	<SemanticDiff>::render_text	75
 body	crates/diff-engine/src/lib.rs	render_change	91
-body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	64
-body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	61
-body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	89
-body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	136
-body	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	97
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	84
+body	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	112
+body	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	84
 body	crates/formula-engine/src/lib.rs	<RetainedCalculationState>::update	72
 body	crates/formula-engine/src/lib.rs	bind_node	173
 body	crates/formula-engine/src/lib.rs	cyclic_components	88
 body	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	70
 body	crates/formula-engine/src/lib.rs	pregraph_failures	99
-body	crates/formula-engine/src/lib.rs	render_bound	152
+body	crates/formula-engine/src/lib.rs	render_bound	151
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	88
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_function	97
 body	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_reference	80
@@ -137,7 +134,7 @@ body	crates/formula-engine/src/parser.rs	format_unbound_expression	119
 body	crates/formula-engine/src/parser.rs	push_children	89
 body	crates/merge-engine/src/lib.rs	merge_supported	88
 body	crates/semantic-core/src/address.rs	<AddressIndex>::build	97
-body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	85
+body	crates/semantic-core/src/model.rs	<Expression>::expression_type_with_auto	77
 body	crates/semantic-core/src/presentation.rs	<PresentationError as fmt::Display>::fmt	102
 body	crates/semantic-core/src/presentation.rs	validate_presentation	130
 body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_entities	83
@@ -147,10 +144,10 @@ body	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issu
 body	crates/semantic-core/src/validation.rs	validate_column_conditional	80
 body	crates/semantic-core/src/validation.rs	validate_schemas	89
 body	crates/semantic-core/src/validation.rs	validate_value	66
-body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	97
+body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::from_semantic	93
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::into_semantic	92
 body	crates/storage/src/direct_ro/v2.rs	<ExpressionV2>::validate	99
-body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	87
+body	crates/storage/src/direct_ro/v2.rs	validate_semantic_expression	84
 body	crates/storage/src/direct_ro/v2.rs	write_expression	140
 body	crates/storage/src/portable_package/v1.rs	parse_local_record	75
 body	crates/storage/src/roproj/v1.rs	<ExpressionV1>::from_semantic	61
@@ -158,12 +155,12 @@ body	crates/storage/src/roproj/v1.rs	validate_semantic_expression_limits	62
 body	crates/storage/src/roproj/v1/issue_175_oracle_bridge.rs	admit_one_pass_exact	93
 body	crates/storage/src/roproj/v2.rs	<ExpressionV2>::from_semantic	61
 body	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	62
-body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	144
-body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	99
-body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	115
-body	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	144
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	118
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	89
+body	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	107
+body	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	110
 body	crates/storage/src/roproj/v3.rs	write_definition	65
-body	crates/storage/src/roproj/v3.rs	write_expression	249
+body	crates/storage/src/roproj/v3.rs	write_expression	215
 body	crates/workspace-engine/src/analysis_operations.rs	<PatchLifecycle>::prepare_analysis	76
 body	crates/workspace-engine/src/capability_discovery.rs	describe_field_capabilities	82
 body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::propose_formula_update	71
@@ -173,7 +170,7 @@ body	crates/workspace-engine/src/formula_operations.rs	<PatchLifecycle>::scenari
 body	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum	178
 body	crates/workspace-engine/src/lib.rs	drop_expression_iteratively	63
 body	crates/workspace-engine/src/lib.rs	explain_field	61
-body	crates/workspace-engine/src/lib.rs	formula_diagnostics	110
+body	crates/workspace-engine/src/lib.rs	formula_diagnostics	87
 body	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures	156
 body	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_command_disclosures	118
 body	crates/workspace-engine/src/patch_lifecycle.rs	<PatchBodyIndex>::new	97
@@ -236,7 +233,7 @@ body	packages/browser-client/runtime/src/interop_document.rs	cleanup_commands	10
 body	packages/browser-client/runtime/src/interop_document.rs	current_import_metadata	122
 body	packages/browser-client/runtime/src/interop_document.rs	excel_extremum	75
 body	packages/browser-client/runtime/src/interop_document.rs	export_a1_maps	67
-body	packages/browser-client/runtime/src/interop_document.rs	export_in	178
+body	packages/browser-client/runtime/src/interop_document.rs	export_in	169
 body	packages/browser-client/runtime/src/interop_document.rs	finish_import	96
 body	packages/browser-client/runtime/src/interop_document.rs	import_formula_order	65
 body	packages/browser-client/runtime/src/interop_document.rs	import_workbook_document	145
@@ -283,14 +280,13 @@ body	packages/browser-client/runtime/src/lib.rs	ensure_cheap_entity_profile	67
 body	packages/browser-client/runtime/src/lib.rs	ensure_formula_reference_profile	76
 body	packages/browser-client/runtime/src/lib.rs	ensure_static_profile	105
 body	packages/browser-client/runtime/src/lib.rs	formula_failure_projection	110
-body	packages/browser-client/runtime/src/lib.rs	map_copy_references	77
 body	packages/browser-client/runtime/src/lib.rs	plan_filter	95
 body	packages/browser-client/runtime/src/lib.rs	predicate_matches	63
 body	packages/browser-client/runtime/src/lib.rs	process_wire_request	100
 body	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	168
 body	packages/browser-client/runtime/src/native_tables_export.rs	project_sheet	103
 body	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	95
-body	packages/browser-client/runtime/src/save_size.rs	expression_bytes	293
+body	packages/browser-client/runtime/src/save_size.rs	expression_bytes	248
 body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	99
 body	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	204
 body	packages/browser-client/runtime/src/wasm.rs	export_native_budget_spreadsheet	68
@@ -311,15 +307,15 @@ branches	crates/diff-engine/src/lib.rs	render_change	17
 branches	crates/diff-engine/src/lib.rs	require_diff_supported	17
 branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::criterion_index	17
 branches	crates/formula-engine/src/evaluation.rs	<ColumnCache>::lookup_index	18
-branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	26
-branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	22
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::calculated	25
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::condition	18
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::conditional_over	16
 branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::failed_required_references	44
-branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	56
+branches	crates/formula-engine/src/evaluation.rs	<Evaluation<'_,V>>::number_expression	45
 branches	crates/formula-engine/src/evaluation.rs	exact_sum	21
 branches	crates/formula-engine/src/evaluation.rs	round_decimal	15
 branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_cycle_witness	22
-branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	24
+branches	crates/formula-engine/src/lib.rs	<CalculationFailures>::compatibility_error	21
 branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::reaching_fields	17
 branches	crates/formula-engine/src/lib.rs	<DependencyGraph>::replace_formula	22
 branches	crates/formula-engine/src/lib.rs	bind_conditional	13
@@ -329,7 +325,7 @@ branches	crates/formula-engine/src/lib.rs	cyclic_components	34
 branches	crates/formula-engine/src/lib.rs	depth_first_finish_order	15
 branches	crates/formula-engine/src/lib.rs	evaluate_remaining_formulas	49
 branches	crates/formula-engine/src/lib.rs	pregraph_failures	50
-branches	crates/formula-engine/src/lib.rs	render_bound	31
+branches	crates/formula-engine/src/lib.rs	render_bound	30
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_comparison	28
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_conditional_arguments	17
 branches	crates/formula-engine/src/parser.rs	<Parser<'input>>::parse_extended_function	32
@@ -377,14 +373,14 @@ branches	crates/storage/src/roproj/v2.rs	<UnorderedRoProjectV2>::prove_scoped_un
 branches	crates/storage/src/roproj/v2.rs	canonicalize_unordered	21
 branches	crates/storage/src/roproj/v2.rs	decode_entities	14
 branches	crates/storage/src/roproj/v2.rs	validate_semantic_expression_limits	24
-branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	33
+branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::from_semantic	30
 branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::into_semantic	29
-branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	38
+branches	crates/storage/src/roproj/v3.rs	<ExpressionV3>::validate_ids_and_limits	35
 branches	crates/storage/src/roproj/v3.rs	decode_entities	14
 branches	crates/storage/src/roproj/v3.rs	validate_conditional	15
-branches	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	62
+branches	crates/storage/src/roproj/v3.rs	validate_semantic_expression_limits	46
 branches	crates/storage/src/roproj/v3.rs	validate_text_literals	14
-branches	crates/storage/src/roproj/v3.rs	write_expression	49
+branches	crates/storage/src/roproj/v3.rs	write_expression	48
 branches	crates/storage/src/roproj/v3.rs	write_schema	14
 branches	crates/storage/src/strict_json.rs	inspect_object	17
 branches	crates/storage/src/strict_json.rs	json_nesting_depth	20
@@ -394,7 +390,7 @@ branches	crates/workspace-engine/src/analysis_operations.rs	select_entities	21
 branches	crates/workspace-engine/src/analysis_operations.rs	validate_targets	16
 branches	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum	44
 branches	crates/workspace-engine/src/lib.rs	explain_field	17
-branches	crates/workspace-engine/src/lib.rs	formula_diagnostics	31
+branches	crates/workspace-engine/src/lib.rs	formula_diagnostics	28
 branches	crates/workspace-engine/src/lib.rs	merge_documents	14
 branches	crates/workspace-engine/src/lib.rs	parse_scalar	13
 branches	crates/workspace-engine/src/lib.rs	preflight_changed_formula_projections	13
@@ -531,7 +527,7 @@ branches	packages/browser-client/runtime/src/lib.rs	ensure_formula_reference_pro
 branches	packages/browser-client/runtime/src/lib.rs	ensure_static_profile	15
 branches	packages/browser-client/runtime/src/lib.rs	expression_references	13
 branches	packages/browser-client/runtime/src/lib.rs	fill_new_rows	36
-branches	packages/browser-client/runtime/src/lib.rs	map_copy_references	55
+branches	packages/browser-client/runtime/src/lib.rs	map_copy_references	19
 branches	packages/browser-client/runtime/src/lib.rs	native_table_row	21
 branches	packages/browser-client/runtime/src/lib.rs	plan_filter	15
 branches	packages/browser-client/runtime/src/lib.rs	process_wire_request	37
@@ -539,7 +535,7 @@ branches	packages/browser-client/runtime/src/lib.rs	view_value	13
 branches	packages/browser-client/runtime/src/native_tables_export.rs	<DesignerRuntime>::native_tables_workbook	29
 branches	packages/browser-client/runtime/src/native_tables_export.rs	mapped_name	16
 branches	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	41
-branches	packages/browser-client/runtime/src/save_size.rs	expression_bytes	34
+branches	packages/browser-client/runtime/src/save_size.rs	expression_bytes	33
 branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::render_a1_formula	20
 branches	packages/browser-client/runtime/src/translate_a1.rs	<DesignerRuntime>::translate_a1_formula	18
 branches	packages/browser-client/runtime/src/wasm.rs	export_project_bytes	13
@@ -626,7 +622,6 @@ depth	packages/browser-client/runtime/src/interop_number_format.rs	token_prefix	
 depth	packages/browser-client/runtime/src/lib.rs	declaration_failure	5
 depth	packages/browser-client/runtime/src/lib.rs	ensure_cheap_entity_profile	4
 depth	packages/browser-client/runtime/src/lib.rs	fill_new_rows	5
-depth	packages/browser-client/runtime/src/lib.rs	map_copy_references	4
 depth	packages/browser-client/runtime/src/lib.rs	native_table_row	4
 depth	packages/browser-client/runtime/src/lib.rs	process_wire_request	4
 depth	packages/browser-client/runtime/src/native_tables_export.rs	write_formulas	5
@@ -635,10 +630,10 @@ depth	packages/browser-client/runtime/src/wasm.rs	process_project_candidate	4
 file	crates/cli/src/commands.rs		1559
 file	crates/diff-engine/src/canonical_delta.rs		867
 file	crates/diff-engine/src/lib.rs		974
-file	crates/formula-engine/src/evaluation.rs		1305
-file	crates/formula-engine/src/lib.rs		3173
+file	crates/formula-engine/src/evaluation.rs		1300
+file	crates/formula-engine/src/lib.rs		3172
 file	crates/formula-engine/src/parser.rs		1298
-file	crates/merge-engine/src/conflict_v2.rs		943
+file	crates/merge-engine/src/conflict_v2.rs		889
 file	crates/merge-engine/src/lib.rs		1108
 file	crates/semantic-core/src/model.rs		1515
 file	crates/semantic-core/src/validation.rs		1872
@@ -646,16 +641,16 @@ file	crates/storage/src/direct_ro/v2.rs		1457
 file	crates/storage/src/portable_package/v1.rs		1153
 file	crates/storage/src/roproj/v1.rs		1484
 file	crates/storage/src/roproj/v2.rs		1692
-file	crates/storage/src/roproj/v3.rs		2914
+file	crates/storage/src/roproj/v3.rs		2903
 file	crates/workspace-engine/src/analysis_operations.rs		1415
-file	crates/workspace-engine/src/formula_operations.rs		1225
-file	crates/workspace-engine/src/lib.rs		4007
-file	crates/workspace-engine/src/patch_lifecycle.rs		6778
+file	crates/workspace-engine/src/formula_operations.rs		1219
+file	crates/workspace-engine/src/lib.rs		3985
+file	crates/workspace-engine/src/patch_lifecycle.rs		6758
 file	crates/workspace-engine/src/resident_session.rs		1811
 file	packages/browser-client/runtime/src/host_bridge.rs		1080
 file	packages/browser-client/runtime/src/interop_adapter.rs		6474
 file	packages/browser-client/runtime/src/interop_document.rs		5619
-file	packages/browser-client/runtime/src/lib.rs		13246
+file	packages/browser-client/runtime/src/lib.rs		13220
 file	packages/browser-client/runtime/src/save_size.rs		922
 file	packages/browser-client/runtime/src/wasm.rs		1222
 inline-test	crates/formula-engine/src/evaluation.rs	conditional_walks[cfg(test)]	43
@@ -713,13 +708,10 @@ reason	crates/formula-engine/src/lib.rs	bind_node allow(clippy::too_many_lines)	
 reason	crates/formula-engine/src/lib.rs	bind_round_digits allow(clippy::cast_possible_truncation,clippy::cast_sign_loss)	1
 reason	crates/formula-engine/src/lib.rs	pregraph_failures allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/src/lib.rs	render_bound allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/src/parser.rs	format_unbound_expression allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	a_criterion_can_read_another_cell allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	document allow(clippy::too_many_lines)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	incremental_calculation_equals_full allow(clippy::too_many_lines)	1
-reason	crates/formula-engine/tests/conditional_aggregate.rs	update allow(clippy::needless_pass_by_value)	1
 reason	crates/formula-engine/tests/conditional_aggregate.rs	value allow(clippy::unnecessary_wraps)	1
-reason	crates/semantic-core/src/criterion.rs	<CriterionTest>::matches_equal allow(clippy::float_cmp)	1
 reason	crates/semantic-core/src/instrumentation.rs	enabled[cfg(feature="capacity-instrumentation")] allow(clippy::missing_const_for_fn)	1
 reason	crates/semantic-core/src/presentation.rs	validate_presentation allow(clippy::too_many_lines)	1
 reason	crates/semantic-core/src/validation.rs	issue_175_research[cfg(feature="issue-175-research")]::validate_value allow(clippy::too_many_arguments)	1
@@ -753,7 +745,6 @@ reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::i
 reason	crates/workspace-engine/src/disclosure_differential_tests.rs	reference::insert_command_disclosures allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/formula_operations.rs	FormulaReasoningOutcome allow(clippy::large_enum_variant)	1
 reason	crates/workspace-engine/src/incremental_preparation_tests.rs	prepared_evaluation_matches_full_validation_for_every_candidate_kind allow(clippy::too_many_lines)	1
-reason	crates/workspace-engine/src/keyed_grouped_sum_operations.rs	evaluate_keyed_grouped_sum allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	formula_diagnostics allow(clippy::too_many_lines)	1
 reason	crates/workspace-engine/src/lib.rs	serialize_optional_calculated_value allow(clippy::ref_option)	1
 reason	crates/workspace-engine/src/patch_lifecycle.rs	<DisclosureDerivation<'a>>::insert_change_disclosures allow(clippy::too_many_lines)	1

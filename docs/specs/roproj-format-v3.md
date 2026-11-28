@@ -295,7 +295,8 @@ unranked collection, append and paste-created rows never write ranks; existing
 EntityId order and save/export bytes remain unchanged even when a new ID sorts
 before an existing row. Only explicit positional insertion ranks an unranked table. Undo restores exact previous optional ranks and
 removes the inserted entities; Redo reapplies the recorded forward facts.
-Positional expressions remain pending and readers refuse their unknown tags.
+Positional range and position-read expressions remain pending. The reader
+recognizes the deleted-reference marker below.
 
 [ADR-0048](../decisions/ADR-0048-stored-row-order-and-positional-ranges.md) adds an
 optional Entity member `rank`, after `schema` and before `fields`, omitted when
@@ -310,7 +311,8 @@ ordering slot `(3, EntityId, 4)`; v2 merge uses an entity `rank` facet at rank 3
 See [semantic diff](semantic-diff-spec.md#row-rank-v2-amendment--adr-0048) and
 [conflict resolution](conflict-resolution.md#row-rank-v2-amendment--adr-0048).
 
-The still-pending Bound Expression extension defines three forms:
+The Bound Expression extension defines these forms. Only `deleted_reference`
+is currently implemented:
 
 ```json
 {"op":"range_aggregate","args":{"function":"sum","schema":"...","field":"...","first_row":1,"last_row":8}}
