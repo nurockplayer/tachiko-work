@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+mod conditional;
 mod lookup;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,6 +12,7 @@ use tachiko_semantic_core::{
 
 use crate::{CalculatedValue, CalculationFailure, FailureMap, ValueStore, column_cells};
 
+use conditional::{ConditionalCriteria, reduce};
 #[cfg(test)]
 use conditional_walks::{bypass_caches, record_row, record_walk};
 
@@ -682,7 +684,11 @@ impl<V: ValueStore> Evaluation<'_, V> {
         let candidates = keys
             .as_deref()
             .and_then(|keys| self.candidates(&criteria[0].column, keys));
-        let result = self.conditional_over(aggregate, criteria, &tests, candidates.as_deref());
+        let criteria = ConditionalCriteria {
+            criteria,
+            tests: &tests,
+        };
+        let result = self.conditional_over(aggregate, criteria, candidates.as_deref());
         if let Some(key) = memo_key {
             self.columns.conditionals.insert(key, result.clone());
         }
@@ -717,8 +723,7 @@ impl<V: ValueStore> Evaluation<'_, V> {
     fn conditional_over(
         &self,
         aggregate: &ConditionalAggregate,
-        criteria: &[ColumnCriterion],
-        tests: &[CriterionTest],
+        criteria: ConditionalCriteria<'_>,
         candidates: Option<&[EntityId]>,
     ) -> Result<Number, CalculationFailure> {
         record_walk(candidates.is_some());
@@ -727,32 +732,23 @@ impl<V: ValueStore> Evaluation<'_, V> {
         let mut matched = 0_usize;
         if let Some(candidates) = candidates {
             for entity in candidates.iter().map(|id| &document.entities[id]) {
-                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                if self.conditional_row(aggregate, criteria, entity, &mut values)? {
                     matched += 1;
                 }
             }
         } else {
-            let schema = &criteria[0].column.schema;
+            let schema = &criteria.criteria[0].column.schema;
             for entity in document
                 .entities
                 .values()
                 .filter(|entity| entity.schema == *schema)
             {
-                if self.conditional_row(aggregate, criteria, tests, entity, &mut values)? {
+                if self.conditional_row(aggregate, criteria, entity, &mut values)? {
                     matched += 1;
                 }
             }
         }
-        number_result(match aggregate {
-            ConditionalAggregate::Count => value_count(matched),
-            ConditionalAggregate::Sum(_) => values.iter().copied().sum(),
-            ConditionalAggregate::Average(_) => {
-                if values.is_empty() {
-                    return Err(CalculationFailure::EmptyAggregate);
-                }
-                average(&values)
-            }
-        })
+        reduce(aggregate, matched, &values)
     }
 
     /// One row of a conditional: whether every criterion reads it as a match,
@@ -760,13 +756,12 @@ impl<V: ValueStore> Evaluation<'_, V> {
     fn conditional_row(
         &self,
         aggregate: &ConditionalAggregate,
-        criteria: &[ColumnCriterion],
-        tests: &[CriterionTest],
+        criteria: ConditionalCriteria<'_>,
         entity: &Entity,
         values: &mut Vec<f64>,
     ) -> Result<bool, CalculationFailure> {
         record_row();
-        for (criterion, test) in criteria.iter().zip(tests) {
+        for (criterion, test) in criteria.criteria.iter().zip(criteria.tests) {
             let cell = self.criterion_cell(entity, &criterion.column.field)?;
             if !test.matches(cell) {
                 return Ok(false);
